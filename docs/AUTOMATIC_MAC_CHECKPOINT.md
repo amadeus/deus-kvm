@@ -5,11 +5,11 @@ The earlier Windows-only build does not implement this flow.
 
 ## Update
 
-1. On Windows, extract `DeusKVM-Companion-win-x64-takeover-2026-09-21.zip`
+1. On Windows, extract `DeusKVM-Companion-win-x64-input-lag-2026-09-22.zip`
    and open `DeusKVM.Companion.exe`. Approve the update prompt; it closes the old
    companion automatically. No scripts or .NET installation are needed.
 2. On **each Mac**, quit DeusKVM, unzip
-   `DeusKVM-mac-arm64-takeover-2026-09-21.zip`, and replace the app in its usual
+   `DeusKVM-mac-arm64-display-fix-2026-09-22.zip`, and replace the app in its usual
    location with the new `DeusKVM.app`. Open that copy. This build is for Apple Silicon only. Keep each Mac's existing permissions and layout.
 3. If a Mac cannot switch, read **Layout → Windows**. The status now distinguishes
    waiting for Windows control from missing permissions or unavailable capture.
@@ -58,3 +58,24 @@ No uninstall or re-pairing test is needed.
 
 Builds and automated tests do not establish hardware success. This checkpoint
 is pending until both updated Macs and Windows are tested together.
+
+## Forwarded mouse stutter follow-up — September 22
+
+The latest Windows build bounds recovery refreshes to four per second while
+waiting for the active Mac's HID mouse or desktop access. Previously every raw
+mouse event could enumerate devices and enqueue another Bluetooth status packet.
+The normal available input path is unchanged. This fixes an overload path found
+in source; it does not establish the cause of the reported two-Mac stutter.
+
+1. Update Windows using the input-lag ZIP above. Keep the existing updated Mac
+   apps; no additional Mac update is needed for this Windows polling change.
+2. With both Macs connected, confirm Windows shows one active and the other
+   disabled. Move the active Mac's pointer around Windows, away from return edges.
+3. Enable the other Mac to take over and repeat. Note which Mac stutters and the
+   Windows companion's exact status at that moment.
+4. If stutter persists, compare the same active Mac with Bluetooth temporarily
+   off on the idle Mac, then restore it. Keep pairings. Report whether the change
+   reliably removes the stutter; this is a diagnostic comparison, not normal use.
+
+Pause after setup and this short check. Do not mark lag fixed without the user's
+result. Current Mac capture logs do not measure Windows-side HID delivery timing.

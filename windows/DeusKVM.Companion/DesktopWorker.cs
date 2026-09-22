@@ -19,6 +19,7 @@ internal sealed class DesktopWorker : ApplicationContext
     private readonly string address;
     private readonly int parent;
     private readonly HandoffSession handoff = new();
+    private readonly DesktopRecoveryPoll recoveryPoll = new();
     private readonly Dictionary<IntPtr, bool> devices = [];
     private MonitorInfo[] monitors = [];
     private EdgeConfiguration? config;
@@ -174,9 +175,9 @@ internal sealed class DesktopWorker : ApplicationContext
 
     private void RawInput(IntPtr handle)
     {
-        // First post-secure-desktop movement refreshes availability immediately;
-        // the periodic status timer must not impose a one-second return delay.
-        if (blind != 0 && handoff.Active is not null) Refresh();
+        // Probe immediately on first movement, but do not enumerate devices and
+        // send Bluetooth status on every mouse packet while recovery is pending.
+        if (recoveryPoll.ShouldRefresh(blind != 0, handoff.Active is not null, Environment.TickCount64)) Refresh();
         if (!cursor.Hidden && (!handoff.CanReturn || config is null)) return;
         var headerSize = (uint)(8 + IntPtr.Size * 2);
         uint size = 0;

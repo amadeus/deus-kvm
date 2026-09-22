@@ -248,3 +248,34 @@ is unchanged; its bundled checkpoint now names the arm64 Mac ZIP.
 The user requested committing completed code. The implementation, display fix,
 tests, build scripts and tracked plan are being committed together. AGENTS.md
 now records that workflow. Hardware checkpoint results remain pending.
+
+
+## Forwarded mouse lag investigation — 2026-09-22
+
+- [x] Committed the implementation/display checkpoint as `0abff1d` after the user
+  authorized ongoing commits. Its hardware checks remain pending.
+- [x] User reports intermittent Windows pointer overload/lag, possibly when both
+  Macs are connected, and confirms input comes through DeusKVM from the Mac.
+- [x] Inspected active/inactive session isolation: only active BluetoothControl
+  runs a desktop worker; inactive channels retain heartbeats and unavailable
+  clipboard advertisements. No second desktop worker was found in the intended path.
+- [x] Read this Mac's last ten minutes of Capture-category logs: 108 samples,
+  maximum capture-to-main-thread dispatch 21 ms (13 samples above 10 ms), zero
+  blocked companion-queue samples. This does not measure the HID notification
+  queue, radio scheduling, or Windows delivery, nor prove correlation to stutter.
+- [x] Found an unbounded recovery path in DesktopWorker.RawInput: while a handoff
+  is active but HID/desktop availability is missing, each mouse packet called
+  Refresh, performing device/desktop queries and enqueueing another status update.
+- [x] Bound input-triggered recovery probes to four per second; first probe stays
+  immediate, normal available input is unaffected, and the periodic timer remains.
+  This is a source-confirmed amplification risk, not a confirmed hardware root cause.
+- [x] Validate tests/build, publish Windows-only test ZIP and prepare this fix for commit.
+- [ ] User setup/check: both Macs connected, alternate active Mac, compare any
+  persistent lag with idle Mac temporarily disconnected. Awaiting observations.
+
+Validation: Windows Release build passed with zero warnings/errors; **108 core
+tests passed**, including 5,000 input events over five seconds producing only
+20 recovery probes. ZIP CRC, x64 executable and packaged instructions verified.
+Artifact: `releases/DeusKVM-Companion-win-x64-input-lag-2026-09-22.zip` (52,394,855 bytes).
+SHA-256: `7b23a87bee25b10c566abf3054de117e556977387fdaa9528324fdc3a474e409`.
+User hardware validation remains pending; no Mac rebuild was needed.
