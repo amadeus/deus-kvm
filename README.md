@@ -48,6 +48,10 @@ BLE. No LAN connection is required.
   directions, up to **64 KiB of UTF-8** per copy. Clipboard sharing pauses while
   locked or signed out and skips recognized private clipboard markers. See
   [clipboard behavior and limits](docs/CLIPBOARD.md).
+- **Settings → Windows pointer speed** adjusts only movement forwarded from
+  this Mac (0.25×–2×, default 1×), with a Reset button. Each Mac saves its own
+  value. Windows pointer settings and directly attached mice are unaffected.
+  This adjusts speed; it does not reproduce macOS's acceleration curve.
 - Vertical and horizontal scrolling can be inverted independently in Settings.
 - **Disable DeusKVM** in Settings or the menu bar restores local input and
   stops advertising, input capture, and clipboard exchange. Enabling reuses

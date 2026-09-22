@@ -16,6 +16,7 @@ final class DirectInputController: ObservableObject {
     private var pressedConsumerKeys: [ConsumerKey] = []
     private var sendConsumer: ((ConsumerReport) -> Void)?
     private var sendMouse: ((MouseReport) -> Void)?
+    private var pointerMotion = PointerMotionScaler()
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -32,6 +33,7 @@ final class DirectInputController: ObservableObject {
     }
 
     func stop() {
+        pointerMotion = PointerMotionScaler()
         pressedKeys.removeAll()
         pressedConsumerKeys.removeAll()
         pressedMouseButtons = []
@@ -74,7 +76,12 @@ final class DirectInputController: ObservableObject {
             let current = pressedConsumerKeys.last
             if previous != current { sendConsumer?(ConsumerReport(key: current ?? .none)) }
         case let .mouseMove(dx, dy):
-            sendMouse?(MouseReport(buttons: pressedMouseButtons, dX: dx, dY: dy))
+            let speed = (defaults.object(forKey: AppSettings.windowsPointerSpeedKey) as? NSNumber)?.doubleValue
+                ?? PointerMotionScaler.defaultSpeed
+            let motion = pointerMotion.scale(dx: dx, dy: dy, speed: speed)
+            if motion.x != 0 || motion.y != 0 {
+                sendMouse?(MouseReport(buttons: pressedMouseButtons, dX: motion.x, dY: motion.y))
+            }
         case let .mouseButton(button, isDown):
             if isDown {
                 pressedMouseButtons.insert(button)

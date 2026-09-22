@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.invertVerticalScrollKey) private var invertVerticalScroll = false
     @AppStorage(AppSettings.invertHorizontalScrollKey) private var invertHorizontalScroll = false
     @AppStorage(AppSettings.clipboardEnabledKey) private var clipboardEnabled = true
+    @AppStorage(AppSettings.windowsPointerSpeedKey) private var storedPointerSpeed = PointerMotionScaler.defaultSpeed
     @State private var showReset = false
     @AppStorage(AppSettings.developerModeKey) private var developerMode = false
     @AppStorage(AppSettings.useServiceChangedKey) private var forceServiceChanged = true
@@ -46,6 +47,7 @@ struct SettingsView: View {
                     "Shares plain text up to 64 KiB. Skips marked private items and pauses while locked or signed out."
                 )
             }
+            pointerSpeedSection
             Section("Windows scrolling") {
                 Toggle("Invert vertical scrolling", isOn: $invertVerticalScroll)
                     .toggleStyle(.switch)
@@ -78,6 +80,32 @@ struct SettingsView: View {
             Button(L10n.Settings.reset, role: .destructive) {
                 Task { if await login.setEnabled(false) { _resetAll() } }
             }
+        }
+    }
+
+    private var pointerSpeed: Binding<Double> {
+        Binding(
+            get: { PointerMotionScaler.validatedSpeed(storedPointerSpeed) },
+            set: { storedPointerSpeed = PointerMotionScaler.validatedSpeed($0) }
+        )
+    }
+
+    private var pointerSpeedSection: some View {
+        Section {
+            HStack {
+                Text("Windows pointer speed")
+                Spacer()
+                Text("\(pointerSpeed.wrappedValue, format: .number.precision(.fractionLength(2)))×")
+                    .monospacedDigit()
+                Button("Reset") { storedPointerSpeed = PointerMotionScaler.defaultSpeed }
+                    .disabled(storedPointerSpeed == PointerMotionScaler.defaultSpeed)
+                    .accessibilityLabel("Reset Windows pointer speed")
+            }
+            Slider(value: pointerSpeed, in: PointerMotionScaler.speedRange, step: 0.05)
+                .accessibilityLabel("Windows pointer speed")
+                .accessibilityValue(Text("\(pointerSpeed.wrappedValue, format: .number.precision(.fractionLength(2))) times"))
+        } footer: {
+            Text("Adjusts movement sent from this Mac to Windows. Your Mac pointer and other Windows mice keep their settings.")
         }
     }
 

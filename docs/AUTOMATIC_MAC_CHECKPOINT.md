@@ -9,7 +9,7 @@ The earlier Windows-only build does not implement this flow.
    and open `DeusKVM.Companion.exe`. Approve the update prompt; it closes the old
    companion automatically. No scripts or .NET installation are needed.
 2. On **each Mac**, quit DeusKVM, unzip
-   `DeusKVM-mac-arm64-display-fix-2026-09-22.zip`, and replace the app in its usual
+   `DeusKVM-mac-arm64-pointer-speed-2026-09-22.zip`, and replace the app in its usual
    location with the new `DeusKVM.app`. Open that copy. This build is for Apple Silicon only. Keep each Mac's existing permissions and layout.
 3. If a Mac cannot switch, read **Layout → Windows**. The status now distinguishes
    waiting for Windows control from missing permissions or unavailable capture.
@@ -79,3 +79,11 @@ in source; it does not establish the cause of the reported two-Mac stutter.
 
 Pause after setup and this short check. Do not mark lag fixed without the user's
 result. Current Mac capture logs do not measure Windows-side HID delivery timing.
+
+## Optional pointer speed check
+
+The latest Mac build adds **Settings → Windows pointer speed**, 0.25×–2× with
+Reset to 1×. Each Mac saves its own setting. Compare fine movement and dragging
+at 0.5×, 1× and 1.5×, then check app restart and ownership changes. Windows global
+mouse settings, directly attached mice, scrolling and local Mac movement should
+remain unchanged. The slider controls speed, not the exact acceleration curve.

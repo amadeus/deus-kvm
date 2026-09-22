@@ -288,3 +288,28 @@ Windows mouse settings for directly attached mice. Research and a staged tuning
 proposal are in [POINTER_FEEL_RESEARCH.md](POINTER_FEEL_RESEARCH.md). No acceleration
 or input-path implementation was added during this research; hardware tests remain
 pending. Any tuning must apply only to DeusKVM-forwarded input.
+
+
+## Pointer-speed slider — 2026-09-22
+
+The user requested the slider while sleeping. Hardware setup/testing remains
+paused until they return; no live app replacement or system mouse setting changes.
+
+- [x] Add Settings slider, 0.25×–2×, default 1×, numeric value and Reset.
+- [x] Persist per Mac and apply only to captured remote pointer movement.
+- [x] Preserve fine-motion fractions, scale before report clipping, reset at
+  speed/capture transitions, retain held buttons and existing scroll behavior.
+- [x] Keep the existing HID range and one-report-per-event ceiling; do not add
+  packet splitting, deferred whole-count travel, or a new acceleration curve.
+- [x] Add tests for captured event conversion, range limits, tiny/opposite
+  movements, live preferences, drag/scroll isolation, restart and capture reset.
+- [x] Complete Mac tests, lint and signed arm64 release verification; prepare the verified change for commit.
+- [ ] User check of pointer feel and two-Mac ownership with independent speeds.
+
+Slider validation: **85 Mac tests passed**, strict SwiftLint/SwiftFormat and diff
+checks passed. The signed arm64 build and extracted archive were verified.
+Artifact: `releases/DeusKVM-mac-arm64-pointer-speed-2026-09-22.zip`
+(951,700 bytes), SHA-256
+`7a66efb06ee4b2e7a23d5b4af18894d7364325c9b1f9022028323823beb16d6a`.
+No new Windows build required; no user application was replaced or launched.
+The latest Mac ZIP includes the earlier takeover and display-selection fixes.

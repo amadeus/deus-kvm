@@ -62,6 +62,7 @@ targets:
       - DeusKVM/RawKeyboardState.swift
       - DeusKVM/MediaKeyEvent.swift
       - DeusKVM/DirectInputController.swift
+      - DeusKVM/PointerMotionScaler.swift
       - DeusKVM/AppSettings.swift
       - DeusKVM/DeviceNameStore.swift
       - DeusKVM/HIDInputValue.swift

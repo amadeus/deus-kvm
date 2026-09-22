@@ -1,6 +1,7 @@
 # Pointer feel without changing Windows mouse settings
 
-Researched 2026-09-22. Proposal only; no input behavior or system settings changed.
+Researched 2026-09-22. The user subsequently requested the speed slider; see
+implementation notes below. Acceleration-curve and direct-position modes remain proposals.
 The current lag checkpoint is deferred until the user's next test session.
 
 ## Requirement
@@ -10,7 +11,7 @@ Windows' existing pointer speed and acceleration for directly attached mice.
 Settings should apply only to DeusKVM's outgoing movement and be saved per Mac.
 Do not temporarily modify Windows mouse settings during forwarding either.
 
-## Current source findings
+## Source findings before the slider
 
 - InputTap captures movement from the Quartz session event tap and forwards
   mouseEventDeltaX/Y through DirectInputEvent to DirectInputController.
@@ -81,7 +82,48 @@ Do not temporarily modify Windows mouse settings during forwarding either.
 - [x] Research primary vendor documentation and Deskflow source.
 - [x] Record the no-global-Windows-settings constraint and proposed stages.
 - [ ] User validation of the current lag checkpoint (deferred until tomorrow).
-- [ ] Measure the mismatch and implement the selected pointer tuning stage.
-- [ ] Prepare ARM-only Mac build and any necessary Windows build before testing.
+- [x] Implement the user-selected pointer-speed slider; hardware feel measurement remains pending.
+- [x] Prepare and verify the ARM-only Mac build; no new Windows build needed.
 - [ ] Verify fine motion, fast sweeps, drags, handoffs, and directly attached
       Windows mice with the user's hardware.
+
+## Slider implementation — 2026-09-22
+
+The user requested implementation while deferring hardware tests until tomorrow.
+Settings now contains **Windows pointer speed**, 0.25×–2× in 0.05× steps, default
+1×, with a numeric value and Reset. AppStorage persists it independently on each
+Mac. It applies to captured remote movement only; no Windows changes are needed.
+
+Motion stays wide internally until scaling. Fractional counts are accumulated
+per axis, so low-speed fine movements survive quantization. A speed change and
+capture stop/start clear fractions, covering disable, handoff and target changes.
+Drag button state and scroll behavior remain independent of speed.
+
+Transport remains one report at most per source event, using the existing signed
+8-bit descriptor range. Scaling now precedes saturation; extreme movement is
+still capped at ±127 per axis and excess is not replayed later. This intentionally
+avoids new packet bursts or queued travel while the lag checkpoint is pending.
+The existing queue/coalescing policy, HID descriptor and pairings are unchanged.
+The 1× path preserves previous integer motion output, including range limits.
+This is sensitivity tuning, not an exact macOS acceleration match.
+
+### Next hardware check
+
+1. Install the new Mac app; use the previously prepared Windows input-lag build.
+2. In Settings, compare 1× with 0.5× and 1.5×, then Reset. Try slow precision
+   movement, fast sweeps and dragging on Windows. Verify scrolling feels unchanged.
+3. Check local Mac movement and a directly attached Windows mouse retain their
+   previous behavior. Restart the Mac app to confirm its chosen speed is saved.
+4. Switch ownership between Macs with different saved speeds. Check each setting
+   follows its Mac and old fractional movement does not carry into a new session.
+
+Do not mark hardware behavior verified until the user reports these results.
+
+Validation: all **85 Mac tests passed**, including eight new pointer-speed tests.
+Strict SwiftLint, SwiftFormat and diff checks passed. Signed Release built and
+the delivered archive passed ZIP CRC, arm64-only architecture, and extracted-app
+signature checks. Native UI interaction and physical pointer feel remain pending.
+
+Artifact: `releases/DeusKVM-mac-arm64-pointer-speed-2026-09-22.zip`
+(951,700 bytes). SHA-256:
+`7a66efb06ee4b2e7a23d5b4af18894d7364325c9b1f9022028323823beb16d6a`.
