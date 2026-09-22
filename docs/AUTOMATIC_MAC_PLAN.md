@@ -279,3 +279,12 @@ tests passed**, including 5,000 input events over five seconds producing only
 Artifact: `releases/DeusKVM-Companion-win-x64-input-lag-2026-09-22.zip` (52,394,855 bytes).
 SHA-256: `7b23a87bee25b10c566abf3054de117e556977387fdaa9528324fdc3a474e409`.
 User hardware validation remains pending; no Mac rebuild was needed.
+
+## Next session and pointer-feel research — 2026-09-22
+
+The user deferred the input-lag checkpoint until tomorrow. They also report that
+forwarded mouse acceleration feels different from macOS and require preserving
+Windows mouse settings for directly attached mice. Research and a staged tuning
+proposal are in [POINTER_FEEL_RESEARCH.md](POINTER_FEEL_RESEARCH.md). No acceleration
+or input-path implementation was added during this research; hardware tests remain
+pending. Any tuning must apply only to DeusKVM-forwarded input.
