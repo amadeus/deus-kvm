@@ -94,7 +94,7 @@ internal static class ServiceInstaller
                 ServiceCommands.RunSc("create", Paths.ServiceName, "binPath=", imagePath, "start=", "auto", "obj=", "LocalSystem", "DisplayName=", "DeusKVM Companion");
             else
                 ServiceCommands.RunSc("config", Paths.ServiceName, "binPath=", imagePath, "obj=", "LocalSystem", "DisplayName=", "DeusKVM Companion");
-            ServiceCommands.RunSc("description", Paths.ServiceName, "Maintains the paired Mac Bluetooth connection independently of user login.");
+            ServiceCommands.RunSc("description", Paths.ServiceName, "Automatically selects the first connected paired DeusKVM Mac independently of user login.");
             ServiceCommands.RunSc("failure", Paths.ServiceName, "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000");
             ServiceCommands.RunSc("failureflag", Paths.ServiceName, "0");
             CreateShortcut();

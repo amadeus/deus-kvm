@@ -65,8 +65,7 @@ struct LayoutSettingsView: View {
                 Text(L10n.Layout.releaseHint).font(.caption).foregroundStyle(.secondary)
             }
             Button(coordinator.isRemote ? L10n.Layout.returnToMac : L10n.Layout.switchToPC) { coordinator.toggle() }
-                .disabled(!coordinator.isEnabled || !coordinator
-                    .permissionGranted || (!coordinator.isRemote && !coordinator.targetAvailable))
+                .disabled(!coordinator.isRemote && !coordinator.canSwitch)
         }
         .settingsFormStyle()
         .onChange(of: recording) { coordinator.recordingShortcut = $0 }

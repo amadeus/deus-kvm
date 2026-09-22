@@ -47,7 +47,7 @@ internal static class Program
             if (trayOnly && (File.Exists(Paths.RemovalMarker) || !ServiceInstaller.IsInstalledLocation || ServiceInstaller.NeedsInstall())) return 0;
             if (File.Exists(Paths.RemovalMarker))
             {
-                if (MessageBox.Show("A previous removal did not finish. Retry removing DeusKVM and its selected Mac pairing?",
+                if (MessageBox.Show("A previous removal did not finish. Retry removing DeusKVM? Windows Bluetooth pairings are kept.",
                     "Finish removing DeusKVM", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK)
                     ServiceCommands.ElevateExecutableAsync(Environment.ProcessPath!, "--remove").GetAwaiter().GetResult();
                 return 0;

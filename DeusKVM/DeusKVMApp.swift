@@ -51,8 +51,7 @@ struct DeusKVMApp: App {
                 NSApp.activate(ignoringOtherApps: true)
             }
             Button(coordinator.isRemote ? L10n.Layout.returnToMac : L10n.Layout.switchToPC) { coordinator.toggle() }
-                .disabled(!coordinator.isEnabled || !coordinator
-                    .permissionGranted || (!coordinator.isRemote && !coordinator.targetAvailable))
+                .disabled(!coordinator.isRemote && !coordinator.canSwitch)
             Toggle(L10n.Layout.lock, isOn: $coordinator.locked)
             Divider()
             Button(coordinator.isEnabled ? "Disable DeusKVM" : "Enable DeusKVM") {

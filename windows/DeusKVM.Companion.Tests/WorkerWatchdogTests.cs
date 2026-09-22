@@ -15,13 +15,16 @@ public sealed class WorkerWatchdogTests
         Assert.True(watchdog.IsExpired());
     }
 
-    [Fact]
-    public void HealthyIdleConnectionSurvivesWhileDeadWorkerExpires()
+    [Theory]
+    [InlineData("Discovered")]
+    [InlineData("Waiting")]
+    [InlineData("Connected")]
+    public void HealthyIdleConnectionSurvivesWhileDeadWorkerExpires(string state)
     {
         var clock = new Clock();
         var watchdog = new WorkerWatchdog(clock);
-        watchdog.Observe("Discovered");
-        for (var i = 0; i < 60; i++) { clock.Advance(10); watchdog.Observe("Discovered"); }
+        watchdog.Observe(state);
+        for (var i = 0; i < 60; i++) { clock.Advance(10); watchdog.Observe(state); }
         Assert.False(watchdog.IsExpired());
         clock.Advance(61);
         Assert.True(watchdog.IsExpired());

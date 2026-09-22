@@ -13,7 +13,7 @@ internal sealed partial class BluetoothControl
 
     private void UpdateClipboardSession(bool reset = false)
     {
-        var wanted = ready && clipboardPeer && clipboardDefaultDesktop && clipboardDesktopAvailable && desktop?.Connected == true;
+        var wanted = active && ready && clipboardPeer && clipboardDefaultDesktop && clipboardDesktopAvailable && desktop?.Connected == true;
         if (!reset && clipboardOffered == wanted) return;
         clipboardEpoch++; clipboardOffered = wanted; clipboardEnabled = clipboardPrimed = false;
         pendingClipboardOffer = null; Clipboard.Reset(clipboardEpoch);

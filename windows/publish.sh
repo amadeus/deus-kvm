@@ -9,14 +9,17 @@ companion_output=".build/windows/$companion_rid"
   -c Release -r "$companion_rid" --self-contained true -p:PublishSingleFile=true \
   -p:EnableCompressionInSingleFile=true -p:DebugType=None -o "$companion_output"
 cp windows/README.md "$companion_output/README.md"
+cp docs/AUTOMATIC_MAC_CHECKPOINT.md "$companion_output/CHECKPOINT.md"
 python3 - "$companion_output" <<'PY'
 from pathlib import Path
 import sys,zipfile
 root=Path(sys.argv[1])
-archive=root.parent / ('DeusKVM-Companion-' + root.name + '.zip')
+release_dir=Path('releases')
+release_dir.mkdir(exist_ok=True)
+archive=release_dir / ('DeusKVM-Companion-' + root.name + '.zip')
 with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
     for p in sorted(root.iterdir()):
-        if p.name in {'DeusKVM.Companion.exe', 'README.md'}:
+        if p.name in {'DeusKVM.Companion.exe', 'README.md', 'CHECKPOINT.md'}:
             z.write(p,p.name)
 print(archive.resolve())
 PY

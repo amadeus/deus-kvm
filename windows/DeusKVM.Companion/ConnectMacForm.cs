@@ -19,7 +19,7 @@ internal sealed class ConnectMacForm : Form
     public ConnectMacForm()
     {
         Icon = AppIcon.Image;
-        Text = "Connect a Mac"; AutoScaleMode = AutoScaleMode.Dpi;
+        Text = "Add Mac"; AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(540, 440); MinimumSize = new Size(480, 400); StartPosition = FormStartPosition.CenterParent;
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), ColumnCount = 1, RowCount = 5 };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -61,6 +61,13 @@ internal sealed class ConnectMacForm : Form
                 knownDeviceIds.Add(selected.DeviceId);
                 if (selected.PairingDeviceId is not null) knownDeviceIds.Add(selected.PairingDeviceId);
             }
+            var automatic = JsonFiles.Read<AutomaticMacSettings>(Paths.AutomaticMacs);
+            if (automatic is not null)
+                foreach (var mac in automatic.Macs)
+                {
+                    knownDeviceIds.Add(mac.DeviceId);
+                    if (mac.PairingDeviceId is not null) knownDeviceIds.Add(mac.PairingDeviceId);
+                }
             watcher = DeviceInformation.CreateWatcher(MacPairing.Selector, MacPairing.Properties, DeviceInformationKind.AssociationEndpoint);
             watcher.Added += (sender, info) => Post(sender, () => { found[info.Id] = info; Render(); });
             watcher.Updated += (sender, update) => Post(sender, () => { if (found.TryGetValue(update.Id, out var info)) info.Update(update); Render(); });
@@ -96,7 +103,7 @@ internal sealed class ConnectMacForm : Form
             await MacConnection.Connect(new MacPairing(candidate, message => status.Text = message, stop.Token));
             DialogResult = DialogResult.OK;
         }
-        catch (OperationCanceledException) { status.Text = "Connection cancelled or timed out. Your previous Mac selection is unchanged."; }
+        catch (OperationCanceledException) { status.Text = "Pairing cancelled or timed out. Existing Mac pairings are unchanged."; }
         catch (Exception error) { status.Text = error.Message; }
         finally
         {

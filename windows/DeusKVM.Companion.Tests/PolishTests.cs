@@ -82,13 +82,13 @@ public sealed class PolishTests
         Assert.Contains("verify failed", error.Message); Assert.Contains("rollback failed", error.Message);
     }
     [Theory]
-    [InlineData(null, 4)] [InlineData("stop", 1)] [InlineData("unpair", 2)] [InlineData("unregister", 3)] [InlineData("files", 4)]
+    [InlineData(null, 3)] [InlineData("stop", 1)] [InlineData("unregister", 2)] [InlineData("files", 3)]
     public async Task RemovalStopsAtFailureAndPreservesLaterRetrySteps(string? failure, int calls)
     {
         var steps = new RemovalSteps(failure);
         if (failure is null) await RemovalWorkflow.Run(steps);
         else await Assert.ThrowsAsync<IOException>(() => RemovalWorkflow.Run(steps));
-        Assert.Equal(new[] { "stop", "unpair", "unregister", "files" }.Take(calls), steps.Calls);
+        Assert.Equal(new[] { "stop", "unregister", "files" }.Take(calls), steps.Calls);
     }
     private sealed class Connection(bool created, string? failure = null, bool rollbackFailure = false) : IMacConnection
     {
@@ -118,7 +118,6 @@ public sealed class PolishTests
         public List<string> Calls { get; } = [];
         private Task Step(string name) { Calls.Add(name); if (failure == name) throw new IOException(name); return Task.CompletedTask; }
         public Task Stop() => Step("stop");
-        public Task UnpairSelectedMac() => Step("unpair");
         public Task Unregister() => Step("unregister");
         public Task FinishFiles() => Step("files");
     }

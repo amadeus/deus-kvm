@@ -7,6 +7,8 @@ enum CompanionProtocol {
     enum Message: UInt8, Sendable {
         case hello = 0x01, ping = 0x02, pong = 0x03, screens = 0x04, config = 0x05
         case enter = 0x11, enterAck = 0x12, leave = 0x13, state = 0x14, exit = 0x15, resume = 0x16, enterCenter = 0x17
+        case availability = 0x18, selection = 0x19
+        case requestControl = 0x1A, releaseAck = 0x1B
         case clipGrab = 0x20, clipGet = 0x21, clipData = 0x22, clipState = 0x23
         case nack = 0x7F
     }
@@ -121,6 +123,11 @@ struct CompanionHello: Codable {
     var center: Bool?
     var clipboard: Int?
     var computerName: String?
+    var selection: Int?
+    var available: Bool?
+    var availabilityEpoch: UInt32?
+    var takeover: Bool?
+    var requestControl: Bool?
 }
 
 struct PCMonitor: Codable, Identifiable, Equatable {

@@ -5,7 +5,7 @@ namespace DeusKVM.Companion;
 
 internal sealed class SettingsForm : Form
 {
-    private readonly Button connect = new() { Text = "Connect a Mac…", AutoSize = true };
+    private readonly Button connect = new() { Text = "Add Mac…", AutoSize = true };
     private readonly Label selected = new() { AutoSize = true, MaximumSize = new Size(460, 0) };
     private readonly Label state = new() { AutoSize = true, MaximumSize = new Size(460, 0) };
     private readonly Label detail = new() { AutoSize = true, MaximumSize = new Size(460, 0) };
@@ -48,14 +48,16 @@ internal sealed class SettingsForm : Form
     {
         try
         {
-            var saved = JsonFiles.Read<CompanionSettings>(Paths.Settings);
-            selected.Text = saved is null ? "No Mac connected" : $"Mac: {saved.DeviceName}";
-            connect.Text = saved is null ? "Connect a Mac…" : "Change Mac…";
+            selected.Text = "Waiting for a paired Mac";
             state.Text = $"Service: {serviceState}";
-            if (saved is null) { detail.Text = "Connect your Mac here, then turn on Enable control in DeusKVM on the Mac."; return; }
             var snapshot = JsonFiles.Read<ServiceSnapshot>(Paths.Status);
             if (serviceState != "Running" || snapshot is null) { detail.Text = "Bluetooth recovery is not running."; return; }
             if (!ServicePolicy.IsFresh(snapshot.UpdatedAt, DateTimeOffset.UtcNow)) { detail.Text = "Waiting for a fresh service status…"; return; }
+            selected.Text = snapshot.Worker.DeviceName is { } active ? $"Active: {active}" : "Waiting for a paired Mac";
+            if (snapshot.Worker.WaitingMacs is { Length: > 0 } waiting)
+                selected.Text += $"\nWaiting: {string.Join(", ", waiting)}";
+            if (snapshot.Worker.PausedMacs is { Length: > 0 } paused)
+                selected.Text += $"\nDisabled or not allowed: {string.Join(", ", paused)}";
             detail.Text = $"Bluetooth: {snapshot.Worker.State}\n{snapshot.Worker.Detail}";
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)

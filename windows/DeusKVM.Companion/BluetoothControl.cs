@@ -25,17 +25,33 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
     private MonitorInfo[] monitors = [];
     private EdgeConfiguration? config => handoff.Configuration;
     private long lastSeen, connectedAt;
-    private bool subscribing, ready, writing, helloSent;
+    private bool subscribing, ready, writing, helloSent, disposed;
     private int generation;
     private byte blind = 4;
+    private MacAvailability availability = new();
+    private bool active;
+    private int desktopGeneration;
+    private static long nextRequest;
+    private uint? requestedEpoch, disabledEpoch;
+    public long RequestSerial { get; private set; }
+    public uint? ReleaseAcknowledged { get; private set; }
+    public bool SupportsTakeover { get; private set; }
+    public bool Ready => ready;
+    public bool Available => ready && availability.Available && !NeedsReconnect;
+    public bool SupportsSelection => ready && availability.Negotiated;
+    public uint AvailabilityEpoch => availability.Epoch;
+    public bool Active => active;
     public bool NeedsReconnect { get; private set; }
     public bool Attached => controlRead is not null;
     public string Detail { get; private set; } = "Waiting for Mac control service";
 
     public async Task Attach(GattDeviceService service, CancellationToken stop)
     {
+        if (disposed) return;
         ResetLink();
+        var epoch = generation;
         var result = await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached).AsTask(stop);
+        if (disposed || epoch != generation) return;
         if (result.Status != GattCommunicationStatus.Success) throw new IOException("Control characteristic discovery: " + result.Status);
         GattCharacteristic Find(int id) => result.Characteristics.FirstOrDefault(item => item.Uuid == Protocol.Uuid(id))
             ?? throw new IOException("Missing companion characteristic " + id);
@@ -47,6 +63,7 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
         {
             var outcome = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
                 GattClientCharacteristicConfigurationDescriptorValue.None).AsTask(stop);
+            if (disposed || epoch != generation) return;
             if (outcome != GattCommunicationStatus.Success) throw new IOException("Companion subscription reset: " + outcome);
         }
         controlRead.ValueChanged += Notification;
@@ -57,6 +74,7 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
         {
             var outcome = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
                 GattClientCharacteristicConfigurationDescriptorValue.Notify).AsTask(stop);
+            if (disposed || epoch != generation) return;
             if (outcome != GattCommunicationStatus.Success) throw new IOException("Companion subscription: " + outcome);
         }
         subscribing = false;
@@ -65,11 +83,20 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
 
     public void Tick(string address)
     {
-        desktop ??= new DesktopHost(DesktopEvent);
-        desktop.Refresh(address);
+        if (disposed) return;
+        if (active)
+        {
+            if (desktop is null)
+            {
+                var epoch = ++desktopGeneration;
+                desktop = new DesktopHost(message => context.Post(_ =>
+                { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null));
+            }
+            desktop.Refresh(address);
+        }
         UpdateClipboardSession();
         if (clipboardEnabled) Clipboard.Tick(ClipboardNow);
-        if (!desktop.Connected) SetDetail(desktop.Detail);
+        if (active && desktop?.Connected == false) SetDetail(desktop.Detail);
         if (!Attached) return;
         if ((!ready && Environment.TickCount64 - connectedAt > 10000) ||
             (ready && Environment.TickCount64 - lastSeen > 10000))
@@ -80,8 +107,42 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
             BinaryPrimitives.WriteUInt32LittleEndian(payload, unchecked((uint)Environment.TickCount64));
             Send(Protocol.Message.Ping, payload);
             AdvertiseClipboard();
-            if (!desktop.Connected) { blind = 4; Send(Protocol.Message.State, [4, 2, 0]); SetDetail(desktop.Detail); }
+            if (active && desktop?.Connected != true) { blind = 4; Send(Protocol.Message.State, [4, 2, 0]); SetDetail(desktop?.Detail ?? "Waiting for desktop"); }
         }
+    }
+
+    public void SetActive(bool value, bool notify = true)
+    {
+        value = value && Available;
+        if (active == value) return;
+        active = value;
+        if (!value)
+        {
+            desktopGeneration++;
+            handoff.Reset(); UpdateClipboardSession(true);
+            desktop?.Dispose(); desktop = null; monitors = []; blind = 4;
+            clipboardDesktopAvailable = clipboardDefaultDesktop = false;
+        }
+        if (notify && availability.Negotiated) Send(Protocol.Message.Selection, availability.Selection(active));
+        if (value) { disabledEpoch = null; ReleaseAcknowledged = null; }
+        SetDetail(active ? "Active Mac; preparing desktop" : "Waiting for Windows priority");
+    }
+
+    public void RequestDisable(uint? epoch = null)
+    {
+        var requested = epoch ?? availability.Epoch;
+        if (!ready || !availability.Negotiated || disabledEpoch == requested) return;
+        SetActive(false, notify: false);
+        var payload = new byte[5]; BinaryPrimitives.WriteUInt32LittleEndian(payload, requested);
+        disabledEpoch = requested;
+        Send(Protocol.Message.Selection, payload);
+    }
+
+    private void RequestOwnership()
+    {
+        if (!SupportsTakeover || !availability.Available || requestedEpoch == availability.Epoch) return;
+        requestedEpoch = availability.Epoch;
+        RequestSerial = Interlocked.Increment(ref nextRequest);
     }
 
     private void Notification(GattCharacteristic sender, GattValueChangedEventArgs args)
@@ -110,12 +171,18 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
                     hello.RootElement.GetProperty("role").GetString() != "mac" ||
                     hello.RootElement.GetProperty("chunk").GetInt32() < 20) throw new InvalidDataException("Invalid HELLO");
                 ready = true;
+                var selected = hello.RootElement.TryGetProperty("selection", out var selection) && selection.TryGetInt32(out var version) && version == 1;
+                var epoch = selected ? hello.RootElement.GetProperty("availabilityEpoch").GetUInt32() : 0;
+                var enabled = !selected || hello.RootElement.GetProperty("available").GetBoolean();
+                availability.Hello(selected, epoch, enabled);
+                SupportsTakeover = selected && hello.RootElement.TryGetProperty("takeover", out var takeover) && takeover.ValueKind == JsonValueKind.True;
+                if (hello.RootElement.TryGetProperty("requestControl", out var request) && request.ValueKind == JsonValueKind.True) RequestOwnership();
                 clipboardPeer = hello.RootElement.TryGetProperty("clipboard", out var capability) &&
                     capability.TryGetInt32(out var clipboardVersion) && clipboardVersion == 1;
                 SendJson(Protocol.Message.Hello, new { v = 1, role = "pc", name = "DeusKVM Companion",
-                    computerName = Environment.MachineName, chunk = 20, resume = true, center = true, clipboard = 1 });
+                    computerName = Environment.MachineName, chunk = 20, resume = true, center = true, clipboard = 1, selection = 1, takeover = true });
                 UpdateClipboardSession(true);
-                if (monitors.Length > 0) SendScreens();
+                if (active && monitors.Length > 0) SendScreens();
                 SetDetail("Companion connected; waiting for desktop status");
             }
             else
@@ -136,6 +203,26 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
 
     private void Handle(Protocol.Message type, byte[] payload)
     {
+        if (type == Protocol.Message.Availability)
+        {
+            availability.Receive(payload);
+            if (!availability.Available) SetActive(false, notify: false);
+            if (availability.Requested) RequestOwnership();
+            return;
+        }
+        if (type == Protocol.Message.RequestControl)
+        {
+            if (!SupportsTakeover || payload.Length != 4) throw new InvalidDataException("Invalid control request");
+            if (BinaryPrimitives.ReadUInt32LittleEndian(payload) == availability.Epoch) RequestOwnership();
+            return;
+        }
+        if (type == Protocol.Message.ReleaseAck)
+        {
+            if (!SupportsTakeover || payload.Length != 4) throw new InvalidDataException("Invalid release acknowledgement");
+            ReleaseAcknowledged = BinaryPrimitives.ReadUInt32LittleEndian(payload);
+            return;
+        }
+        if (!active && type is not (Protocol.Message.Ping or Protocol.Message.Pong)) return;
         switch (type)
         {
             case Protocol.Message.Ping when payload.Length == 4: Send(Protocol.Message.Pong, payload); break;
@@ -178,6 +265,7 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
 
     private void DesktopEvent(DesktopMessage message)
     {
+        if (!active) return;
         if (message.Kind.StartsWith("clipboard-", StringComparison.Ordinal)) { ClipboardDesktopEvent(message); return; }
         switch (message.Kind)
         {
@@ -258,16 +346,19 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
     }
 
     private void SetDetail(string value) { if (Detail != value) { Detail = value; status(value); } }
-    private void Fail(string reason) { NeedsReconnect = true; ready = false; UpdateClipboardSession(true); handoff.Exit(); desktop?.Send(new DesktopMessage("reset")); SetDetail(reason); }
+    private void Fail(string reason) { SetActive(false); NeedsReconnect = true; ready = false; UpdateClipboardSession(true); SetDetail(reason); }
     public void ResetLink()
     {
+        SetActive(false);
         generation++;
         if (controlRead is not null) controlRead.ValueChanged -= Notification;
         if (bulkRead is not null) bulkRead.ValueChanged -= Notification;
         controlRead = controlWrite = bulkRead = bulkWrite = null;
         controls.Clear(); bulk.Clear(); controlEncoder = new(); bulkEncoder = new(); controlDecoder = new(); bulkDecoder = new();
         ready = subscribing = NeedsReconnect = helloSent = false;
+        availability = new();
+        SupportsTakeover = false; RequestSerial = 0; requestedEpoch = disabledEpoch = ReleaseAcknowledged = null;
         handoff.Reset(); UpdateClipboardSession(true); clipboardPeer = false; desktop?.Send(new DesktopMessage("reset"));
     }
-    public void Dispose() { ResetLink(); desktop?.Dispose(); desktop = null; }
+    public void Dispose() { if (disposed) return; disposed = true; ResetLink(); desktop?.Dispose(); desktop = null; }
 }

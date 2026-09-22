@@ -22,7 +22,7 @@ BLE. No LAN connection is required.
    or updates the service and opens its settings; no scripts or separate .NET
    installation are required.
 3. For first-time pairing, leave **System Settings → Bluetooth** open on the
-   Mac. Choose **Connect a Mac…** in the Windows companion and approve the
+   Mac. Choose **Add Mac…** in the Windows companion and approve the
    pairing prompts. Choose your Mac's computer name. If it is missing, try
    **Show all devices**. Windows Bluetooth Settings is not needed for this flow.
 4. In the Mac's **Setup** tab, turn on **Enable control** for your PC. Advertising
@@ -32,6 +32,12 @@ BLE. No LAN connection is required.
    Return through the opposite edge on Windows.
 
 ## Everyday use
+
+- Windows automatically uses the first connected, enabled DeusKVM Mac. A second
+  Mac connects in a disabled state. Click **Enable DeusKVM** on that Mac to take
+  control: Windows disables the previous Mac before granting the new one.
+  Both Macs stay paired and Bluetooth stays on. Each Mac keeps its own layout.
+  Update Windows and both Macs; see the [takeover checkpoint](docs/AUTOMATIC_MAC_CHECKPOINT.md).
 
 - Edge crossings place the cursor at the corresponding position on the other
   display. Release held keys and mouse buttons before switching.
@@ -69,9 +75,9 @@ your layout again. This build uses new app/service identities and settings;
 there is no automatic migration from earlier development builds.
 
 To remove the Windows installation, choose **Remove DeusKVM from this PC…**.
-It removes the service, startup entries, installed files, settings/logs, and the
-selected Mac's Windows pairing. Wait for the completion message, then delete
-the downloaded EXE/ZIP. Other Bluetooth pairings are untouched.
+It removes the service, startup entries, installed files and settings/logs.
+Wait for the completion message, then delete the downloaded EXE/ZIP. Windows
+Bluetooth pairings are kept.
 
 ## Build
 
@@ -86,8 +92,14 @@ open .build/DerivedData/Build/Products/Debug/DeusKVM.app
 `project.yml` contains the development signing team; use your own signing
 configuration when building on another Mac. The deployment target is macOS 13.
 
-Mac builds target Apple Silicon only. For an optimized build, generate the
-project and build Release:
+The project defaults to Apple Silicon. To package a signed optimized app for
+Apple Silicon (arm64) only into the visible `releases/` folder:
+
+```sh
+./scripts/publish-mac.sh
+```
+
+For a direct Apple Silicon Release build:
 
 ```sh
 xcodegen generate
@@ -112,7 +124,8 @@ dotnet test windows/DeusKVM.Companion.Tests -c Release
 ./windows/publish.sh win-x64
 ```
 
-Use `win-arm64` for Windows on ARM. The ZIP is written to `.build/windows/`.
+Use `win-arm64` for Windows on ARM. The ZIP is written to the visible `releases/`
+folder at the repository root. Intermediate build files remain in `.build/`.
 The companion targets Windows 10 version 2004 or later. Native Windows
 installation and desktop behavior are checked separately from the portable
 policy tests. [PLAN.md](PLAN.md) records implementation scope and validation.

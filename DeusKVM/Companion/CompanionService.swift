@@ -20,7 +20,10 @@ final class CompanionService: ObservableObject {
     private var controls: [Queued] = []
     private var bulk: [Queued] = []
     private var blocked = false
-    private var enabled = true
+    private var selection = CompanionSelection()
+    var onSelection: (() -> Void)?
+    var onDisableRequested: ((Bool, @escaping () -> Void) -> Void)?
+    private var wantsControl = false
     private var chars: [CBMutableCharacteristic] = []
     var diagnosticState: String {
         "queued=\(controls.count + bulk.count) blocked=\(blocked)"
@@ -39,6 +42,8 @@ final class CompanionService: ObservableObject {
         var supportsResume = false
         var supportsCenter = false
         var supportsClipboard = false
+        var supportsSelection = false
+        var supportsTakeover = false
     }
 
     private struct Queued { let data: Data; let index: Int; let central: CBCentral }
@@ -65,16 +70,34 @@ final class CompanionService: ObservableObject {
         return service
     }
 
-    func setEnabled(_ value: Bool) {
-        enabled = value
-        if !value {
-            subscribedHosts.removeAll()
-            clients.removeAll(); ready.removeAll(); monitors.removeAll(); blind.removeAll(); lastSeen.removeAll()
-            controls.removeAll(); bulk.removeAll()
+    func setAvailability(enabled: Bool, allowed: Set<UUID>) {
+        if !enabled { wantsControl = false }
+        guard selection.update(enabled: enabled, allowed: allowed) else { return }
+        for id in ready where clients[id]?.supportsSelection == true {
+            send(.availability, payload: availabilityPacket(for: id), to: id)
+        }
+        onSelection?()
+    }
+
+    func requestControl() {
+        wantsControl = true
+        for id in ready where clients[id]?.supportsTakeover == true && selection.available(to: id) {
+            send(.requestControl, payload: CompanionProtocol.u32(selection.epoch), to: id)
         }
     }
 
+    func prepareControlRequest() {
+        wantsControl = true
+    }
+
+    private func availabilityPacket(for id: UUID) -> Data {
+        var packet = selection.packet(for: id)
+        if wantsControl, selection.available(to: id), clients[id]?.supportsTakeover == true { packet[4] = 2 }
+        return packet
+    }
+
     func reset() {
+        selection.reset()
         subscribedHosts.removeAll()
         clients.removeAll(); ready.removeAll(); monitors.removeAll(); blind.removeAll(); lastSeen.removeAll()
         controls.removeAll(); bulk.removeAll(); chars.removeAll(); blocked = false; manager = nil
@@ -85,7 +108,6 @@ final class CompanionService: ObservableObject {
     }
 
     func subscribed(_ central: CBCentral, _ characteristic: CBCharacteristic) {
-        guard enabled else { return }
         guard let index = chars.firstIndex(where: { $0.uuid == characteristic.uuid }) else { return }
         var client = clients[central.identifier] ?? Client(central: central)
         client.subscriptions.insert(index)
@@ -94,7 +116,11 @@ final class CompanionService: ObservableObject {
         clients[central.identifier] = client
         if !subscribedHosts.contains(central.identifier) { subscribedHosts.insert(central.identifier) }
         if sendHello {
-            sendJSON(CompanionHello(v: 1, role: "mac", name: "DeusKVM", chunk: 20, clipboard: 1), type: .hello, to: central.identifier)
+            sendJSON(CompanionHello(
+                v: 1, role: "mac", name: "DeusKVM", chunk: 20, clipboard: 1,
+                selection: 1, available: selection.available(to: central.identifier), availabilityEpoch: selection.epoch,
+                takeover: true, requestControl: wantsControl
+            ), type: .hello, to: central.identifier)
         }
     }
 
@@ -103,6 +129,7 @@ final class CompanionService: ObservableObject {
     }
 
     private func disconnect(_ id: UUID) {
+        selection.disconnect(id)
         if ready.contains(id) { log.notice("companion disconnected") }
         subscribedHosts.remove(id)
         clients.removeValue(forKey: id); ready.remove(id); monitors.removeValue(forKey: id)
@@ -111,7 +138,7 @@ final class CompanionService: ObservableObject {
     }
 
     func receive(_ request: CBATTRequest) -> CBATTError.Code {
-        guard enabled, request.offset == 0, let value = request.value,
+        guard request.offset == 0, let value = request.value,
               let index = chars.firstIndex(where: { $0.uuid == request.characteristic.uuid }),
               index == 1 || index == 3, var client = clients[request.central.identifier] else { return .writeNotPermitted }
         do {
@@ -148,29 +175,50 @@ final class CompanionService: ObservableObject {
             try receiveClipboard(packet, type: type, from: id)
             return
         }
+        try handleControl(type, payload: packet.payload, from: id)
+    }
+
+    private func handleControl(_ type: CompanionProtocol.Message, payload: Data, from id: UUID) throws {
         switch type {
+        case .selection:
+            try receiveSelection(payload, from: id)
         case .screens:
-            try receiveScreens(packet.payload, from: id)
+            try receiveScreens(payload, from: id)
         case .ping:
-            guard packet.payload.count == 4 else { throw CompanionProtocol.Failure.malformed }
-            send(.pong, payload: packet.payload, to: id)
+            guard payload.count == 4 else { throw CompanionProtocol.Failure.malformed }
+            send(.pong, payload: payload, to: id)
         case .state:
-            guard packet.payload.count == 3 else { throw CompanionProtocol.Failure.malformed }
-            blind[id] = packet.payload[0]
+            guard payload.count == 3 else { throw CompanionProtocol.Failure.malformed }
+            blind[id] = payload[0]
         case .leave:
-            guard packet.payload.count == 4, packet.payload[1] < 4 else { throw CompanionProtocol.Failure.malformed }
-            let frac = UInt16(packet.payload[2]) | UInt16(packet.payload[3]) << 8
-            onLeave?(id, packet.payload[0], packet.payload[1], frac)
+            guard payload.count == 4, payload[1] < 4 else { throw CompanionProtocol.Failure.malformed }
+            let frac = UInt16(payload[2]) | UInt16(payload[3]) << 8
+            onLeave?(id, payload[0], payload[1], frac)
         case .enterAck:
-            guard packet.payload.count == 7 else { throw CompanionProtocol.Failure.malformed }
-            blind[id] = packet.payload[6]
+            guard payload.count == 7 else { throw CompanionProtocol.Failure.malformed }
+            blind[id] = payload[6]
         case .pong: break
         default: throw CompanionProtocol.Failure.malformed
         }
     }
 
+    private func receiveSelection(_ payload: Data, from id: UUID) throws {
+        guard clients[id]?.supportsSelection == true, payload.count == 5 else { throw CompanionProtocol.Failure.malformed }
+        let epoch = CompanionProtocol.read32(payload, 0)
+        let current = epoch == selection.epoch
+        try selection.receive(payload, from: id)
+        if !selection.granted(to: id) { monitors.removeValue(forKey: id); blind.removeValue(forKey: id) }
+        onSelection?()
+        guard clients[id]?.supportsTakeover == true else { return }
+        if payload[4] == 1, current { wantsControl = false }
+        if payload[4] == 0, current || !selection.granted(to: id) {
+            let acknowledge = { [weak self] in self?.send(.releaseAck, payload: CompanionProtocol.u32(epoch), to: id) }
+            onDisableRequested?(current) { acknowledge() }
+        }
+    }
+
     private func receiveClipboard(_ packet: CompanionProtocol.Packet, type: CompanionProtocol.Message, from id: UUID) throws {
-        guard clipboardTarget?() == id else { return }
+        guard clipboardTarget?() == id, allowsControl(id) else { return }
         guard supportsClipboard(id), packet.stream == (type == .clipData ? 1 : 0) else {
             throw CompanionProtocol.Failure.malformed
         }
@@ -184,9 +232,16 @@ final class CompanionService: ObservableObject {
         clients[id]?.supportsResume = hello.resume == true
         clients[id]?.supportsCenter = hello.center == true
         clients[id]?.supportsClipboard = hello.clipboard == 1
+        clients[id]?.supportsSelection = hello.selection == 1
+        clients[id]?.supportsTakeover = hello.takeover == true
+        selection.disconnect(id)
         if let name = hello.computerName { onComputerName?(id, name) }
         ready.insert(id)
         lastSeen[id] = ProcessInfo.processInfo.systemUptime
+        if hello.selection == 1 { send(.availability, payload: availabilityPacket(for: id), to: id) }
+        if wantsControl, hello.takeover == true, selection.available(to: id) {
+            send(.requestControl, payload: CompanionProtocol.u32(selection.epoch), to: id)
+        }
         onReady?(id)
         log.info("Windows companion handshake complete")
     }
@@ -211,8 +266,18 @@ final class CompanionService: ObservableObject {
         ready.contains(id) && clients[id]?.supportsClipboard == true
     }
 
+    func allowsControl(_ id: UUID, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard selection.available(to: id), ready.contains(id), let seen = lastSeen[id], now - seen < 10 else { return false }
+        return clients[id]?.supportsSelection != true || selection.granted(to: id)
+    }
+
+    func isWaiting(_ id: UUID) -> Bool {
+        selection.available(to: id) && ready.contains(id) && clients[id]?.supportsSelection == true && !selection.granted(to: id)
+    }
+
     func sendClipboard(_ type: CompanionProtocol.Message, payload: Data, to id: UUID) {
-        guard clipboardTarget?() == id, supportsClipboard(id), payload.count <= ClipboardTransfer.blockBytes + 12 else { return }
+        guard clipboardTarget?() == id, allowsControl(id), supportsClipboard(id),
+              payload.count <= ClipboardTransfer.blockBytes + 12 else { return }
         if type == .clipData {
             enqueue(type, stream: 1, payload: payload, to: id)
         } else {
@@ -231,7 +296,7 @@ final class CompanionService: ObservableObject {
     }
 
     private func enqueue(_ type: CompanionProtocol.Message, stream: UInt8, payload: Data, to id: UUID) {
-        guard enabled, var client = clients[id], payload.count <= CompanionProtocol.maximumPayload else { return }
+        guard var client = clients[id], payload.count <= CompanionProtocol.maximumPayload else { return }
         let packet = CompanionProtocol.Packet(stream: stream, type: type.rawValue, payload: payload)
         let frames = stream == 0 ? client.controlEncoder.encode(packet) : client.bulkEncoder.encode(packet)
         clients[id] = client
@@ -246,7 +311,7 @@ final class CompanionService: ObservableObject {
     }
 
     private func drain() {
-        guard enabled, let manager, !blocked else { return }
+        guard let manager, !blocked else { return }
         while let item = controls.first ?? bulk.first {
             guard manager.updateValue(item.data, for: chars[item.index], onSubscribedCentrals: [item.central]) else {
                 blocked = true

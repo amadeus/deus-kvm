@@ -55,16 +55,7 @@ internal sealed class CompanionService : ServiceBase
             Log($"Service started as {WindowsIdentity.GetCurrent().Name}; session {Process.GetCurrentProcess().SessionId}");
             while (!stop.IsCancellationRequested)
             {
-                var settings = ReadSettings();
-                if (settings is null)
-                {
-                    worker = new("Not configured", "Open DeusKVM Companion and choose Connect a Mac.", DateTimeOffset.UtcNow);
-                    SaveStatus();
-                    await Task.Delay(TimeSpan.FromSeconds(2), stop);
-                    continue;
-                }
-                settings.Validate();
-                await RunWorkerAsync(settings, stop);
+                await RunWorkerAsync(stop);
                 await Task.Delay(TimeSpan.FromSeconds(2), stop);
             }
         }
@@ -82,7 +73,7 @@ internal sealed class CompanionService : ServiceBase
         }
     }
 
-    private async Task RunWorkerAsync(CompanionSettings settings, CancellationToken stop)
+    private async Task RunWorkerAsync(CancellationToken stop)
     {
         using var process = new Process
         {
@@ -96,7 +87,7 @@ internal sealed class CompanionService : ServiceBase
             }
         };
         process.StartInfo.ArgumentList.Add("--ble-worker");
-        worker = new("Opening", "Opening the paired Mac under the service account.", DateTimeOffset.UtcNow, settings.DeviceName);
+        worker = new("Starting", "Watching paired Macs under the service account.", DateTimeOffset.UtcNow);
         using var job = new WorkerJob(allowBreakaway: true);
         process.Start();
         job.Add(process);
@@ -110,11 +101,6 @@ internal sealed class CompanionService : ServiceBase
             while (!stop.IsCancellationRequested && !process.HasExited)
             {
                 SaveStatus();
-                if (ReadSettings() != settings)
-                {
-                    Log("Device selection changed; replacing Bluetooth worker.");
-                    break;
-                }
                 if (watchdog.IsExpired())
                 {
                     Log("Bluetooth worker is unresponsive; replacing it.");
@@ -148,13 +134,12 @@ internal sealed class CompanionService : ServiceBase
                     ?? throw new InvalidDataException("Empty worker response.");
                 worker = next;
                 watchdog.Observe(next.State);
+                if (next.DiscoveryEvent is { } discovery) Log(discovery);
                 var summary = $"{next.State}: {next.Detail}; last discovery={next.LastDiscovery:O}";
                 if (summary != previous) { Log(summary); previous = summary; }
             }
         }
     }
-
-    private static CompanionSettings? ReadSettings() => JsonFiles.Read<CompanionSettings>(Paths.Settings);
 
     private void SaveStatus()
     {

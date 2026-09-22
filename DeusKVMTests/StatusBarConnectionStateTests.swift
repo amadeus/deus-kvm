@@ -2,6 +2,16 @@ import CoreBluetooth
 import XCTest
 
 final class StatusBarConnectionStateTests: XCTestCase {
+    func testHandshakeCannotClaimReadyWithoutCaptureOrWhileWaiting() {
+        let pc = UUID()
+        var link = StatusBarConnectionState.Link(target: pc, companions: [pc], lastSeen: [pc: 100], captureReady: false)
+        XCTAssertEqual(StatusBarConnectionState.resolve(enabled: true, bluetooth: .poweredOn, link: link, now: 100), .connecting)
+        link.waiting = true
+        XCTAssertEqual(StatusBarConnectionState.resolve(enabled: true, bluetooth: .poweredOn, link: link, now: 100), .waiting)
+        link.captureReady = true
+        XCTAssertEqual(StatusBarConnectionState.resolve(enabled: true, bluetooth: .poweredOn, link: link, now: 100), .waiting)
+    }
+
     func testConnectionProgressAndHeartbeatLoss() {
         let pc = UUID()
         var link = StatusBarConnectionState.Link()

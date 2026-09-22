@@ -8,7 +8,9 @@ public static class Protocol
     public enum Message : byte
     {
         Hello = 1, Ping = 2, Pong = 3, Screens = 4, Config = 5,
-        Enter = 0x11, EnterAck = 0x12, Leave = 0x13, State = 0x14, Exit = 0x15, Resume = 0x16, EnterCenter = 0x17, ClipGrab = 0x20, ClipGet = 0x21, ClipData = 0x22, ClipState = 0x23, Nack = 0x7F
+        Enter = 0x11, EnterAck = 0x12, Leave = 0x13, State = 0x14, Exit = 0x15, Resume = 0x16, EnterCenter = 0x17,
+        Availability = 0x18, Selection = 0x19, RequestControl = 0x1A, ReleaseAck = 0x1B,
+        ClipGrab = 0x20, ClipGet = 0x21, ClipData = 0x22, ClipState = 0x23, Nack = 0x7F
     }
     public sealed record Packet(byte Stream, byte Type, byte[] Payload);
     public static Guid Uuid(int id) => new($"d5df{id:x4}-fd35-4b5c-8fc9-39dd1c43cb1d");

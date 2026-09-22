@@ -117,7 +117,7 @@ internal sealed class DesktopWorker : ApplicationContext
         if (blind != 0) cursor.Reveal();
         Send(new DesktopMessage("state", Blind: blind, Desktop: state.Desktop, MousePresent: mouse,
             Detail: !accessible ? "Secure desktop; use the Mac hotkey" : !mouse ?
-                "Waiting for the selected Mac's HID mouse" : "Windows edge return ready"));
+                "Waiting for the active Mac's HID mouse" : "Windows edge return ready"));
     }
 
     private void Handle(DesktopMessage message)

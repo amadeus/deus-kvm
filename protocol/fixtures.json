@@ -122,5 +122,75 @@
     "frames": [
       "0b0317020000000701"
     ]
+  },
+  {
+    "name": "mac_enabled",
+    "stream": 0,
+    "type": 24,
+    "payload": "7856341201",
+    "sequence": 40,
+    "frames": [
+      "280318050000007856341201"
+    ]
+  },
+  {
+    "name": "mac_disabled",
+    "stream": 0,
+    "type": 24,
+    "payload": "7856341200",
+    "sequence": 41,
+    "frames": [
+      "290318050000007856341200"
+    ]
+  },
+  {
+    "name": "windows_grant",
+    "stream": 0,
+    "type": 25,
+    "payload": "7856341201",
+    "sequence": 42,
+    "frames": [
+      "2a0319050000007856341201"
+    ]
+  },
+  {
+    "name": "windows_wait",
+    "stream": 0,
+    "type": 25,
+    "payload": "7856341200",
+    "sequence": 43,
+    "frames": [
+      "2b0319050000007856341200"
+    ]
+  },
+  {
+    "name": "enable_and_request_control",
+    "stream": 0,
+    "type": 24,
+    "payload": "7856341202",
+    "sequence": 44,
+    "frames": [
+      "2c0318050000007856341202"
+    ]
+  },
+  {
+    "name": "request_control",
+    "stream": 0,
+    "type": 26,
+    "payload": "78563412",
+    "sequence": 45,
+    "frames": [
+      "2d031a0400000078563412"
+    ]
+  },
+  {
+    "name": "release_ack",
+    "stream": 0,
+    "type": 27,
+    "payload": "78563412",
+    "sequence": 46,
+    "frames": [
+      "2e031b0400000078563412"
+    ]
   }
 ]

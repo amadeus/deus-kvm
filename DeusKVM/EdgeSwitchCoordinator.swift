@@ -43,6 +43,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
     @Published private(set) var secureInput = false
     @Published private(set) var displays: [EdgeDisplay] = []
     @Published private(set) var lastError: String?
+    @Published private(set) var canSwitch = false
+    @Published private(set) var captureBlocker: String?
     @Published var edgeEnabled = false {
         didSet { _save() }
     }
@@ -94,6 +96,15 @@ final class EdgeSwitchCoordinator: ObservableObject {
     func start() {
         guard timer == nil else { return }
         lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion() }
+        lowEnergy.companion.onSelection = { [weak self] in self?._refresh() }
+        lowEnergy.companion.onDisableRequested = { [weak self] current, acknowledge in
+            guard let self else { return }
+            if current { setEnabled(false) } else {
+                returnLocal(reason: "previous Windows ownership revoked")
+                lowEnergy.releaseInputForDisable()
+            }
+            lowEnergy.afterInputRelease(acknowledge)
+        }
         lowEnergy.companion.onLeave = { [weak self] target, switchID, edge, fraction in
             self?._returnFromPC(target: target, switchID: switchID, edge: edge, fraction: fraction)
         }
@@ -134,6 +145,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
 
     func stop() {
         returnLocal()
+        lowEnergy.companion.setAvailability(enabled: false, allowed: lowEnergy.hostPolicy.allowed)
         clipboard.stop()
         timer?.invalidate()
         timer = nil
@@ -151,14 +163,17 @@ final class EdgeSwitchCoordinator: ObservableObject {
             tap.stop(); tapReady = false; tapStarting = false; keyboardMonitoringReady = false
         }
         central.setEnabled(value)
+        if value { lowEnergy.companion.prepareControlRequest() }
         lowEnergy.setEnabled(value)
+        if value { lowEnergy.companion.requestControl() }
         _refresh()
     }
 
     func toggle() {
         guard isEnabled else { return }
         guard permissionGranted else { AccessibilityPermission.request(); return }
-        guard tapReady, isRemote || targetAvailable, !secureInput else { return }
+        _refresh()
+        guard isRemote || canSwitch else { lastError = captureBlocker; return }
         tap.requestToggle()
     }
 
@@ -213,7 +228,9 @@ final class EdgeSwitchCoordinator: ObservableObject {
             guard let uuid = CGDisplayCreateUUIDFromDisplayID(id)?.takeRetainedValue() else { return nil }
             return EdgeDisplay(id: CFUUIDCreateString(nil, uuid) as String, name: screen.localizedName, bounds: CGDisplayBounds(id))
         }
-        if displayID.isEmpty { displayID = displays.first?.id ?? "" }
+        if !displays.contains(where: { $0.id == displayID }), let fallback = displays.first {
+            displayID = fallback.id
+        }
         _configure()
     }
 
@@ -225,10 +242,11 @@ final class EdgeSwitchCoordinator: ObservableObject {
         currentTarget = isEnabled && lowEnergy.state == .poweredOn ? lowEnergy.hostPolicy.target : nil
         let available = currentTarget != nil
         if targetAvailable != available { targetAvailable = available }
+        refreshCaptureReadiness()
         if isEnabled { _refreshCompanion() } else { companionStatus = "DeusKVM is disabled" }
         _refreshConnectionState()
         refreshClipboard()
-        if isRemote, !permissionGranted || secureInput || captureTarget != currentTarget || geometry == nil {
+        if isRemote, !canSwitch || captureTarget != currentTarget {
             returnLocal(
                 reason: "capture lost: AX=\(permissionGranted) secure=\(secureInput) target=\(captureTarget == currentTarget)"
             )
@@ -242,7 +260,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
 
     private func refreshClipboard() {
         clipboard.update(
-            target: isEnabled ? lowEnergy.hostPolicy.target : nil,
+            target: canSwitch ? lowEnergy.hostPolicy.target : nil,
             remote: isRemote,
             enabled: UserDefaults.standard.object(forKey: AppSettings.clipboardEnabledKey) as? Bool ?? true,
             available: !secureInput
@@ -256,7 +274,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
             link: .init(
                 target: lowEnergy.hostPolicy.target,
                 subscribers: Set(lowEnergy.subscribedCentrals.keys).union(companion.subscribedHosts),
-                companions: companion.ready, lastSeen: companion.lastSeen
+                companions: companion.ready, lastSeen: companion.lastSeen,
+                captureReady: canSwitch, waiting: currentTarget.map { companion.isWaiting($0) } ?? false
             ), now: ProcessInfo.processInfo.systemUptime
         )
         if connectionState != state { connectionState = state }
@@ -264,7 +283,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
 
     private func _configure() {
         tap.configure(TapConfiguration(
-            targetAvailable: targetAvailable && permissionGranted && !secureInput,
+            targetAvailable: canSwitch,
             edgeEnabled: edgeEnabled && !locked && !recordingShortcut,
             geometry: geometry,
             shortcut: recordingShortcut ? ToggleShortcut(enabled: false) : shortcut
@@ -296,8 +315,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
         if monitors != pcMonitors { pcMonitors = monitors; _configureCompanion() }
         let ready = currentTarget.map { companion.ready.contains($0) } ?? false
         let blind = currentTarget.flatMap { companion.blind[$0] } ?? 4
-        let status = ready && fresh ? (blind == 0 ? "Windows edge return ready" :
-            "Windows edge return unavailable — use the hotkey") : "Waiting for Windows companion"
+        let status = captureBlocker ?? (ready && fresh ? (blind == 0 ? "Windows edge return ready" :
+                "Windows edge return unavailable — use the hotkey") : "Waiting for Windows companion")
         if companionStatus != status { companionStatus = status }
         if isRemote, companionCapture, !ready || !fresh {
             returnLocal(reason: ready ? "companion heartbeat expired" : "companion disconnected")
@@ -305,7 +324,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     }
 
     private func _configureCompanion() {
-        guard let target = currentTarget else { return }
+        guard let target = currentTarget, lowEnergy.companion.allowsControl(target) else { return }
         let companion = lowEnergy.companion
         let monitors = companion.monitors[target] ?? []
         if let monitor = monitors.first(where: { $0.id == pcMonitorID }) ??
@@ -341,7 +360,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         case let .begin(generation, origin, fromEdge):
             let startedAt = ProcessInfo.processInfo.systemUptime
             guard tap.isCurrent(generation) else { return }
-            guard isEnabled, targetAvailable, permissionGranted, !IsSecureEventInputEnabled(),
+            guard canSwitch, !IsSecureEventInputEnabled(),
                   let geometry else { returnLocal(); return }
             guard cursor.hide(at: geometry.parkingPoint, returningTo: origin) else {
                 lastError = L10n.Layout.cursorFailedString
@@ -377,5 +396,17 @@ final class EdgeSwitchCoordinator: ObservableObject {
             returnLocal(reason: "event tap disabled")
             tap.reenable()
         }
+    }
+
+    private func refreshCaptureReadiness() {
+        let companion = lowEnergy.companion
+        let state = CaptureReadiness(
+            enabled: isEnabled, target: targetAvailable, accessibility: permissionGranted,
+            keyboardMonitoring: keyboardMonitoringReady, tap: tapReady, display: geometry != nil,
+            secureInput: secureInput, granted: currentTarget.map { companion.allowsControl($0) } ?? false,
+            waiting: currentTarget.map { companion.isWaiting($0) } ?? false
+        )
+        if canSwitch != state.canSwitch { canSwitch = state.canSwitch }
+        if captureBlocker != state.blocker { captureBlocker = state.blocker }
     }
 }

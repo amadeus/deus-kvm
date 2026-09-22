@@ -6,6 +6,7 @@ internal static class Paths
     public static string DataDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "DeusKVM");
     public static string Settings => Path.Combine(DataDirectory, "settings.json");
+    public static string AutomaticMacs => Path.Combine(DataDirectory, "automatic-macs.json");
     public static string Status => Path.Combine(DataDirectory, "status.json");
     public static string Log => Path.Combine(DataDirectory, "service.log");
     public static string InstallDirectory => Path.Combine(

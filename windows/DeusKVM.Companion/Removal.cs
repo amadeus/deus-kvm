@@ -12,7 +12,6 @@ namespace DeusKVM.Companion;
 
 internal sealed class Removal(Action<string> progress, bool showResult) : IRemovalSteps
 {
-    private CompanionSettings? selected;
     internal static void RequireAdministrator()
     {
         using var identity = WindowsIdentity.GetCurrent();
@@ -35,8 +34,6 @@ internal sealed class Removal(Action<string> progress, bool showResult) : IRemov
     {
         RequireAdministrator();
         CheckDirectory(Paths.InstallDirectory); CheckDirectory(Paths.DataDirectory);
-        selected = JsonFiles.Read<CompanionSettings>(Paths.Settings);
-        selected?.Validate();
         if (Directory.Exists(Paths.InstallDirectory)) File.WriteAllText(Paths.RemovalMarker, "Removal requested");
         progress("Stopping DeusKVM and closing its workers and tray…");
         await Task.Run(() =>
@@ -51,14 +48,6 @@ internal sealed class Removal(Action<string> progress, bool showResult) : IRemov
             }
             ServiceInstaller.CloseInstalledProcesses();
         });
-    }
-    public async Task UnpairSelectedMac()
-    {
-        if (selected is null) return;
-        progress($"Removing the Windows pairing for {selected.DeviceName}…");
-        if (selected.PairingDeviceId is not null && selected.PairingDeviceId != selected.DeviceId)
-            await MacPairing.Unpair(selected.PairingDeviceId);
-        await MacPairing.Unpair(selected.DeviceId);
     }
     public async Task Unregister()
     {

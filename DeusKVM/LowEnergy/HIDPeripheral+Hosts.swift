@@ -13,12 +13,12 @@ extension HIDPeripheral {
 
     func setEnabled(_ enabled: Bool) {
         isEnabled = enabled
-        companion.setEnabled(enabled)
+        companion.setAvailability(enabled: enabled, allowed: hostPolicy.allowed)
         if enabled {
             start()
         } else {
             stop()
-            pendingBroadcasts.removeAll()
+            releaseInputForDisable()
             cachedReports = Self.emptyReports
             cachedBootMouseReport = MouseReport.zero.bootData
         }
@@ -116,5 +116,38 @@ extension HIDPeripheral {
             return id
         }
         return nil
+    }
+
+    func drainPendingBroadcast() {
+        guard let pManager else { return }
+        let recipients = releaseRecipients.isEmpty ? activeRecipients() : releaseRecipients
+        guard !recipients.isEmpty else { pendingBroadcasts.removeAll(); return }
+        while let entry = pendingBroadcasts.first {
+            guard pManager.updateValue(entry.data, for: entry.target, onSubscribedCentrals: recipients) else {
+                isReadyToSendNotification = false
+                return
+            }
+            pendingBroadcasts.removeFirst()
+        }
+        releaseRecipients.removeAll()
+        let callbacks = releaseCallbacks
+        releaseCallbacks.removeAll()
+        callbacks.forEach { $0() }
+    }
+
+    func releaseInputForDisable() {
+        guard let target = hostPolicy.target, let central = centralObjects[target] else { return }
+        releaseRecipients = [central]
+        pendingBroadcasts.removeAll()
+        for (id, data) in Self.emptyReports {
+            if let characteristic = charsByReportID[id] { pendingBroadcasts.append(data, target: characteristic) }
+        }
+        if let bootMouseInputChar { pendingBroadcasts.append(MouseReport.zero.bootData, target: bootMouseInputChar) }
+        if let bootKeyboardInputChar { pendingBroadcasts.append(KeyboardReport.zero.data, target: bootKeyboardInputChar) }
+        drainPendingBroadcast()
+    }
+
+    func afterInputRelease(_ completion: @escaping () -> Void) {
+        if releaseRecipients.isEmpty { completion() } else { releaseCallbacks.append(completion) }
     }
 }

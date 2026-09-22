@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.ServiceProcess;
+using DeusKVM.Companion.Core;
 
 namespace DeusKVM.Companion;
 
@@ -74,10 +75,16 @@ internal sealed class TrayContext : ApplicationContext
             automaticItem.Enabled = !busy;
             automaticItem.Checked = service.StartType == ServiceStartMode.Automatic;
             icon.Text = $"DeusKVM: {state}";
+            if (state == ServiceControllerStatus.Running)
+            {
+                var snapshot = JsonFiles.Read<ServiceSnapshot>(Paths.Status);
+                if (snapshot is not null && ServicePolicy.IsFresh(snapshot.UpdatedAt, DateTimeOffset.UtcNow))
+                    statusItem.Text = snapshot.Worker.DeviceName is { } name ? $"Active: {name}" : "Waiting for a paired Mac";
+            }
             settings?.RefreshControls(state, automaticItem.Checked, trayStartupItem.Checked, busy);
             settings?.RefreshStatus(state.ToString());
         }
-        catch (Exception error) when (error is InvalidOperationException or Win32Exception or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception error) when (error is InvalidOperationException or Win32Exception or UnauthorizedAccessException or System.Security.SecurityException or IOException or System.Text.Json.JsonException)
         {
             statusItem.Text = "Service unavailable — reopen DeusKVM Companion to repair";
             startItem.Enabled = stopItem.Enabled = automaticItem.Enabled = false;
@@ -107,7 +114,7 @@ internal sealed class TrayContext : ApplicationContext
     {
         if (busy) return;
         if (MessageBox.Show(settings,
-            "Remove DeusKVM, its service, startup settings and saved data from this PC? This also removes the selected Mac's Windows Bluetooth pairing. Other pairings are kept.",
+            "Remove DeusKVM, its service, startup settings and saved data from this PC? Windows Bluetooth pairings are kept.",
             "Remove DeusKVM from this PC", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
         await ControlAsync("--remove");

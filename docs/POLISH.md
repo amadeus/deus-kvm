@@ -1,3 +1,6 @@
+> For the automatic-selection build, start with [the two-Mac checkpoint](AUTOMATIC_MAC_CHECKPOINT.md).
+> The checks below cover earlier features; this Windows-only update needs no Mac rebuild.
+
 # Setup, startup, centering and disable controls
 
 This build implements the four requested polish items and the added Mac disable
@@ -7,14 +10,14 @@ computer-use interaction test was performed on the user's machines.
 
 ## Update tonight
 
-1. On Windows, extract `.build/windows/DeusKVM-Companion-win-x64.zip` and open
+1. On Windows, extract `releases/DeusKVM-Companion-win-x64.zip` and open
    `DeusKVM.Companion.exe`. Approve its normal update prompt. It closes the old
-   companion and preserves the selected Mac and service running/startup state.
+   companion and preserves pairings and service running/startup state.
    There is no separate script to run and no need to stop the service first.
 2. On the Mac, quit DeusKVM and reopen
    `.build/DerivedData/Build/Products/Debug/DeusKVM.app` from this checkout.
 3. Keep the existing pairing for the initial checks. Complete removal is the
-   last test below, because it intentionally removes that Windows pairing.
+   last test below, because it removes the app and its settings.
 
 ## Suggested manual checks
 
@@ -43,11 +46,13 @@ re-pairing. Repeat disable/re-enable quickly once. Quit/reopen while disabled:
 it should remain disabled, retaining the selected/allowed device and layout.
 
 The existing OS pairing is preserved. macOS/Windows may still show the ordinary
-Bluetooth bond/connection while the app's input and companion traffic are paused.
+Bluetooth bond/connection. Input and clipboard traffic stop; the lightweight
+companion channel remains alive for ownership requests. Enable requests control
+and automatically disables another active Mac. See the linked two-Mac checkpoint.
 
 The Mac menu bar icon now follows connection progress: an antenna while searching,
 two circular arrows while connecting, and the existing keyboard once an allowed
-PC has both HID input subscriptions and a current companion handshake. The ready
+PC has HID input subscriptions, a current companion grant, and ready Mac input capture. The ready
 keyboard still fills when controlling Windows. Disabled uses the pause icon;
 unavailable Bluetooth uses a crossed-out antenna. The menu and tooltip name the
 state. A stale companion heartbeat returns the icon to connecting, even if the
@@ -78,12 +83,12 @@ DeusKVM remains disabled even when it starts at login.
 
 ### Pair inside the companion
 
-Open **Change Mac…** and select the already paired Mac first. It should verify
+Open **Add Mac…** and select the already paired Mac first. It should verify
 DeusKVM and save without removing/recreating that bond. Cancel another attempt
-and check that the previous selection still works.
+and check that the active connection still works. Adding a Mac does not preempt it.
 
 For fresh pairing, leave **System Settings → Bluetooth** open on the Mac, then
-use **Connect a Mac…**, choose the Mac and approve Windows'
+use **Add Mac…**, choose the Mac and approve Windows'
 pairing prompt and any Mac prompt. Enable DeusKVM on the Mac; it must advertise
 when no allowed PC is ready. Other nearby Bluetooth devices may appear in the
 picker, so choose your Mac. The app verifies the HID and DeusKVM services before
@@ -94,7 +99,7 @@ all devices** reveals other categories and devices whose category is unknown,
 without restarting the search. Device names are not used to identify computers.
 Try the checkbox both ways; pairing and service verification remain unchanged.
 
-Pairing/verification failure leaves the previous selected Mac intact. A bond
+Pairing/verification failure leaves existing Mac pairings intact. A bond
 created by that failed attempt is rolled back; an existing bond is not removed.
 Rollback failure is reported explicitly. If cancellation occurs during a Windows
 pairing prompt, finish/dismiss that prompt so the attempt can settle safely.
@@ -111,7 +116,7 @@ Amadeus; retain these checks for updates.
 ### Complete removal — test last
 
 Choose **Remove DeusKVM from this PC…** in Settings or the tray and confirm.
-It removes the selected Mac's Windows pairing, stops/closes the workers and
+It preserves Windows Bluetooth pairings, stops/closes the workers and
 tray, unregisters the service and its event source, removes the tray startup
 entry and shortcut, and deletes settings, logs, installed app files and standard
 DeusKVM .NET extraction caches. Other pairings are not removed.
@@ -127,8 +132,9 @@ If any stage fails, the app reports that removal is incomplete. Reopen the
 If retrying after updating to a fixed build, open the newly extracted EXE:
 the retry runs that EXE's cleanup helper without reinstalling the old service.
 After successful removal, reopening the downloaded EXE should perform a fresh
-installation and show **Connect a Mac…**, with no saved device. Pair inside the
-app and verify that switching and clipboard sharing work again.
+installation and show **Add Mac…**, with no saved preference. Existing paired
+Macs reconnect automatically; add new Macs inside the app and verify that
+switching and clipboard sharing work again.
 
 ## Automated coverage
 

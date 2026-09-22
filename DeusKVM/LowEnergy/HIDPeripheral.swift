@@ -33,11 +33,11 @@ final class HIDPeripheral: NSObject, ObservableObject {
     private var hidServiceObj: CBMutableService?
     var isEnabled = true
     var isHIDServiceAllowed = false
-    private var isReadyToSendNotification = true
+    var isReadyToSendNotification = true
 
     var charsByReportID: [UInt8: CBMutableCharacteristic] = [:]
-    private var bootMouseInputChar: CBMutableCharacteristic?
-    private var bootKeyboardInputChar: CBMutableCharacteristic?
+    var bootMouseInputChar: CBMutableCharacteristic?
+    var bootKeyboardInputChar: CBMutableCharacteristic?
     private var bootKeyboardOutputChar: CBMutableCharacteristic?
     private var batteryLevelChar: CBMutableCharacteristic?
     private var serviceChangedObj: CBMutableService?
@@ -48,10 +48,13 @@ final class HIDPeripheral: NSObject, ObservableObject {
     var cachedReports = HIDPeripheral.emptyReports
 
     var pendingBroadcasts = HIDNotificationQueue<CBMutableCharacteristic>()
+    var releaseRecipients: [CBCentral] = []
+    var releaseCallbacks: [() -> Void] = []
     var cachedBootMouseReport = MouseReport.zero.bootData
 
     func start() {
         guard isEnabled else { return }
+        companion.setAvailability(enabled: isEnabled, allowed: hostPolicy.allowed)
         companion.clipboardTarget = { [weak self] in self?.hostPolicy.target }
         isHIDServiceAllowed = true
         if pManager == nil {
@@ -83,6 +86,8 @@ final class HIDPeripheral: NSObject, ObservableObject {
         isHIDServiceAdded = false
         isReadyToSendNotification = true
         pendingBroadcasts.removeAll()
+        releaseRecipients.removeAll()
+        releaseCallbacks.removeAll()
         companion.reset()
         batteryServiceObj = nil
         deviceInfoServiceObj = nil
@@ -126,12 +131,13 @@ final class HIDPeripheral: NSObject, ObservableObject {
         if policy.target != hostPolicy.target {
             // Release on the old destination before changing recipients.
             onTargetWillChange?()
-            pendingBroadcasts.removeAll()
+            if releaseRecipients.isEmpty { pendingBroadcasts.removeAll() }
             cachedReports = Self.emptyReports
             cachedBootMouseReport = MouseReport.zero.bootData
             keyboardLEDs = []
         }
         if policy != hostPolicy { hostPolicy = policy }
+        companion.setAvailability(enabled: isEnabled, allowed: policy.allowed)
         reconcileAdvertising()
     }
 
@@ -368,19 +374,6 @@ final class HIDPeripheral: NSObject, ObservableObject {
         return accepted
     }
 
-    private func drainPendingBroadcast() {
-        guard let pManager else { return }
-        let recipients = activeRecipients()
-        guard !recipients.isEmpty else { pendingBroadcasts.removeAll(); return }
-        while let entry = pendingBroadcasts.first {
-            guard pManager.updateValue(entry.data, for: entry.target, onSubscribedCentrals: recipients) else {
-                isReadyToSendNotification = false
-                return
-            }
-            pendingBroadcasts.removeFirst()
-        }
-    }
-
     func trace(_ message: @autoclosure () -> String) {
         guard UserDefaults.standard.bool(forKey: AppSettings.developerModeKey) else { return }
         let text = message()
@@ -499,6 +492,9 @@ extension HIDPeripheral: @preconcurrency CBPeripheralManagerDelegate {
             chars.remove(characteristic.uuid)
         }
         if chars.isEmpty {
+            if releaseRecipients.contains(where: { $0.identifier == central.identifier }) {
+                pendingBroadcasts.removeAll(); releaseRecipients.removeAll(); releaseCallbacks.removeAll()
+            }
             subscribedCentrals.removeValue(forKey: central.identifier)
             centralObjects.removeValue(forKey: central.identifier)
             inputSubscriptions.removeValue(forKey: central.identifier)

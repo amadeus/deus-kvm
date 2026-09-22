@@ -5,6 +5,7 @@ xcuserdata/
 DerivedData/
 build/
 .build/
+/releases/
 *.moved-aside
 *.hmap
 *.dSYM.zip

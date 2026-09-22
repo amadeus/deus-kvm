@@ -63,7 +63,7 @@ internal sealed class MacPairing(MacCandidate candidate, Action<string> progress
             finally { foreach (var service in result.Services) service.Dispose(); }
             await Task.Delay(500, timeout.Token);
         }
-        throw new InvalidOperationException("DeusKVM was not found on this device. Enable DeusKVM on the Mac and try again. Your previous Mac selection has not changed.");
+        throw new InvalidOperationException("DeusKVM was not found on this device. Enable DeusKVM on the Mac and try again. Existing Mac pairings are unchanged.");
     }
     public async Task Save(CompanionSettings settings)
     {
