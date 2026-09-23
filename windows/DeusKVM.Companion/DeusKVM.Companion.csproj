@@ -14,6 +14,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>AppIcon.ico</ApplicationIcon>
     <PublishTrimmed>false</PublishTrimmed>
+    <!-- The companion UI is English. Keep framework fallback resources, not every translated satellite. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>

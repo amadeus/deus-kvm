@@ -60,6 +60,18 @@ Windows may display its normal unsigned-app reputation prompt for this personal
 build. The archive is built from this repository; no installer downloads or
 third-party servers are used at runtime.
 
+## Package size
+
+The single EXE includes .NET 10 and Windows Forms so no runtime download or
+installation is needed. English framework resources are retained; framework
+messages fall back to English on other Windows display languages. The app's
+English UI, Bluetooth, service and clipboard features are unchanged.
+
+Measured alternatives and the path to a substantially smaller native build are
+recorded in [the size investigation](../docs/WINDOWS_SIZE_PLAN.md). A tiny
+framework-dependent download would require a separate Desktop Runtime install;
+that is not the release shipped here.
+
 ## Window and tray controls
 
 - **Start Service:** start now.

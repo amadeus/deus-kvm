@@ -19,7 +19,7 @@ root=Path(sys.argv[1])
 release_dir=Path('releases')
 release_dir.mkdir(exist_ok=True)
 archive=release_dir / ('DeusKVM-Companion-' + root.name + '.zip')
-with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
+with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     for p in sorted(root.iterdir()):
         if p.name in {'DeusKVM.Companion.exe', 'README.md', 'CHECKPOINT.md', 'FILE_PASTE_CHECKPOINT.md', 'CPU_EDGE_CHECKPOINT.md'}:
             z.write(p,p.name)
