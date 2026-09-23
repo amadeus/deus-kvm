@@ -25,6 +25,7 @@ final class HIDPeripheral: NSObject, ObservableObject {
     private let batteryLevel: UInt8 = 100
 
     var centralObjects: [UUID: CBCentral] = [:]
+    var lowLatencyCentral: CBCentral?
 
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "HIDPeripheral")
     var pManager: CBPeripheralManager?
@@ -137,6 +138,7 @@ final class HIDPeripheral: NSObject, ObservableObject {
             keyboardLEDs = []
         }
         if policy != hostPolicy { hostPolicy = policy }
+        reconcileConnectionLatency()
         companion.setAvailability(enabled: isEnabled, allowed: policy.allowed)
         reconcileAdvertising()
     }

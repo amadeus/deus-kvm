@@ -3,12 +3,24 @@
 Update **Windows and both Macs**. Keep Bluetooth enabled and retain both pairings.
 The earlier Windows-only build does not implement this flow.
 
-## Pointer experiments removed — latest build
+## Low-latency trial — latest Mac build
+
+Only the Mac app changes for this trial. Keep the existing HID-restore Windows
+companion. Quit DeusKVM, replace the Mac app with the low-latency build below and
+relaunch. There is no new setting: the enabled Mac automatically requests low
+Bluetooth connection latency for its HID target. Disabled/former targets request
+balanced latency while still connected. Windows may choose a different interval.
+
+Use the mouse normally on Windows and compare smoothness/responsiveness. Mouse
+reports, acceleration behavior and queue handling are unchanged. Report whether
+it feels better, unchanged or worse; measurement work is deferred for this trial.
+
+## Pointer experiments removed
 
 At the user's request, the pointer-speed slider and experimental direct-pointer
 mode have been removed. This build restores the original Bluetooth HID mouse
 reports. Saved experimental preferences are ignored; no reset or re-pairing is
-needed. Update Windows and both Macs using the HID-restore ZIPs below. Automatic
+needed. Update Windows and both Macs using the current ZIPs below. Automatic
 ownership/takeover, the display-selection fix and bounded recovery polling remain.
 
 ## Update
@@ -17,7 +29,7 @@ ownership/takeover, the display-selection fix and bounded recovery polling remai
    and open `DeusKVM.Companion.exe`. Approve the update prompt; it closes the old
    companion automatically. No scripts or .NET installation are needed.
 2. On **each Mac**, quit DeusKVM, unzip
-   `DeusKVM-mac-arm64-hid-restore-2026-09-22.zip`, and replace the app in its usual
+   `DeusKVM-mac-arm64-low-latency-2026-09-22.zip`, and replace the app in its usual
    location with the new `DeusKVM.app`. Open that copy. This build is for Apple Silicon only. Keep each Mac's existing permissions and layout.
 3. If a Mac cannot switch, read **Layout → Windows**. The status now distinguishes
    waiting for Windows control from missing permissions or unavailable capture.

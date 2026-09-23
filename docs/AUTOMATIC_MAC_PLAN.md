@@ -359,3 +359,32 @@ HID-restore ZIPs remain in releases. Hardware confirmation is pending.
 
 - `DeusKVM-mac-arm64-hid-restore-2026-09-22.zip` — 942,457 bytes; SHA-256 `dc1d2c5efb98cff3468363c3b65de5d16c1fdb3bac644bfff822714257b0ba97`.
 - `DeusKVM-Companion-win-x64-hid-restore-2026-09-22.zip` — 52,395,012 bytes; SHA-256 `6d06e2cea870450fbf3aae75dc87eaf3842090304b7af709d7e4882d66e137eb`.
+
+
+## Low-latency-only trial — 2026-09-22
+
+User requests the simple low-latency experiment and a subjective comparison.
+Defer queue changes, instrumentation and other pointer work.
+
+- [x] Request CoreBluetooth low connection latency for the enabled HID target on
+  subscription/target change and re-enable. Request medium (balanced) latency for
+  a still-connected former target on disable/target change. Clear bookkeeping on
+  Bluetooth reset and reapply on a fresh connection. No per-report API calls.
+- [x] Keep mouse capture, report contents, queue behavior and Windows code unchanged.
+- [x] Run Mac regression tests/lint, build signed arm64-only release, verify ZIP.
+- [x] Commit and leave only the new Mac ZIP and existing Windows ZIP in releases.
+- [ ] User installs the Mac build and compares perceived smoothness on Windows.
+
+The API is a request: neither a negotiated interval nor a higher report rate is
+proven by this change. No numeric polling-rate claim or hardware pass is recorded.
+
+
+Validation: 77 Mac tests, strict SwiftLint and the release build passed. Packaged
+app is arm64 only and passes extracted deep/strict signature verification; ZIP
+CRC passed. Windows code and its existing HID-restore ZIP are unchanged.
+
+- `DeusKVM-mac-arm64-low-latency-2026-09-22.zip` — 943,573 bytes;
+  SHA-256 `ee5b16593cc3b9f1362453a5b3ea41cdc0b83563b9a5adffc430578bd1c60157`.
+
+Await user setup and subjective comparison. Bluetooth interval acceptance and
+smoother movement are not established by compilation or tests.

@@ -22,6 +22,23 @@ extension HIDPeripheral {
             cachedReports = Self.emptyReports
             cachedBootMouseReport = MouseReport.zero.bootData
         }
+        reconcileConnectionLatency()
+    }
+
+    /// A preference, not a guaranteed interval. Only the enabled HID target
+    /// requests low latency; still-connected former targets return to balanced.
+    func reconcileConnectionLatency() {
+        guard let pManager, pManager.state == .poweredOn else { lowLatencyCentral = nil; return }
+        let next = isEnabled ? hostPolicy.target.flatMap { centralObjects[$0] } : nil
+        guard lowLatencyCentral?.identifier != next?.identifier else { return }
+        if let previous = lowLatencyCentral, hostPolicy.ready.contains(previous.identifier) {
+            pManager.setDesiredConnectionLatency(.medium, for: previous)
+        }
+        if let next {
+            pManager.setDesiredConnectionLatency(.low, for: next)
+            trace("requested low connection latency for active HID target: \(next.identifier)")
+        }
+        lowLatencyCentral = next
     }
 
     static let emptyReports: [UInt8: Data] = [
