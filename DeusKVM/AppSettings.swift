@@ -12,6 +12,7 @@ enum AppSettings {
 
     static let invertVerticalScrollKey = "DeusKVM.invertVerticalScroll"
     static let invertHorizontalScrollKey = "DeusKVM.invertHorizontalScroll"
+    static let directPointerKey = "DeusKVM.directPointer"
     static let windowsPointerSpeedKey = "DeusKVM.windowsPointerSpeed"
 
     static let edgeSwitchEnabledKey = "DeusKVM.edgeSwitchEnabled"

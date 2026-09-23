@@ -229,3 +229,11 @@ command first; there is no migration from the old application/service identities
 Updates from an existing DeusKVM build preserve pairings, service running/stopped
 state and startup preferences. Its former selected Mac becomes an initial
 preference, without restricting automatic discovery of your other paired Macs.
+
+## Experimental direct pointer
+
+The Mac Settings toggle **Direct Windows pointer (experimental)** uses this
+companion for absolute normal-desktop mouse input. Global Windows pointer
+settings are not changed. Keyboard input remains Bluetooth HID. Switch the
+option off for HID mouse input in elevated applications or at sign-in.
+See the included CHECKPOINT.md for setup and the pending hardware checks.

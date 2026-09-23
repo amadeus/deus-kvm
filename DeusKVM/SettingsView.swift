@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.invertHorizontalScrollKey) private var invertHorizontalScroll = false
     @AppStorage(AppSettings.clipboardEnabledKey) private var clipboardEnabled = true
     @AppStorage(AppSettings.windowsPointerSpeedKey) private var storedPointerSpeed = PointerMotionScaler.defaultSpeed
+    @AppStorage(AppSettings.directPointerKey) private var directPointer = false
     @State private var showReset = false
     @AppStorage(AppSettings.developerModeKey) private var developerMode = false
     @AppStorage(AppSettings.useServiceChangedKey) private var forceServiceChanged = true
@@ -45,6 +46,14 @@ struct SettingsView: View {
             } footer: {
                 Text(
                     "Shares plain text up to 64 KiB. Skips marked private items and pauses while locked or signed out."
+                )
+            }
+            Section {
+                Toggle("Direct Windows pointer (experimental)", isOn: $directPointer)
+                    .onChange(of: directPointer) { _ in coordinator.returnLocal(reason: "pointer mode changed") }
+            } footer: {
+                Text(
+                    "Bypasses Windows acceleration. Requires updated companion. Turn off for elevated apps and sign-in."
                 )
             }
             pointerSpeedSection

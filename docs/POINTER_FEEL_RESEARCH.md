@@ -134,7 +134,8 @@ The user confirms the slider works functionally but does not correct the
 Windows-side acceleration feel. This is feedback on pointer tuning, not proof
 that every takeover, lag or hardware checkpoint has passed. They request options
 for correcting the response curve while preserving other Windows mice's settings.
-No further pointer implementation is authorized by this options discussion.
+The user subsequently approved option 2. Implementation and hardware checkpoint
+are tracked in [DIRECT_POINTER_PLAN.md](DIRECT_POINTER_PLAN.md).
 
 Two viable directions:
 

@@ -322,3 +322,9 @@ in POINTER_FEEL_RESEARCH.md, with direct-position mode recommended for a measure
 prototype. No new input implementation or settings changes in this discussion.
 Other pending hardware checks remain pending; slider functionality alone does
 not close the lag or two-Mac checkpoints.
+
+## Direct-pointer follow-up — 2026-09-22
+
+User confirms the speed slider works but does not fix acceleration feel, and
+approves the optional direct-position prototype. Phases, boundaries, validation
+and pending hardware results are tracked in [DIRECT_POINTER_PLAN.md](DIRECT_POINTER_PLAN.md).

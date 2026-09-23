@@ -145,3 +145,12 @@ We built a new Mac-to-Windows KVM app on top of its Bluetooth HID foundation,
 adding screen-edge switching, a Windows companion service, login-screen control,
 and shared text clipboard support. Thanks to the original author and contributors
 for making that foundation available as open source.
+
+### Experimental direct Windows pointer
+
+Settings → **Direct Windows pointer (experimental)** uses the updated Windows
+companion to position the pointer absolutely, bypassing Windows relative mouse
+acceleration without changing other mice's settings. It is off by default;
+turn it off for the original HID path, elevated apps or sign-in. Both platforms
+need the latest builds. See [the checkpoint](docs/AUTOMATIC_MAC_CHECKPOINT.md)
+and [tracked plan](docs/DIRECT_POINTER_PLAN.md). Hardware feel is pending testing.

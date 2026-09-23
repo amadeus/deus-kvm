@@ -18,6 +18,7 @@ internal sealed class DesktopWorker : ApplicationContext
     private readonly InactiveCursor cursor = new();
     private readonly string address;
     private readonly int parent;
+    private readonly DirectPointer pointer = new();
     private readonly HandoffSession handoff = new();
     private readonly DesktopRecoveryPoll recoveryPoll = new();
     private readonly Dictionary<IntPtr, bool> devices = [];
@@ -54,7 +55,7 @@ internal sealed class DesktopWorker : ApplicationContext
                     await DesktopPipe.Pump(pipe, output.Reader,
                         message => context.Post(_ => Handle(message), null), shutdown.Token).ConfigureAwait(false);
                 }
-                finally { Environment.Exit(0); }
+                finally { pointer.Shutdown(); Environment.Exit(0); }
             });
             if (!DesktopNative.RegisterRawInputDevices([
                 new() { Page = 1, Usage = 2, Flags = 0x2100, Target = window.Handle }
@@ -68,7 +69,7 @@ internal sealed class DesktopWorker : ApplicationContext
             await connection.ConfigureAwait(false);
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or Win32Exception or System.Text.Json.JsonException) { }
-        finally { Environment.Exit(0); }
+        finally { pointer.Shutdown(); Environment.Exit(0); }
     }
 
     private void Send(DesktopMessage message)
@@ -78,6 +79,7 @@ internal sealed class DesktopWorker : ApplicationContext
 
     private void Refresh()
     {
+        pointer.CheckLiveness();
         var state = DesktopNative.DesktopState();
         if (state.Desktop != 0)
         {
@@ -89,7 +91,7 @@ internal sealed class DesktopWorker : ApplicationContext
         if (!next.SequenceEqual(monitors))
         {
             cursor.Reveal();
-            handoff.Exit(); monitors = next;
+            pointer.End(); handoff.Exit(); monitors = next;
             Send(new DesktopMessage("screens", Monitors: monitors));
         }
         uint count = 0;
@@ -115,7 +117,7 @@ internal sealed class DesktopWorker : ApplicationContext
         var accessible = state.Desktop == 0;
         blind = !accessible ? state.Blind : !mouse ? (byte)3 : (byte)0;
         handoff.SetAvailable(blind == 0);
-        if (blind != 0) cursor.Reveal();
+        if (blind != 0) { pointer.End(); cursor.Reveal(); }
         Send(new DesktopMessage("state", Blind: blind, Desktop: state.Desktop, MousePresent: mouse,
             Detail: !accessible ? "Secure desktop; use the Mac hotkey" : !mouse ?
                 "Waiting for the active Mac's HID mouse" : "Windows edge return ready"));
@@ -127,30 +129,33 @@ internal sealed class DesktopWorker : ApplicationContext
         switch (message.Kind)
         {
             case "config":
-                cursor.Reveal();
+                pointer.End(); cursor.Reveal();
                 handoff.Exit();
                 config = message.Config is { Edge: < 4 } ? message.Config : null;
                 break;
-            case "reset": cursor.Reveal(); handoff.Exit(); break;
+            case "reset": pointer.End(); cursor.Reveal(); handoff.Exit(); break;
             case "exit":
                 if (handoff.Accept(message.SwitchId))
                 {
-                    handoff.Exit();
+                    pointer.End(); handoff.Exit();
                     if (blind == 0) cursor.Hide();
                 }
+                break;
+            case "pointer":
+                HandlePointer(message);
                 break;
             case "resume":
                 // Reattach to current Mac ownership after login/worker startup.
                 // Never replay entry placement over the user's current cursor.
                 if (config?.Edge == message.Edge && monitors.Any(item => item.Id == config.Monitor))
                 {
-                    handoff.Enter(message.SwitchId);
+                    pointer.End(); handoff.Enter(message.SwitchId);
                     cursor.Reveal();
                     UpdateDesktopState(DesktopNative.DesktopState());
                 }
                 break;
             case "enter":
-                cursor.Reveal();
+                pointer.End(); cursor.Reveal();
                 handoff.Exit();
                 var monitor = monitors.FirstOrDefault(item => item.Id == config?.Monitor);
                 var ok = false;
@@ -167,7 +172,11 @@ internal sealed class DesktopWorker : ApplicationContext
                             Math.Abs(position.X - point.X) <= 1 && Math.Abs(position.Y - point.Y) <= 1;
                     }
                 }
-                Send(new DesktopMessage("ack", SwitchId: message.SwitchId, Ok: ok,
+                if (message.Direct) {
+                    ok = ok && blind == 0;
+                    if (ok) { pointer.Begin(message.SwitchId); ok = pointer.Active; }
+                }
+                Send(new DesktopMessage("ack", Direct: message.Direct, SwitchId: message.SwitchId, Ok: ok,
                     X: position.X, Y: position.Y, Blind: ok ? blind : (byte)4));
                 break;
         }
@@ -203,16 +212,34 @@ internal sealed class DesktopWorker : ApplicationContext
             if (handoff.Active is not { } id || config is null || !handoff.CanReturn ||
                 (Marshal.ReadInt16(mouse) & 1) != 0 || !DesktopNative.GetCursorPos(out var point)) return;
             if (dx == 0 && dy == 0) return;
-            var monitor = monitors.FirstOrDefault(item => item.Id == config.Monitor);
-            if (monitor is null) return;
-            var held = new[] { 1, 2, 4, 5, 6 }.Any(key => DesktopNative.GetAsyncKeyState(key) < 0);
-            var clipped = !DesktopNative.GetClipCursor(out var clip) || clip.Left > monitor.X || clip.Top > monitor.Y ||
-                clip.Right < monitor.X + monitor.W || clip.Bottom < monitor.Y + monitor.H;
-            if (EdgeDetector.Observe(monitor, monitors, config, point.X, point.Y, dx, dy, held, clipped))
-                Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
-                    Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
+            ObserveEdge(point, dx, dy, id);
         }
         finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    private void HandlePointer(DesktopMessage message)
+    {
+        if (!handoff.Accept(message.SwitchId)) return;
+        var dx = 0; var dy = 0;
+        var ok = message.Pointer is { } sample && handoff.Accept(sample.Id) && handoff.CanReturn &&
+            pointer.Apply(sample, out dx, out dy);
+        if (!ok) pointer.End();
+        Send(new DesktopMessage("pointer-ack", SwitchId: message.SwitchId, Serial: message.Pointer?.Serial ?? 0, Ok: ok));
+        if (ok && (dx != 0 || dy != 0) && DesktopNative.GetCursorPos(out var point))
+            ObserveEdge(point, dx, dy, message.SwitchId, message.Pointer?.Buttons != 0);
+    }
+
+    private void ObserveEdge(DesktopNative.Point point, int dx, int dy, byte id, bool directHeld = false)
+    {
+        if (config is null || !handoff.CanReturn) return;
+        var monitor = monitors.FirstOrDefault(item => item.Id == config.Monitor);
+        if (monitor is null) return;
+        var held = directHeld || new[] { 1, 2, 4, 5, 6 }.Any(key => DesktopNative.GetAsyncKeyState(key) < 0);
+        var clipped = !DesktopNative.GetClipCursor(out var clip) || clip.Left > monitor.X || clip.Top > monitor.Y ||
+            clip.Right < monitor.X + monitor.W || clip.Bottom < monitor.Y + monitor.H;
+        if (EdgeDetector.Observe(monitor, monitors, config, point.X, point.Y, dx, dy, held, clipped))
+            Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
+                Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
     }
 
     protected override void Dispose(bool disposing)
@@ -220,6 +247,7 @@ internal sealed class DesktopWorker : ApplicationContext
         if (disposing)
         {
             Application.Idle -= Start;
+            pointer.Shutdown();
             clipboard?.Dispose();
             cursor.Dispose();
             shutdown.Cancel(); timer.Dispose(); pipe.Dispose(); window.DestroyHandle(); shutdown.Dispose();
