@@ -2,7 +2,7 @@
 
 - [x] Design: Mac to Windows, one regular file at a time, at most 10 MiB. Copy advertises metadata only. Native Explorer paste requests contents over existing paired Bluetooth control/bulk channels. No source deletion, staging download, folders, or network listener.
 - [x] Implement metadata snapshots and bounded, deferred Mac file reads; invalidate on clipboard changes, disable, ownership loss, lock, or disconnect.
-- [x] Implement Windows OLE virtual file clipboard, asynchronous paste and on-demand stream reads. Require an asynchronous extraction operation before sending file requests; suppress clipboard history/cloud formats.
+- [x] Implement Windows OLE virtual file clipboard, asynchronous paste and on-demand stream reads. Fetch only when the native file stream is read (optional async callbacks are not authorization); suppress clipboard history/cloud formats.
 - [x] Verify protocol boundaries, stale transfers, source changes, and build both platforms.
 - [x] Package only current Windows x64 and Mac arm64 test ZIPs; commit verified implementation.
 - [ ] Hardware checkpoint: Explorer keyboard/menu paste, no reads before paste, byte equality, zero-byte file, cancel, local clipboard replacement, ownership/disconnect, text and edge-switch regression.
@@ -24,7 +24,7 @@ Deferred: Windows to Finder native paste investigation; multiple files/folders; 
   with clipboard managers and radio throughput are **not hardware-validated**.
   Test one paste at a time. A failed/canceled offer requires a fresh source copy.
 
-Current visible `releases/` contains only:
+Initial prototype release receipts (Windows build superseded by the Access Denied fix below):
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
@@ -43,3 +43,40 @@ sequence while retaining the same data object. File ownership therefore uses
 `OleIsCurrentClipboard`, and the poller treats those sequence changes as imported
 updates instead of external copies. A genuinely replaced clipboard still stops
 reads. The Windows package is rebuilt after this adjustment.
+
+## Access Denied follow-up — 2026-09-22
+
+User hardware result: Windows Explorer displayed "Error Copying File or Folder"
+with "Access Denied". The transfer checkpoint has **not passed**.
+
+Source inspection found explicit STG_E_ACCESSDENIED rejections for a missing
+optional async-start callback and for OLE identity queried by a stream callback.
+The original build did not record which branch fired; the precise hardware cause
+is not confirmed. Microsoft's API documents async extraction as optional.
+
+- [x] Accept native synchronous reads without requiring StartOperation. Metadata
+  queries and creation of a stream still do not request any file contents.
+- [x] Keep OLE identity checks on the clipboard STA. Stream callbacks use the
+  installed clipboard-owner HWND plus the existing session/desktop checks.
+- [x] Add bounded fixed-event diagnostics without file names, paths or contents.
+- [x] Run regression tests/build; package and verify replacement Windows x64 ZIP.
+- [x] Commit fix and record final release receipt.
+- [ ] User updates Windows, makes a fresh Finder copy, and retests Explorer paste.
+
+Native on-demand semantics: a consumer actually reading contents starts transfer.
+DeusKVM never pre-downloads files or renders contents for metadata inspection.
+A third-party clipboard manager that explicitly reads the stream can initiate
+transfer; the optional async API is not a reliable way to identify user intent.
+Strict user-action detection across arbitrary clipboard apps remains unproven.
+
+Reference: [optional async extraction](https://learn.microsoft.com/en-us/windows/win32/api/shldisp/nn-shldisp-idataobjectasynccapability).
+
+Access Denied fix validation: 124 .NET tests passed; Release build and x64
+publish passed. ZIP CRC, expected four archive entries and x64 PE checks passed.
+The Mac ZIP is unchanged (SHA-256 verified against its original receipt).
+Only the current Mac ZIP and replacement Windows ZIP remain in `releases/`.
+
+`DeusKVM-Companion-win-x64-file-paste-fix-2026-09-22.zip` — 52406205 bytes;
+SHA-256 `4b93c5e1f09687ad705564e2774515de0c11e0f6910ff23937824bad8a41d048`.
+
+Native paste success remains pending a fresh user test.

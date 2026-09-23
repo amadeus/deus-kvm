@@ -40,7 +40,7 @@ ownership/takeover, the display-selection fix and bounded recovery polling remai
 
 ## Update
 
-1. On Windows, extract `DeusKVM-Companion-win-x64-file-paste-2026-09-22.zip`
+1. On Windows, extract `DeusKVM-Companion-win-x64-file-paste-fix-2026-09-22.zip`
    and open `DeusKVM.Companion.exe`. Approve the update prompt; it closes the old
    companion automatically. No scripts or .NET installation are needed.
 2. On **each Mac**, quit DeusKVM, unzip

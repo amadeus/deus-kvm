@@ -109,8 +109,11 @@ Native memory ownership follows
 
 The same sharing toggle also enables **one regular Mac file up to 10 MiB** to
 be pasted in Windows Explorer. Copy sends metadata, not file contents. The OLE
-virtual-file stream requests 1 KiB blocks only during asynchronous extraction.
-Clipboard inspection without an extraction operation cannot start a download.
+virtual-file stream requests 1 KiB blocks only when a consumer reads contents.
+Metadata inspection does not start a download. Synchronous and asynchronous
+consumers are supported; asynchronous callbacks are optional. A clipboard manager
+that actively reads file contents can trigger a transfer; Windows does not label
+every stream read as a user paste.
 No temporary pre-download is created. Files are never cut or deleted at source.
 See [the current file paste checkpoint](FILE_PASTE_CHECKPOINT.md) for builds,
 limits and outstanding native integration checks. Reverse file paste, folders,

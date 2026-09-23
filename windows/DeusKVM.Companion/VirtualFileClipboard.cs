@@ -24,12 +24,27 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
     private static readonly short Effect = Format("Preferred DropEffect"), Own = Format("DeusKVM.Clipboard");
     private static readonly short History = Format("CanIncludeInClipboardHistory"), Cloud = Format("CanUploadToCloudClipboard");
     private readonly FileClipboardSession session;
-    private readonly Func<bool> permitted;
+    private readonly FileClipboardOperation operation;
     private bool asyncMode = true;
-    private volatile bool operating;
-    public VirtualFileClipboard(FileClipboardSession session, Func<bool> permitted) { this.session = session; this.permitted = permitted; }
+    private IntPtr ownerWindow;
+    public VirtualFileClipboard(FileClipboardSession session, Func<bool> permitted)
+    {
+        this.session = session;
+        operation = new FileClipboardOperation(permitted,
+            () => Volatile.Read(ref ownerWindow) != IntPtr.Zero && GetClipboardOwner() == Volatile.Read(ref ownerWindow),
+            session.Dispose, FilePasteDiagnostics.Write);
+    }
+    // OLE identity checks stay on the clipboard STA. Stream callbacks may run
+    // on another COM thread, where we check the published HWND instead.
     internal bool IsCurrent => OleIsCurrentClipboard(this) == 0;
-    internal bool Install() => OleSetClipboard(this) >= 0;
+    internal bool Install()
+    {
+        var result = OleSetClipboard(this);
+        if (result < 0) return false;
+        Volatile.Write(ref ownerWindow, GetClipboardOwner());
+        FilePasteDiagnostics.Write("offer-installed");
+        return true;
+    }
     internal bool Revoke()
     {
         session.Dispose();
@@ -37,21 +52,9 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
     }
     public void SetAsyncMode(bool value) => asyncMode = value;
     public void GetAsyncMode(out bool value) => value = asyncMode;
-    public void StartOperation(IntPtr reserved) { Check(); operating = true; }
-    public void InOperation(out bool value) => value = operating;
-    public void EndOperation(int result, IntPtr reserved, uint effects)
-    {
-        operating = false;
-        if (result < 0) session.Dispose();
-    }
-    private void Check() { if (!permitted()) throw new COMException("File offer expired", unchecked((int)0x80030005)); }
-    private void CheckRead()
-    {
-        Check();
-        // Clipboard inspection must not start a download. This prototype supports
-        // Explorer's asynchronous extraction only, not synchronous clipboard consumers.
-        if (!operating || !IsCurrent) throw new COMException("Paste must start an asynchronous operation", unchecked((int)0x80030005));
-    }
+    public void StartOperation(IntPtr reserved) => operation.Start();
+    public void InOperation(out bool value) => value = operation.Operating;
+    public void EndOperation(int result, IntPtr reserved, uint effects) => operation.End(result);
     private static FORMATETC Entry(short id, TYMED medium, int index = -1) => new() { cfFormat = id, dwAspect = DVASPECT.DVASPECT_CONTENT, lindex = index, tymed = medium };
     private static FORMATETC[] Formats => [Entry(Descriptor, TYMED.TYMED_HGLOBAL), Entry(Contents, TYMED.TYMED_ISTREAM, 0),
         Entry(Effect, TYMED.TYMED_HGLOBAL), Entry(Own, TYMED.TYMED_HGLOBAL), Entry(History, TYMED.TYMED_HGLOBAL), Entry(Cloud, TYMED.TYMED_HGLOBAL)];
@@ -64,12 +67,13 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
     }
     public void GetData(ref FORMATETC format, out STGMEDIUM medium)
     {
-        Check();
+        operation.Check();
         Marshal.ThrowExceptionForHR(QueryGetData(ref format));
         if (format.cfFormat == Contents)
         {
+            FilePasteDiagnostics.Write("contents-stream-requested");
             medium = new STGMEDIUM { tymed = TYMED.TYMED_ISTREAM,
-                unionmember = Marshal.GetComInterfaceForObject(new RemoteFileStream(session, CheckRead), typeof(IStream)) };
+                unionmember = Marshal.GetComInterfaceForObject(new RemoteFileStream(session, operation.CheckRead), typeof(IStream)) };
             return;
         }
         byte[] bytes;
@@ -100,6 +104,7 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
     public int EnumDAdvise(out IEnumSTATDATA? data) { data = null; return unchecked((int)0x80040003); }
     private static short Format(string name) => unchecked((short)RegisterClipboardFormat(name));
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterClipboardFormat(string name);
+    [DllImport("user32.dll")] private static extern IntPtr GetClipboardOwner();
     [DllImport("ole32.dll")] private static extern int OleSetClipboard(IDataObject? data);
     [DllImport("ole32.dll")] private static extern int OleIsCurrentClipboard(IDataObject data);
     [DllImport("ole32.dll")] private static extern void ReleaseStgMedium(ref STGMEDIUM medium);

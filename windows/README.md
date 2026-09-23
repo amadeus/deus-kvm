@@ -233,6 +233,6 @@ preference, without restricting automatic discovery of your other paired Macs.
 ## On-demand file paste prototype
 
 The current build accepts one Mac file up to 10 MiB through native Explorer
-paste. Contents transfer over Bluetooth only when the asynchronous file stream
-is read. See `CHECKPOINT.md` in the current test ZIP or
+paste. Contents transfer over Bluetooth only when the file stream is read;
+synchronous and asynchronous native consumers are supported. See `CHECKPOINT.md` in the current test ZIP or
 [the file paste checkpoint](../docs/FILE_PASTE_CHECKPOINT.md).

@@ -3,9 +3,11 @@
 Use these two builds from the visible `releases/` folder:
 
 - `DeusKVM-mac-arm64-file-paste-2026-09-22.zip`
-- `DeusKVM-Companion-win-x64-file-paste-2026-09-22.zip`
+- `DeusKVM-Companion-win-x64-file-paste-fix-2026-09-22.zip`
 
-Quit the old Mac app, extract and launch the new app. On Windows, close the old
+For the Access Denied fix, update **Windows only**; keep the existing file-paste
+Mac build. For a first installation, quit the old Mac app and launch the new
+arm64 app. On Windows, close the old
 tray UI, extract the ZIP into a fresh folder and launch `DeusKVM.Companion.exe`;
 its update flow replaces the installed service/worker. Keep existing pairings.
 The Mac build is Apple Silicon only. Keep **Settings → Share clipboard with
@@ -37,8 +39,9 @@ Windows** enabled.
   or missing bytes. Remove any incomplete destination left by Explorer.
 - Copy something locally on Windows before pasting; it must supersede the remote
   offer. Check with any clipboard-history utility you normally run that copying
-  alone does not start a transfer. Native asynchronous extraction is required;
-  synchronous consumers are deliberately unsupported.
+  alone does not start a transfer. Both synchronous and asynchronous stream reads are supported. Metadata
+  inspection does not fetch contents, but a third-party clipboard manager that
+  explicitly reads file contents can trigger a transfer, just like a paste.
 
 Prototype limits: **Mac → Windows Explorer only**, one regular file, **10 MiB
 maximum**, no folders, symlinks, multi-selection, cut/move, or reverse file paste.
@@ -52,3 +55,17 @@ Explorer owns the destination and its native copy UI.
 **Hardware validation is pending.** Passing unit tests/builds does not establish
 that Explorer calls the asynchronous COM interfaces in the expected order, that
 its progress/cancel UI behaves correctly, or that the radio performance is good.
+
+## Access Denied follow-up
+
+The initial prototype rejected stream reads that were not preceded by the
+optional asynchronous-start callback. The replacement accepts synchronous native
+reads as well. Clipboard ownership is checked on stream callbacks using the
+published clipboard owner window; OLE identity checks remain on the clipboard
+STA. Session, disable, lock, clipboard replacement and source validity checks
+remain in place. The exact original rejection was not captured on hardware.
+
+Copy the file again on the Mac after updating Windows; do not retry the stale
+clipboard entry. If it still fails, the fixed-event diagnostics are in
+`%LOCALAPPDATA%\DeusKVM\file-paste.log`. They contain no file names, paths or
+contents. Report the entries for that attempt and the exact Windows error.
