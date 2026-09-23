@@ -34,6 +34,9 @@ final class InputTap: @unchecked Sendable {
     private var rawShortcutKeys: Set<UInt16> = []
     private var eventTap: CFMachPort?
     private var runLoop: CFRunLoop?
+    private var deferredTimer: CFRunLoopTimer?
+    private var deferredDeadline: TimeInterval?
+    private var deferredGeneration = 0
     private var runState = TapRunState()
     private let output: @MainActor @Sendable (TapOutput) -> Void
 
@@ -64,6 +67,7 @@ final class InputTap: @unchecked Sendable {
     func stop() {
         lock.withLock {
             runState.stop()
+            _cancelTick()
             remote = false
             generation += 1
             if let eventTap { CFMachPortInvalidate(eventTap) }
@@ -78,7 +82,15 @@ final class InputTap: @unchecked Sendable {
     }
 
     func requestToggle() {
-        lock.withLock { handoff.requestToggle() }
+        lock.withLock { handoff.requestToggle(); _scheduleTick() }
+    }
+
+    var returnDiagnostic: String {
+        lock.withLock {
+            "remote=\(remote) keys=\(handoff.heldKeys.count) raw=\(handoff.heldRawKeys.count) " +
+                "media=\(handoff.heldMediaKeys.count) buttons=\(handoff.heldButtons.count) " +
+                "modifiers=\(!handoff.modifiers.isDisjoint(with: ToggleShortcut.modifierMask))"
+        }
     }
 
     func acceptCompanionReturn() -> Bool {
@@ -107,6 +119,7 @@ final class InputTap: @unchecked Sendable {
         lock.withLock {
             guard !remote, let position = CGEvent(source: nil)?.location else { return }
             returnProbe = ReturnMotionProbe(startedAt: startedAt, origin: position)
+            _scheduleTick()
         }
     }
 
@@ -159,24 +172,52 @@ final class InputTap: @unchecked Sendable {
         lock.withLock { rawKeyboardReady = keyboardReady }
         _emit(.keyboardMonitoring(token, keyboardReady))
         CFRunLoopAddSource(loop, source, .commonModes)
-        let timer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 0.02, 0.02, 0, 0) { [weak self] _ in
-            self?._tick()
-        }!
-        CFRunLoopAddTimer(loop, timer, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         _emit(.installed(token, true))
         if lock.withLock({ runState.isRunning }) { CFRunLoopRun() }
         keyboard.stop(on: loop)
-        CFRunLoopTimerInvalidate(timer)
         CFMachPortInvalidate(tap)
         lock.withLock {
+            _cancelTick()
             eventTap = nil
             runLoop = nil
         }
     }
 
-    private func _tick() {
+    /// Called with the tap lock held. Add only one deferred callback after releases.
+    private func _scheduleTick() {
+        guard runState.isRunning, let loop = runLoop else { return }
+        let edgeReady = !remote && configuration.targetAvailable && configuration.edgeEnabled && edgeArmed &&
+            configuration.geometry?.isAtEdge(location) == true
+        let handoffReady = handoff.isReleased && (handoff.pendingToggle || edgeReady)
+        guard handoffReady || returnProbe != nil else { _cancelTick(); return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let deadline = TapWorkSchedule.deadline(now: now, handoffReady: handoffReady, probeStarted: returnProbe?.startedAt)
+        else { return }
+        // Motion while a released toggle is pending must not postpone that toggle.
+        if let deferredDeadline, deferredDeadline <= deadline { return }
+        _cancelTick()
+        deferredDeadline = deadline
+        let token = deferredGeneration
+        let timer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + max(0, deadline - now), 0, 0, 0) { [weak self] _ in
+            self?._tick(token)
+        }!
+        deferredTimer = timer
+        CFRunLoopAddTimer(loop, timer, .commonModes)
+        CFRunLoopWakeUp(loop)
+    }
+
+    private func _cancelTick() {
+        deferredGeneration += 1
+        if let deferredTimer { CFRunLoopTimerInvalidate(deferredTimer) }
+        deferredTimer = nil; deferredDeadline = nil
+    }
+
+    private func _tick(_ token: Int) {
         lock.withLock {
+            guard token == deferredGeneration else { return }
+            deferredTimer = nil; deferredDeadline = nil
+            defer { _scheduleTick() }
             guard runState.isRunning else { CFRunLoopStop(CFRunLoopGetCurrent()); return }
             if let result = returnProbe?.expired(now: ProcessInfo.processInfo.systemUptime) {
                 log.notice("\(result, privacy: .public)")
@@ -214,6 +255,7 @@ final class InputTap: @unchecked Sendable {
 
     private func _handle(type: CGEventType, event: CGEvent) -> Bool {
         lock.withLock {
+            defer { _scheduleTick() }
             guard runState.isRunning else { return false }
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                 remote = false
@@ -263,7 +305,9 @@ final class InputTap: @unchecked Sendable {
                 edgeArmed = false
             } else if motion { _checkEdge(event) }
         } else if motion {
-            if let point = configuration.geometry?.parkingPoint { CGWarpMouseCursorPosition(point) }
+            if let point = configuration.geometry?.parkingPoint,
+               TapWorkSchedule.needsCursorCorrection(location: event.location, parkingPoint: point)
+            { CGWarpMouseCursorPosition(point) }
             if dropNextMotion {
                 dropNextMotion = false
                 return true
@@ -283,6 +327,7 @@ final class InputTap: @unchecked Sendable {
 
     private func _rawKey(_ key: Keycode, down: Bool) {
         lock.withLock {
+            defer { _scheduleTick() }
             guard runState.isRunning else { return }
             if down { handoff.heldRawKeys.insert(key) } else { handoff.heldRawKeys.remove(key) }
             let flags = CGEventSource.flagsState(.combinedSessionState)

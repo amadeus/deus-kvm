@@ -11,6 +11,7 @@ companion_output=".build/windows/$companion_rid"
 cp windows/README.md "$companion_output/README.md"
 cp docs/AUTOMATIC_MAC_CHECKPOINT.md "$companion_output/CHECKPOINT.md"
 cp docs/FILE_PASTE_CHECKPOINT.md "$companion_output/FILE_PASTE_CHECKPOINT.md"
+cp docs/CPU_EDGE_CHECKPOINT.md "$companion_output/CPU_EDGE_CHECKPOINT.md"
 python3 - "$companion_output" <<'PY'
 from pathlib import Path
 import sys,zipfile
@@ -20,7 +21,7 @@ release_dir.mkdir(exist_ok=True)
 archive=release_dir / ('DeusKVM-Companion-' + root.name + '.zip')
 with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
     for p in sorted(root.iterdir()):
-        if p.name in {'DeusKVM.Companion.exe', 'README.md', 'CHECKPOINT.md', 'FILE_PASTE_CHECKPOINT.md'}:
+        if p.name in {'DeusKVM.Companion.exe', 'README.md', 'CHECKPOINT.md', 'FILE_PASTE_CHECKPOINT.md', 'CPU_EDGE_CHECKPOINT.md'}:
             z.write(p,p.name)
 print(archive.resolve())
 PY

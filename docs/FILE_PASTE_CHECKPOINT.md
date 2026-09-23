@@ -2,8 +2,9 @@
 
 Update **both apps** from the visible `releases/` folder:
 
-- `DeusKVM-mac-arm64-files-2gb-bidirectional-2026-09-22.zip`
-- `DeusKVM-Companion-win-x64-files-2gb-bidirectional-2026-09-22.zip`
+Use the current `DeusKVM-mac-arm64-*.zip` and
+`DeusKVM-Companion-win-x64-*.zip` packages. Later CPU/edge checkpoints retain
+this file-transfer behavior.
 
 Quit the old Mac app, extract and launch the new Apple Silicon app. Close the old
 Windows tray app, extract the Windows ZIP into a fresh folder and launch

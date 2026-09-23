@@ -26,7 +26,7 @@ final class CompanionService: ObservableObject {
     private var wantsControl = false
     private var chars: [CBMutableCharacteristic] = []
     var diagnosticState: String {
-        "queued=\(controls.count + bulk.count) blocked=\(blocked)"
+        "queued=\(controls.count + bulk.count) blocked=\(blocked) blind=\(blind.values.sorted())"
     }
 
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "Companion")
@@ -191,14 +191,14 @@ final class CompanionService: ObservableObject {
             send(.pong, payload: payload, to: id)
         case .state:
             guard payload.count == 3 else { throw CompanionProtocol.Failure.malformed }
-            blind[id] = payload[0]
+            if blind[id] != payload[0] { blind[id] = payload[0] }
         case .leave:
             guard payload.count == 4, payload[1] < 4 else { throw CompanionProtocol.Failure.malformed }
             let frac = UInt16(payload[2]) | UInt16(payload[3]) << 8
             onLeave?(id, payload[0], payload[1], frac)
         case .enterAck:
             guard payload.count == 7 else { throw CompanionProtocol.Failure.malformed }
-            blind[id] = payload[6]
+            if blind[id] != payload[6] { blind[id] = payload[6] }
         case .pong: break
         default: throw CompanionProtocol.Failure.malformed
         }

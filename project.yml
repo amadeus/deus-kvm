@@ -72,6 +72,7 @@ targets:
       - DeusKVM/HIDHostPolicy.swift
       - DeusKVM/StatusBarConnectionState.swift
       - DeusKVM/CaptureReadiness.swift
+      - DeusKVM/TapWorkSchedule.swift
       - DeusKVM/Companion/CompanionProtocol.swift
       - DeusKVM/Companion/CompanionSelection.swift
       - DeusKVM/Clipboard/FinderPasteGesture.swift

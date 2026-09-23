@@ -64,7 +64,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
             if !enabled { timer?.cancel(); timer = nil; return }
             if timer == nil {
                 let source = DispatchSource.makeTimerSource(queue: queue)
-                source.schedule(deadline: .now(), repeating: .milliseconds(200))
+                source.schedule(deadline: .now(), repeating: .milliseconds(200), leeway: .milliseconds(40))
                 source.setEventHandler { [weak self] in self?.poll() }
                 source.resume(); timer = source
             }

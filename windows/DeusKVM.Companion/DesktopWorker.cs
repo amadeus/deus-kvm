@@ -20,7 +20,9 @@ internal sealed class DesktopWorker : ApplicationContext
     private readonly int parent;
     private readonly HandoffSession handoff = new();
     private readonly DesktopRecoveryPoll recoveryPoll = new();
-    private readonly Dictionary<IntPtr, bool> devices = [];
+    private readonly MouseIdentityCache devices = new();
+    private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests;
+    private long lastEdgeReport;
     private MonitorInfo[] monitors = [];
     private EdgeConfiguration? config;
     private byte blind = 4;
@@ -102,17 +104,16 @@ internal sealed class DesktopWorker : ApplicationContext
             if (read != uint.MaxValue)
             {
                 var present = list.Take((int)read).Where(item => item.Type == 0).Select(item => item.Handle).ToHashSet();
-                foreach (var stale in devices.Keys.Where(key => !present.Contains(key)).ToArray()) devices.Remove(stale);
-                foreach (var device in present)
-                    if (!devices.ContainsKey(device)) devices[device] = DesktopNative.IsMacMouse(device, address);
+                devices.Refresh(present, device => DesktopNative.IsMacMouse(device, address));
             }
         }
         UpdateDesktopState(state);
+        ReportEdgeHealth();
     }
 
     private void UpdateDesktopState((byte Blind, byte Desktop) state)
     {
-        var mouse = devices.Values.Any(value => value);
+        var mouse = devices.HasMatch;
         var accessible = state.Desktop == 0;
         blind = !accessible ? state.Blind : !mouse ? (byte)3 : (byte)0;
         handoff.SetAvailable(blind == 0);
@@ -190,12 +191,15 @@ internal sealed class DesktopWorker : ApplicationContext
             if (DesktopNative.GetRawInputData(handle, 0x10000003, buffer, ref size, headerSize) != size ||
                 Marshal.ReadInt32(buffer) != 0) return;
             var device = Marshal.ReadIntPtr(buffer, 8);
-            if (!devices.TryGetValue(device, out var selected))
-                devices[device] = selected = DesktopNative.IsMacMouse(device, address);
+            var selected = devices.Resolve(device, candidate => DesktopNative.IsMacMouse(candidate, address));
             var mouse = buffer + (int)headerSize;
             var dx = Marshal.ReadInt32(mouse, 12);
             var dy = Marshal.ReadInt32(mouse, 16);
             var buttons = Marshal.ReadInt16(mouse, 4);
+            if (dx != 0 || dy != 0)
+            {
+                if (selected) selectedMotion++; else otherMotion++;
+            }
             if (!selected)
             {
                 if (dx != 0 || dy != 0 || buttons != 0) cursor.Reveal();
@@ -209,11 +213,31 @@ internal sealed class DesktopWorker : ApplicationContext
             var held = new[] { 1, 2, 4, 5, 6 }.Any(key => DesktopNative.GetAsyncKeyState(key) < 0);
             var clipped = !DesktopNative.GetClipCursor(out var clip) || clip.Left > monitor.X || clip.Top > monitor.Y ||
                 clip.Right < monitor.X + monitor.W || clip.Bottom < monitor.Y + monitor.H;
+            if (held) heldMotion++;
+            if (clipped) clippedMotion++;
             if (EdgeDetector.Observe(monitor, monitors, config, point.X, point.Y, dx, dy, held, clipped))
+            {
+                leaveRequests++;
                 Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
                     Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
+            }
         }
         finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    private void ReportEdgeHealth()
+    {
+        var now = Environment.TickCount64;
+        if (now - lastEdgeReport < 5000) return;
+        lastEdgeReport = now;
+        if (handoff.Active is not null || selectedMotion + otherMotion != 0)
+        {
+            var value = $"edge health: active={handoff.Active is not null} blind={blind} configured={config is not null} " +
+                $"mouse={devices.HasMatch} selected={selectedMotion} other={otherMotion} held={heldMotion} clipped={clippedMotion} leave={leaveRequests}";
+            // File IO never runs on the raw-input thread. At most one aggregate per five seconds.
+            ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(value));
+        }
+        selectedMotion = otherMotion = heldMotion = clippedMotion = leaveRequests = 0;
     }
 
     protected override void Dispose(bool disposing)

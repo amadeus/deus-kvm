@@ -28,6 +28,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private var restoringPreferences = true
     private var switchID: UInt8 = 0
     private var companionCapture = false
+    private var lastReturnRejection: TimeInterval = 0
     @Published private(set) var pcMonitors: [PCMonitor] = []
     @Published private(set) var companionStatus = "Waiting for Windows companion"
     @Published var pcMonitorID = "" {
@@ -140,6 +141,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?._refresh() }
         }
+        timer?.tolerance = 0.1
         _refresh()
     }
 
@@ -343,7 +345,15 @@ final class EdgeSwitchCoordinator: ObservableObject {
 
     private func _returnFromPC(target: UUID, switchID: UInt8, edge: UInt8, fraction: UInt16) {
         guard isRemote, !locked, !recordingShortcut, target == captureTarget, switchID == self.switchID,
-              edge == self.edge.opposite.wireValue, let geometry, tap.acceptCompanionReturn() else { return }
+              edge == self.edge.opposite.wireValue, let geometry else { return }
+        guard tap.acceptCompanionReturn() else {
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastReturnRejection >= 1 {
+                lastReturnRejection = now
+                diagnostics.transition("Windows edge deferred: \(tap.returnDiagnostic)")
+            }
+            return
+        }
         _returnLocal(at: geometry.entryPoint(fraction: fraction), reason: "Windows edge")
     }
 
