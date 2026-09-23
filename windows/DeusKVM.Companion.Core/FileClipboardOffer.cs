@@ -4,7 +4,8 @@ namespace DeusKVM.Companion.Core;
 
 public sealed record FileClipboardOffer(uint Epoch, uint Sequence, string Name, int Size, uint ClipboardSequence = 0, FileNetworkOffer? Network = null)
 {
-    public const int MaximumBytes = 10 * 1024 * 1024;
+    public static readonly JsonSerializerOptions WireJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    public const int MaximumBytes = 2_000_000_000;
     public static FileClipboardOffer Parse(byte[] data)
     {
         if (data.Length > 4096) throw new InvalidDataException("Oversized file offer");
@@ -19,87 +20,35 @@ public sealed record FileClipboardOffer(uint Epoch, uint Sequence, string Name, 
     }
 }
 
-// One bounded block in flight. No request is made until a consumer actually reads.
-public sealed class FileClipboardSession(FileClipboardOffer offer, Action<byte[]> request, Action<string>? diagnostic = null) : IDisposable
+// One bounded network block in flight. Metadata inspection never opens a connection.
+public interface IFileBlockReader : IDisposable
 {
-    private readonly object gate = new(), reader = new();
-    private bool canceled;
-    private NetworkFileReader? network = offer.Network is null ? null : new NetworkFileReader(offer, diagnostic);
-    private long started, lastProgress, receivedBytes;
-    private int blocks;
-    private string failure = "none";
-    private void Trace(string message) => diagnostic?.Invoke(message);
-    private uint? waiting;
-    private byte[]? response;
-    public FileClipboardOffer Offer { get; } = offer;
-    public void Dispose()
-    {
-        lock (gate)
-        {
-            if (!canceled && started != 0) Trace($"transfer-released received={receivedBytes} blocks={blocks} waiting={waiting?.ToString() ?? "none"}");
-            canceled = true; Monitor.PulseAll(gate);
-        }
-        network?.Dispose();
-    }
-    public void Receive(byte[] payload)
-    {
-        if (payload.Length is < 12 or > 1036 || ClipboardTransfer.Read(payload, 0) != Offer.Epoch ||
-            ClipboardTransfer.Read(payload, 4) != Offer.Sequence) return;
-        lock (gate)
-        {
-            if (canceled || waiting is null) return;
-            var offset = ClipboardTransfer.Read(payload, 8);
-            if (offset == uint.MaxValue) { failure = "source-unavailable"; canceled = true; Monitor.PulseAll(gate); return; }
-            if (offset != waiting) return;
-            if (payload.Length - 12 != Math.Min(1024, Offer.Size - (int)offset)) { failure = "invalid-block-length"; canceled = true; Monitor.PulseAll(gate); return; }
-            response = payload[12..]; Monitor.PulseAll(gate);
-        }
-    }
+    byte[] Read(uint offset);
+}
+
+public sealed class FileClipboardSession : IDisposable
+{
+    private readonly object readerGate = new();
+    private readonly IFileBlockReader reader;
+    private volatile bool canceled;
+    public FileClipboardOffer Offer { get; }
+    public FileClipboardSession(FileClipboardOffer offer, Action<string>? diagnostic = null)
+        : this(offer, new NetworkFileReader(offer, diagnostic)) { }
+    public FileClipboardSession(FileClipboardOffer offer, IFileBlockReader reader)
+    { Offer = offer; this.reader = reader; }
+    public void Dispose() { canceled = true; reader.Dispose(); }
     public byte[] Read(uint offset)
     {
-        lock (reader)
+        lock (readerGate)
         {
-            lock (gate) { if (canceled) throw new IOException("File offer expired"); }
-            if (network is { } connection)
-            {
-                try { return connection.Read(offset); }
-                catch (NetworkUnavailableException) { connection.Dispose(); network = null; }
-            }
-            return ReadBluetooth(offset);
-        }
-    }
-    private byte[] ReadBluetooth(uint offset)
-    {
-        lock (gate)
-        {
-            if (canceled) throw new IOException("File offer expired; copy the file again on the Mac.");
+            if (canceled) throw new IOException("File offer expired; copy the file again.");
             if (offset > Offer.Size) throw new IOException("Invalid file position");
             if (offset == Offer.Size) return [];
-            var now = Environment.TickCount64;
-            if (started == 0) { started = now; Trace($"transfer-start size={Offer.Size} block=1024"); }
-            waiting = offset; response = null;
-            request(ClipboardTransfer.Header(Offer.Epoch, Offer.Sequence, offset));
-            var deadline = Environment.TickCount64 + 15000;
-            try
-            {
-                while (!canceled && response is null && Environment.TickCount64 < deadline)
-                    Monitor.Wait(gate, (int)Math.Max(1, deadline - Environment.TickCount64));
-                if (canceled || response is null)
-                {
-                    var reason = canceled ? failure == "none" ? "canceled" : failure : "block-timeout";
-                    Trace($"transfer-failed reason={reason} offset={offset} received={receivedBytes} elapsedMs={Environment.TickCount64 - started}");
-                    canceled = true; throw new IOException("File transfer interrupted or timed out.");
-                }
-                receivedBytes += response.Length; blocks++;
-                now = Environment.TickCount64;
-                if (blocks == 1 || now - lastProgress >= 1000 || offset + response.Length == Offer.Size)
-                {
-                    lastProgress = now;
-                    Trace($"transfer-progress received={receivedBytes} through={offset + response.Length} size={Offer.Size} blocks={blocks} elapsedMs={now - started}");
-                }
-                return response;
-            }
-            finally { waiting = null; response = null; }
+            var result = reader.Read(offset);
+            if (canceled) throw new IOException("File offer expired; copy the file again.");
+            if (result.Length == 0 || result.Length > Math.Min(FileNetworkCrypto.MaximumBlock, Offer.Size - (int)offset))
+                throw new IOException("Invalid file block length");
+            return result;
         }
     }
 }

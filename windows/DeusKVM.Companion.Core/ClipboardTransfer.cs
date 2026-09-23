@@ -10,6 +10,7 @@ public sealed class ClipboardTransfer(Action<Protocol.Message, byte[]> send, Act
     public const int MaximumBytes = 65536, BlockBytes = 1024;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private uint epoch, sequence;
+    public uint Sequence => sequence;
     private byte[]? local;
     private uint? seenOffer;
     private (uint Sequence, int Size)? offer;

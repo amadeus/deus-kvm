@@ -12,7 +12,7 @@ trap 'if [[ -n "$server_pid" ]]; then kill "$server_pid" 2>/dev/null || true; wa
 xcrun swiftc -module-cache-path .build/network-smoke/cache \
   DeusKVM/Companion/CompanionProtocol.swift DeusKVM/Clipboard/ClipboardTransfer.swift \
   DeusKVM/Clipboard/ClipboardFile.swift DeusKVM/Clipboard/FileNetworkCrypto.swift \
-  DeusKVM/Clipboard/FileNetworkServer.swift scripts/tests/FileNetworkSmoke.swift -o "$smoke_dir/server"
+  DeusKVM/Clipboard/FileNetworkServer.swift DeusKVM/Clipboard/FileNetworkReceiver.swift scripts/tests/FileNetworkSmoke.swift -o "$smoke_dir/server"
 "${DEUSKVM_DOTNET:-$PWD/.build/dotnet/dotnet}" build windows/tests/FileNetworkClient -c Release --disable-build-servers -m:1 -p:UseSharedCompilation=false
 "$smoke_dir/server" "$smoke_dir" &
 server_pid=$!

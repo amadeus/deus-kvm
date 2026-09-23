@@ -11,12 +11,7 @@ public sealed class FileClipboardOperationTests
     {
         var requests = 0;
         List<string> diagnostics = [];
-        FileClipboardSession? session = null;
-        session = new(new(1, 2, "file", 3), request =>
-        {
-            requests++;
-            session!.Receive(ClipboardTransfer.Header(1, 2, 0).Concat(new byte[] { 7, 8, 9 }).ToArray());
-        });
+        var session = new FileClipboardSession(new(1, 2, "file", 3), new TestFileReader(_ => { requests++; return [7, 8, 9]; }));
         using (session)
         {
             var operation = new FileClipboardOperation(() => true, () => true, session.Dispose, diagnostics.Add);
@@ -51,7 +46,7 @@ public sealed class FileClipboardOperationTests
     {
         List<string> diagnostics = [];
         var requests = 0;
-        using var session = new FileClipboardSession(new(1, 2, "file", 3), _ => requests++);
+        using var session = new FileClipboardSession(new(1, 2, "file", 3), new TestFileReader(_ => { requests++; return [7, 8, 9]; }));
         var operation = new FileClipboardOperation(() => permitted, () => owns, session.Dispose, diagnostics.Add);
         var stream = new RemoteFileStream(session, operation.CheckRead);
         Assert.Throws<COMException>(() => stream.Read(new byte[3], 3, IntPtr.Zero));

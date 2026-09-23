@@ -36,6 +36,14 @@ struct FileNetworkSmoke {
                 timer.resume()
             }
         }
-        dispatchMain()
+        let receiver = FileNetworkReceiver(
+            offer: ClipboardFileOffer(epoch: 3, clipboardSequence: 0, sequence: 4, name: "reverse.bin", size: bytes.count),
+            destination: folder.appendingPathComponent("reverse.bin"), canAccess: { true },
+            ready: { offer in try! JSONEncoder().encode(offer).write(to: folder.appendingPathComponent("reverse-request.json"), options: .atomic) },
+            progress: { _ in }, completion: { error in
+                try! Data((error ?? "OK").utf8).write(to: folder.appendingPathComponent("reverse-result"), options: .atomic)
+            })
+        receiver.start()
+        withExtendedLifetime(receiver) { dispatchMain() }
     }
 }

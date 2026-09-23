@@ -148,7 +148,8 @@ report that status; do not remove the pairing as a first troubleshooting step.
    Turn it on, make a fresh copy and repeat. Lock/unlock and reconnect, then
    repeat with fresh text; clipboard sharing must stay off on the login screen.
 
-Only plain text crosses; no files, images or rich formatting. Known private
+Text sharing carries plain text, without images or rich formatting. File transfer
+is described below. Known private
 clipboard markers are respected, but unmarked password text is indistinguishable
 from ordinary text. Test privacy with disposable text, not real credentials.
 Full behavior, limits and development checks are in [docs/CLIPBOARD.md](../docs/CLIPBOARD.md).
@@ -232,8 +233,10 @@ preference, without restricting automatic discovery of your other paired Macs.
 
 ## On-demand file paste prototype
 
-The current build accepts one Mac file up to 10 MiB through native Explorer
-paste. Contents transfer over the local network when the file stream is read,
-with Bluetooth fallback if network setup is unavailable;
-synchronous and asynchronous native consumers are supported. See `CHECKPOINT.md` in the current test ZIP or
+The current build transfers one regular file up to 2 GB (2,000,000,000 bytes) in
+both directions, over networking only. Mac → Windows retains native Explorer
+paste. Windows → Mac uses Finder Cmd+V with DeusKVM progress/cancel UI. File
+metadata and authentication use Bluetooth; contents transfer only on paste.
+Windows connects out in both directions, so no inbound Windows firewall rule is
+needed. See `FILE_PASTE_CHECKPOINT.md` in the ZIP or
 [the file paste checkpoint](../docs/FILE_PASTE_CHECKPOINT.md).

@@ -105,37 +105,38 @@ Privacy conventions: [NSPasteboard community types](https://nspasteboard.org/),
 Native memory ownership follows
 [SetClipboardData](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata).
 
-## On-demand file paste prototype
+## On-demand file paste
 
-The same sharing toggle also enables **one regular Mac file up to 10 MiB** to
-be pasted in Windows Explorer. Copy sends metadata, not file contents. The OLE
-virtual-file stream requests content only when a consumer reads it. With both
-updated apps, file bytes prefer encrypted local-network blocks up to 256 KiB;
-unavailable network setup falls back to the original 1 KiB Bluetooth blocks.
-Metadata inspection does not start a download. Synchronous and asynchronous
-consumers are supported; asynchronous callbacks are optional. A clipboard manager
-that actively reads file contents can trigger a transfer; Windows does not label
-every stream read as a user paste.
-No temporary pre-download is created. Files are never cut or deleted at source.
-See [the current file paste checkpoint](FILE_PASTE_CHECKPOINT.md) for builds,
-limits and outstanding native integration checks. Reverse file paste, folders,
-and multi-selection are deferred.
+The sharing toggle supports **one regular file up to 2 GB (2,000,000,000 bytes)**
+in both directions. Text and file metadata/authentication use Bluetooth. File
+contents use authenticated local IPv4 networking only, in blocks up to 256 KiB.
+There is no Bluetooth file fallback or pre-download. Mac → Windows keeps the
+native Explorer virtual-file stream; Windows → Mac uses Finder Cmd+V with
+DeusKVM progress/cancel UI, as authorized by the user. Other Finder paste commands
+and destination apps are not intercepted.
 
-HELLO capability `files: 1` enables FILE_OFFER (0x24, bulk JSON metadata), FILE_GET
-(0x25, control: epoch/clipboard revision/offset, three little-endian u32 values),
-and FILE_DATA (0x26, bulk: same header plus at most 1024 bytes). An offset of
-UInt32.max in FILE_DATA reports a stale/changed/unreadable source. Offers also
-carry the text clipboard offer sequence so delayed metadata cannot supersede a
-newer clipboard offer. All file traffic shares the existing ownership, desktop,
-sharing-preference and clipboard epoch gates. Contents remain off input loops;
-file blocks use the existing bulk priority beneath HID/control traffic.
+`files: 1` and `fileNetwork: 1` remain in HELLO; optional `fileReceive: 1` negotiates
+reverse metadata support. FILE_OFFER (0x24, bulk JSON, at most 4096 bytes) carries
+epoch, source clipboard revision, text offer sequence, filename and size. On a Mac
+source it also carries local addresses, ephemeral port and a per-offer key.
+Old FILE_GET/FILE_DATA IDs (0x25/0x26) are reserved but no longer serve file contents.
 
+Windows file copying reads CF_HDROP metadata for one regular, non-link file. Paste
+on the Mac creates a temporary listener and sends FILE_ACCEPT (0x27, bulk JSON,
+4096-byte maximum) with the original source identity and fresh Mac endpoint/key.
+The Windows desktop worker validates the still-current source and connects out;
+Windows never opens an incoming listener. The existing handshake derives separate
+AES-GCM keys for connector and listener; in the reverse flow, the Mac listener
+sends encrypted offset/count requests and the Windows connector sends responses.
 
-HELLO capability `fileNetwork: 1` adds an optional `network` object to FILE_OFFER:
-`hosts` (up to four private/link-local IPv4 strings), `port` and `key` (base64
-32-byte per-offer secret). FILE_OFFER permits up to 4096 bytes; other clipboard
-message bounds are unchanged. Metadata/key delivery requires the existing encrypted
-GATT characteristics. Older peers receive the original Bluetooth-only offer.
-For socket framing, authentication, lifecycle and test receipts, see
-[NETWORK_FILE_PASTE_PLAN.md](NETWORK_FILE_PASTE_PLAN.md). Native clipboard formats
-and input transport are unchanged.
+Copying/metadata inspection never opens source contents. Mac destination writes
+begin only after a valid authenticated response, to an exclusive hidden partial
+file in the chosen Finder folder. Exclusive atomic rename finishes the paste and
+cannot overwrite a same-name file. Failure/cancel removes the partial. The source
+is never removed. The reverse file never becomes a downloadable temporary
+clipboard URL.
+
+Epoch, clipboard revision, local-copy precedence, disabled/locked/ownership gates
+apply in both directions. File contents stay off input loops. See
+[FILE_PASTE_CHECKPOINT.md](FILE_PASTE_CHECKPOINT.md) for setup and hardware checks,
+and [BIDIRECTIONAL_FILE_PASTE_PLAN.md](BIDIRECTIONAL_FILE_PASTE_PLAN.md) for tests.

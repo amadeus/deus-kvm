@@ -2,7 +2,7 @@ import Foundation
 
 /// Captures metadata only. File contents are opened on the clipboard queue, on demand.
 struct ClipboardFile: Sendable {
-    static let maximumBytes = 10 * 1024 * 1024
+    static let maximumBytes = 2_000_000_000
     let url: URL
     let size: Int
     let modified: Date
@@ -34,11 +34,17 @@ struct ClipboardFile: Sendable {
     }
 }
 
-struct ClipboardFileOffer: Codable {
+struct ClipboardFileOffer: Codable, Sendable {
     let epoch: UInt32
     let clipboardSequence: UInt32
     let sequence: UInt32
     let name: String
     let size: Int
     var network: FileNetworkOffer?
+
+    var valid: Bool {
+        size >= 0 && size <= ClipboardFile.maximumBytes && !name.isEmpty && name.utf16.count <= 240 &&
+            name != "." && name != ".." && !name.hasSuffix(".") && !name.hasSuffix(" ") &&
+            !name.unicodeScalars.contains { $0.value < 32 || "<>:\"/\\|?*".unicodeScalars.contains($0) }
+    }
 }

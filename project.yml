@@ -74,6 +74,7 @@ targets:
       - DeusKVM/CaptureReadiness.swift
       - DeusKVM/Companion/CompanionProtocol.swift
       - DeusKVM/Companion/CompanionSelection.swift
+      - DeusKVM/Clipboard/FinderPasteGesture.swift
       - DeusKVM/Clipboard/FileNetworkCrypto.swift
       - DeusKVM/Clipboard/FileNetworkServer.swift
       - DeusKVM/Clipboard/ClipboardFile.swift

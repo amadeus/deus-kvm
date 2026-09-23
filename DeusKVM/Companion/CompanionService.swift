@@ -119,7 +119,7 @@ final class CompanionService: ObservableObject {
         if !subscribedHosts.contains(central.identifier) { subscribedHosts.insert(central.identifier) }
         if sendHello {
             sendJSON(CompanionHello(
-                v: 1, role: "mac", name: "DeusKVM", chunk: 20, clipboard: 1, files: 1, fileNetwork: 1,
+                v: 1, role: "mac", name: "DeusKVM", chunk: 20, clipboard: 1, files: 1, fileReceive: 1, fileNetwork: 1,
                 selection: 1, available: selection.available(to: central.identifier), availabilityEpoch: selection.epoch,
                 takeover: true, requestControl: wantsControl
             ), type: .hello, to: central.identifier)
@@ -173,7 +173,7 @@ final class CompanionService: ObservableObject {
         }
         guard ready.contains(id) else { throw CompanionProtocol.Failure.malformed }
         lastSeen[id] = ProcessInfo.processInfo.systemUptime
-        if [.clipGrab, .clipGet, .clipData, .clipState, .fileOffer, .fileGet, .fileData].contains(type) {
+        if [.clipGrab, .clipGet, .clipData, .clipState, .fileOffer, .fileGet, .fileData, .fileAccept].contains(type) {
             try receiveClipboard(packet, type: type, from: id)
             return
         }
@@ -221,7 +221,7 @@ final class CompanionService: ObservableObject {
 
     private func receiveClipboard(_ packet: CompanionProtocol.Packet, type: CompanionProtocol.Message, from id: UUID) throws {
         guard clipboardTarget?() == id, allowsControl(id) else { return }
-        guard supportsClipboard(id), packet.stream == ([.clipData, .fileOffer, .fileData].contains(type) ? 1 : 0) else {
+        guard supportsClipboard(id), packet.stream == ([.clipData, .fileOffer, .fileData, .fileAccept].contains(type) ? 1 : 0) else {
             throw CompanionProtocol.Failure.malformed
         }
         try onClipboard?(id, type, packet.payload)
@@ -289,8 +289,8 @@ final class CompanionService: ObservableObject {
 
     func sendClipboard(_ type: CompanionProtocol.Message, payload: Data, to id: UUID) {
         guard clipboardTarget?() == id, allowsControl(id), supportsClipboard(id),
-              payload.count <= (type == .fileOffer ? 4096 : ClipboardTransfer.blockBytes + 12) else { return }
-        if [.clipData, .fileOffer, .fileData].contains(type) {
+              payload.count <= ([.fileOffer, .fileAccept].contains(type) ? 4096 : ClipboardTransfer.blockBytes + 12) else { return }
+        if [.clipData, .fileOffer, .fileData, .fileAccept].contains(type) {
             enqueue(type, stream: 1, payload: payload, to: id)
         } else {
             send(type, payload: payload, to: id)

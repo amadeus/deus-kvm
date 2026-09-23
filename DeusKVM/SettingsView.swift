@@ -43,7 +43,7 @@ struct SettingsView: View {
                     .toggleStyle(.switch)
             } footer: {
                 Text(
-                    "Shares text up to 64 KiB and one Mac file up to 10 MiB on Windows paste. "
+                    "Shares text up to 64 KiB over Bluetooth and one file up to 2 GB over the local network. "
                         + "Skips marked private items and pauses while locked."
                 )
             }

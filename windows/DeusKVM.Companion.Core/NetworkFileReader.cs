@@ -5,16 +5,17 @@ using System.Security.Cryptography;
 
 namespace DeusKVM.Companion.Core;
 
-public sealed class NetworkUnavailableException() : IOException("Local network unavailable");
+public sealed class NetworkUnavailableException() : IOException("File transfer requires a local network connection. Copy the file again when both computers are reachable.");
 
 // Lazy, persistent connection. Creation and clipboard metadata inspection do no I/O.
-public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? diagnostic = null) : IDisposable
+public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? diagnostic = null) : IFileBlockReader
 {
     private readonly CancellationTokenSource lifetime = new();
     private TcpClient? client;
     private NetworkStream? stream;
     private FileNetworkCrypto? outgoing, incoming;
     private bool delivered;
+    private long lastProgress;
     public void Dispose() { lifetime.Cancel(); client?.Dispose(); outgoing?.Dispose(); incoming?.Dispose(); }
 
     public byte[] Read(uint offset)
@@ -23,7 +24,7 @@ public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? 
         catch (Exception error) when (!delivered && !lifetime.IsCancellationRequested &&
             error is SocketException or IOException or OperationCanceledException or CryptographicException)
         {
-            diagnostic?.Invoke("network-unavailable fallback=bluetooth");
+            diagnostic?.Invoke("network-unavailable transfer-failed");
             throw new NetworkUnavailableException();
         }
     }
@@ -86,7 +87,9 @@ public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? 
         // Authentication succeeded: source errors must not silently downgrade.
         delivered = true;
         if (response[0] != 0 || response.Length != count + 1) throw new IOException("Mac file changed or became unavailable");
-        diagnostic?.Invoke($"network-block offset={offset} count={count}");
+        var now = Environment.TickCount64;
+        if (offset == 0 || offset + count == offer.Size || now - lastProgress >= 1000)
+        { lastProgress = now; diagnostic?.Invoke($"network-block offset={offset} count={count} size={offer.Size}"); }
         return response[1..];
     }
 }

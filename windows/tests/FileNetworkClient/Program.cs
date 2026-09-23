@@ -4,9 +4,10 @@ using System.Net.Sockets;
 using DeusKVM.Companion.Core;
 
 var folder = args[0];
+if (args.Length > 1) { await ReverseScenario.Run(folder, args[1]); return; }
 var offer = FileClipboardOffer.Parse(File.ReadAllBytes(Path.Combine(folder, "offer.json")));
 void Check(bool value, string label) { if (!value) throw new Exception(label); }
-using var session = new FileClipboardSession(offer, _ => throw new Exception("Unexpected Bluetooth fallback"));
+using var session = new FileClipboardSession(offer);
 var remote = new RemoteFileStream(session, () => { });
 remote.Stat(out var stat, 0);
 Check(stat.cbSize == offer.Size && !File.Exists(Path.Combine(folder, "read-started")), "Metadata fetched contents");
@@ -36,7 +37,7 @@ catch (NetworkUnavailableException) { throw new Exception("Active transfer silen
 catch (IOException) { }
 var listener = new TcpListener(IPAddress.Any, 0); listener.Start();
 var endpoint = offer.Network! with { Port = ((IPEndPoint)listener.LocalEndpoint).Port };
-using (var canceled = new FileClipboardSession(offer with { Network = endpoint }, _ => throw new Exception("Canceled transfer fell back")))
+using (var canceled = new FileClipboardSession(offer with { Network = endpoint }))
 {
     var read = Task.Run(() => canceled.Read(0));
     using var accepted = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(3));
@@ -46,12 +47,20 @@ using (var canceled = new FileClipboardSession(offer with { Network = endpoint }
     catch (Exception error) when (error is OperationCanceledException or IOException or ObjectDisposedException) { }
 }
 listener.Stop();
-FileClipboardSession? fallback = null; var requests = 0;
-using (fallback = new FileClipboardSession(offer with { Network = endpoint }, request => {
-    requests++; var offset = ClipboardTransfer.Read(request, 8);
-    fallback!.Receive(request.Concat(bytes.Skip((int)offset).Take(1024)).ToArray());
-}))
+using (var unavailable = new FileClipboardSession(offer with { Network = endpoint }))
 {
-    Check(fallback.Read(0).SequenceEqual(bytes.Take(1024)) && requests == 1, "Unavailable LAN did not use Bluetooth");
+    try { unavailable.Read(0); throw new Exception("Unavailable network succeeded"); }
+    catch (NetworkUnavailableException) { }
 }
-Console.WriteLine("PASS: lazy content, wrong-key rejection, multi-block bytes, seek, changed source, revocation, cancellation, Bluetooth fallback");
+Console.WriteLine("PASS: lazy content, wrong-key rejection, multi-block bytes, seek, changed source, revocation, cancellation, network-only failure");
+
+var reverse = FileClipboardOffer.Parse(File.ReadAllBytes(Path.Combine(folder, "reverse-request.json")));
+var sourcePath = Path.Combine(folder, "windows-source.bin"); File.WriteAllBytes(sourcePath, bytes);
+var source = ClipboardFileSource.Capture(sourcePath)!;
+using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+await NetworkFileSender.Send(reverse, source.Read, timeout.Token);
+for (var i = 0; i < 100 && !File.Exists(Path.Combine(folder, "reverse-result")); i++) await Task.Delay(20);
+Check(File.ReadAllText(Path.Combine(folder, "reverse-result")) == "OK", "Reverse receiver failed");
+Check(File.ReadAllBytes(Path.Combine(folder, "reverse.bin")).SequenceEqual(bytes), "Reverse bytes differ");
+Check(!Directory.EnumerateFiles(folder, "*.partial").Any(), "Partial output leaked");
+Console.WriteLine("PASS: C# source -> Swift receiver, authenticated multi-block binary equality and partial-file cleanup");

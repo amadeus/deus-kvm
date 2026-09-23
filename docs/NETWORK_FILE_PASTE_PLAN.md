@@ -68,3 +68,9 @@ remain in visible `releases/`. Neither production app was launched or restarted.
 Hardware checkpoint is pending user setup with both new apps. Preserve the current
 single-file flow and wait for actual Mac-to-Windows LAN feedback before expanding
 scope. No measured Bluetooth/LAN comparison is claimed.
+
+
+Follow-up: the user confirmed network Mac → Windows paste was fast and authorized
+network-only files, a 2 GB cap and Windows → Mac Finder Cmd+V. The fallback/10 MiB
+scope above is historical; current work and receipts are tracked in
+[BIDIRECTIONAL_FILE_PASTE_PLAN.md](BIDIRECTIONAL_FILE_PASTE_PLAN.md).

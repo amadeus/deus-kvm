@@ -16,6 +16,10 @@ final class MacClipboardSync {
     private var remote = false
     private var revision = 0
     private var fileOffer: Data?
+    private var peerSequence: UInt32?
+    private var peerRevision = 0
+    private var deliveredFile: UInt32?
+    private let finder = FinderFilePaste()
     private var observers: [NSObjectProtocol] = []
     private lazy var pasteboard = ClipboardPasteboard(snapshot: { [weak self] snapshot in
         DispatchQueue.main.async { [weak self] in self?.observe(snapshot) }
@@ -25,6 +29,7 @@ final class MacClipboardSync {
 
     private func observe(_ snapshot: ClipboardPasteboard.Snapshot) {
         guard enabled, snapshot.epoch == epoch, snapshot.generation == generation else { return }
+        finder.clear()
         revision = snapshot.revision
         transfer.observe(snapshot.text, announce: snapshot.announce)
         fileOffer = snapshot.file.flatMap {
@@ -58,12 +63,27 @@ final class MacClipboardSync {
 
     init(service: CompanionService) {
         self.service = service
+        pasteboard.remoteFile = { [weak self] offer, revision, generation in
+            Task { @MainActor in
+                guard let self, self.enabled, self.generation == generation, self.epoch == offer.epoch,
+                      self.peerSequence == offer.clipboardSequence,
+                      self.deliveredFile == offer.sequence, NSPasteboard.general.changeCount == revision else { return }
+                self.fileOffer = nil; self.transfer.observe(nil, announce: false)
+                self.finder.install(offer, revision: revision)
+            }
+        }
+        finder.send = { [weak self] request in
+            guard let self, enabled, let target, request.epoch == epoch,
+                  let data = try? JSONEncoder().encode(request) else { return }
+            service.sendClipboard(.fileAccept, payload: data, to: target)
+        }
         transfer.send = { [weak self] type, data in
             guard let self, enabled, let target else { return }
             service.sendClipboard(type, payload: data, to: target)
         }
         transfer.apply = { [weak self] data in
             guard let self, enabled else { return }
+            finder.clear()
             pasteboard.write(data, epoch: epoch, revision: revision)
         }
         service.onClipboard = { [weak self] id, type, data in try self?.receive(id, type: type, data: data) }
@@ -81,10 +101,12 @@ final class MacClipboardSync {
     }
 
     func update(target: UUID?, remote: Bool, enabled: Bool, available: Bool) {
+        finder.local = !remote
         let next = target.flatMap { service.supportsClipboard($0) ? $0 : nil }
         if self.target != next {
             if let old = self.target { acknowledge(old, enabled: false) }
             self.target = next; peerAvailable = false; self.enabled = false; epoch = 0
+            finder.clear(); peerSequence = nil; deliveredFile = nil
             transfer.reset(0); generation = pasteboard.configure(epoch: 0, enabled: false)
         }
         let entering = !self.remote && remote
@@ -110,6 +132,7 @@ final class MacClipboardSync {
     private func reconcile() {
         let wanted = target != nil && preference && available && awake && peerAvailable
         guard wanted != enabled else { return }
+        finder.clear(); peerSequence = nil; deliveredFile = nil
         enabled = wanted; primed = false; fileOffer = nil; transfer.reset(epoch); generation = pasteboard.configure(
             epoch: epoch,
             enabled: wanted
@@ -129,23 +152,26 @@ final class MacClipboardSync {
             let next = CompanionProtocol.read32(data, 0)
             let ready = data[4] == 1
             guard next != epoch || peerAvailable != ready else { return }
+            finder.clear(); peerSequence = nil; deliveredFile = nil
             epoch = next; peerAvailable = ready; enabled = false
             transfer.reset(epoch); generation = pasteboard.configure(epoch: epoch, enabled: false)
             reconcile()
             if !enabled { acknowledge(id, enabled: false) }
-        } else if enabled, primed, type == .fileGet, service.supportsFiles(id) {
-            guard data.count == 12 else { throw CompanionProtocol.Failure.malformed }
-            let scope = CompanionProtocol.read32(data, 0), sequence = CompanionProtocol.read32(data, 4)
-            let offset = CompanionProtocol.read32(data, 8), token = generation
-            guard scope == epoch else { return }
-            pasteboard.readFile(epoch: scope, sequence: sequence, offset: offset) { [weak self] bytes in
-                Task { @MainActor in
-                    guard let self, self.enabled, self.target == id, self.epoch == scope, self.generation == token else { return }
-                    let header = ClipboardTransfer.header(scope, sequence, bytes == nil ? UInt32.max : offset)
-                    self.service.sendClipboard(.fileData, payload: header + (bytes ?? Data()), to: id)
+        } else if enabled, primed, type == .fileOffer {
+            guard data.count <= 4096, let offer = try? JSONDecoder().decode(ClipboardFileOffer.self, from: data), offer.valid,
+                  offer.epoch == epoch, offer.clipboardSequence == peerSequence, deliveredFile != offer.sequence else { return }
+            deliveredFile = offer.sequence
+            pasteboard.writeFile(offer, revision: peerRevision)
+        } else if type == .fileGet || type == .fileData {
+            // File contents are network-only, including requests from older peers.
+            return
+        } else if enabled, primed {
+            if type == .clipGrab, data.count == 12, CompanionProtocol.read32(data, 0) == epoch {
+                let incoming = CompanionProtocol.read32(data, 4)
+                if peerSequence != incoming {
+                    peerSequence = incoming; peerRevision = revision; deliveredFile = nil; finder.clear()
                 }
             }
-        } else if enabled, primed {
             try transfer.receive(type, payload: data, now: ProcessInfo.processInfo.systemUptime)
         }
     }

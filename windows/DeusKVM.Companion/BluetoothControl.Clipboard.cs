@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DeusKVM.Companion.Core;
 
 namespace DeusKVM.Companion;
@@ -5,7 +6,7 @@ namespace DeusKVM.Companion;
 internal sealed partial class BluetoothControl
 {
     private ClipboardTransfer? clipboardTransfer;
-    private bool filesPeer;
+    private bool filesPeer, fileReceivePeer;
     private uint? peerClipboardSequence, peerClipboardRevision, deliveredFileSequence;
     private byte[]? pendingFileOffer;
     private ClipboardTransfer Clipboard => clipboardTransfer ??= new ClipboardTransfer(SendClipboard, ApplyClipboard);
@@ -87,13 +88,24 @@ internal sealed partial class BluetoothControl
             }
             if (pendingFileOffer is { } file) { pendingFileOffer = null; ReceiveFile(Protocol.Message.FileOffer, file); }
         }
-        else if (message.Kind == "clipboard-file-get" && filesPeer && message.Clipboard is { Length: 12 } request &&
-                 ClipboardTransfer.Read(request, 0) == clipboardEpoch) Send(Protocol.Message.FileGet, request);
+        else if (message.Kind == "clipboard-file-copy" && fileReceivePeer && message.Ok && message.Revision == clipboardRevision && message.Clipboard is { } fileBytes)
+        {
+            var local = FileClipboardOffer.Parse(fileBytes);
+            SendClipboard(Protocol.Message.FileOffer, JsonSerializer.SerializeToUtf8Bytes(local with { ClipboardSequence = Clipboard.Sequence }, FileClipboardOffer.WireJson));
+        }
         else if (message.Kind == "clipboard-yield" && clipboardPrimed) Clipboard.Yield();
     }
     private void ReceiveFile(Protocol.Message type, byte[] payload)
     {
         if (!clipboardEnabled) return;
+        if (type == Protocol.Message.FileAccept)
+        {
+            if (!fileReceivePeer) return;
+            var request = FileClipboardOffer.Parse(payload);
+            if (request.Epoch == clipboardEpoch && request.Sequence == clipboardRevision && request.Network?.Valid == true)
+                desktop?.Send(new DesktopMessage("clipboard-file-send", Epoch: clipboardEpoch, Clipboard: payload));
+            return;
+        }
         if (type == Protocol.Message.FileOffer)
         {
             FileClipboardOffer offer;
@@ -106,8 +118,7 @@ internal sealed partial class BluetoothControl
             desktop?.Send(new DesktopMessage("clipboard-file-offer", Epoch: clipboardEpoch,
                 Revision: peerClipboardRevision ?? clipboardRevision, Clipboard: payload));
         }
-        else if (payload.Length is >= 12 and <= 1036 && ClipboardTransfer.Read(payload, 0) == clipboardEpoch)
-            desktop?.Send(new DesktopMessage("clipboard-file-data", Epoch: clipboardEpoch, Clipboard: payload));
+
     }
 
     private void ClipboardSwitch(bool windowsActive)
@@ -118,8 +129,8 @@ internal sealed partial class BluetoothControl
     }
     private void SendClipboard(Protocol.Message type, byte[] data)
     {
-        if (!clipboardEnabled || data.Length > ClipboardTransfer.BlockBytes + 12) return;
-        if (type == Protocol.Message.ClipData) Enqueue(type, 1, data);
+        if (!clipboardEnabled || data.Length > (type == Protocol.Message.FileOffer ? 4096 : ClipboardTransfer.BlockBytes + 12)) return;
+        if (type is Protocol.Message.ClipData or Protocol.Message.FileOffer) Enqueue(type, 1, data);
         else Send(type, data);
     }
     private void ApplyClipboard(byte[] data)

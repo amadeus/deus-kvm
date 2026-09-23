@@ -52,10 +52,10 @@ public sealed class FileNetworkTests
     public void AdvertisementsOnlyDialLocalIPv4(string host, bool expected) => Assert.Equal(expected, FileNetworkOffer.LocalAddress(host));
 
     [Fact]
-    public void MetadataDoesNotStartNetworkAndInvalidEndpointsRetainBluetooth()
+    public void MetadataDoesNotStartNetworkAndInvalidEndpointsAreRemoved()
     {
         var offer = new FileClipboardOffer(1, 2, "file", 3, Network: new(["192.168.1.2"], 12345, Convert.ToBase64String(new byte[32])));
-        using var session = new FileClipboardSession(offer, _ => Assert.Fail("No requests during metadata inspection"));
+        using var session = new FileClipboardSession(offer, new TestFileReader(_ => throw new Exception("No requests during metadata inspection")));
         var stream = new RemoteFileStream(session, () => { });
         stream.Stat(out var stat, 0); Assert.Equal(3, stat.cbSize);
         var invalid = offer with { Network = offer.Network! with { Hosts = ["8.8.8.8"] } };

@@ -11,7 +11,7 @@ public sealed class RemoteFileStreamTests
     public void InspectingStreamDoesNotDownloadAndReadRequiresPastePermission()
     {
         var requests = 0;
-        using var session = new FileClipboardSession(new(1, 2, "file", 10), _ => requests++);
+        using var session = new FileClipboardSession(new(1, 2, "file", 10), new TestFileReader(_ => { requests++; return new byte[10]; }));
         var stream = new RemoteFileStream(session, () => throw new UnauthorizedAccessException());
         stream.Stat(out var stat, 0);
         stream.Seek(0, 0, IntPtr.Zero);
@@ -25,12 +25,8 @@ public sealed class RemoteFileStreamTests
     public void StreamPreservesBinaryContentsAcrossBlocksSeeksAndClones()
     {
         var source = Enumerable.Range(0, 2500).Select(i => (byte)(i % 251)).ToArray();
-        FileClipboardSession? session = null;
-        session = new(new(1, 2, "file", source.Length), request =>
-        {
-            var offset = ClipboardTransfer.Read(request, 8);
-            session!.Receive(ClipboardTransfer.Header(1, 2, offset).Concat(source.Skip((int)offset).Take(1024)).ToArray());
-        });
+        var session = new FileClipboardSession(new(1, 2, "file", source.Length),
+            new TestFileReader(offset => source.Skip((int)offset).Take(1024).ToArray()));
         using (session)
         {
             var stream = new RemoteFileStream(session, () => { });
@@ -51,30 +47,23 @@ public sealed class RemoteFileStreamTests
     [Fact]
     public void EmptyFileAndEofDoNotRequestContent()
     {
-        using var session = new FileClipboardSession(new(1, 2, "empty", 0), _ => Assert.Fail("Unexpected request"));
+        using var session = new FileClipboardSession(new(1, 2, "empty", 0), new TestFileReader(_ => throw new Exception("Unexpected request")));
         var stream = new RemoteFileStream(session, () => { });
         var count = Marshal.AllocCoTaskMem(4);
         try { stream.Read(new byte[10], 10, count); Assert.Equal(0, Marshal.ReadInt32(count)); }
         finally { Marshal.FreeCoTaskMem(count); }
     }
     [Fact]
-    public void TwoMegabyteTransferSurvivesWireSequenceWrapsAndLargeConsumerReads()
+    public void TwoMegabyteTransferSurvivesLargeConsumerReads()
     {
         // Slightly over the reported 1.9 MB failure, with a partial final block.
         var source = new byte[2 * 1024 * 1024 + 37];
         new Random(1234).NextBytes(source);
-        var encoder = new Protocol.Encoder(); var decoder = new Protocol.Decoder();
         var requests = 0;
-        FileClipboardSession? session = null;
-        session = new(new(1, 2, "file", source.Length), request =>
-        {
+        var session = new FileClipboardSession(new(1, 2, "file", source.Length), new TestFileReader(offset => {
             requests++;
-            var offset = (int)ClipboardTransfer.Read(request, 8);
-            var payload = ClipboardTransfer.Header(1, 2, (uint)offset)
-                .Concat(source.AsSpan(offset, Math.Min(1024, source.Length - offset)).ToArray()).ToArray();
-            foreach (var frame in encoder.Encode(new(1, (byte)Protocol.Message.FileData, payload)))
-                if (decoder.Receive(frame) is { } packet) session!.Receive(packet.Payload);
-        });
+            return source.AsSpan((int)offset, Math.Min(FileNetworkCrypto.MaximumBlock, source.Length - (int)offset)).ToArray();
+        }));
         using (session)
         {
             var stream = new RemoteFileStream(session, () => { });
@@ -93,7 +82,7 @@ public sealed class RemoteFileStreamTests
             }
             finally { Marshal.FreeCoTaskMem(count); }
             Assert.Equal(source, received);
-            Assert.Equal((source.Length + 1023) / 1024, requests);
+            Assert.Equal((source.Length + FileNetworkCrypto.MaximumBlock - 1) / FileNetworkCrypto.MaximumBlock, requests);
         }
     }
 

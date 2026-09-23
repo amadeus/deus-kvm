@@ -10,7 +10,7 @@ enum CompanionProtocol {
         case availability = 0x18, selection = 0x19
         case requestControl = 0x1A, releaseAck = 0x1B
         case clipGrab = 0x20, clipGet = 0x21, clipData = 0x22, clipState = 0x23
-        case fileOffer = 0x24, fileGet = 0x25, fileData = 0x26
+        case fileOffer = 0x24, fileGet = 0x25, fileData = 0x26, fileAccept = 0x27
         case nack = 0x7F
     }
 
@@ -124,6 +124,7 @@ struct CompanionHello: Codable {
     var center: Bool?
     var clipboard: Int?
     var files: Int?
+    var fileReceive: Int?
     var fileNetwork: Int?
     var computerName: String?
     var selection: Int?

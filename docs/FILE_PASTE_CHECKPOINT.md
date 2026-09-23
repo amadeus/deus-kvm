@@ -1,64 +1,64 @@
-# On-demand file paste over the local network
+# Network-only file paste in both directions
 
-Update **both apps** using the two ZIPs in the visible `releases/` folder:
+Update **both apps** from the visible `releases/` folder:
 
-- `DeusKVM-mac-arm64-file-paste-network-2026-09-22.zip`
-- `DeusKVM-Companion-win-x64-file-paste-network-2026-09-22.zip`
+- `DeusKVM-mac-arm64-files-2gb-bidirectional-2026-09-22.zip`
+- `DeusKVM-Companion-win-x64-files-2gb-bidirectional-2026-09-22.zip`
 
-Quit the old Mac app, extract the new Apple Silicon app and launch it. On Windows,
-close the old tray app, extract into a fresh folder and launch
-`DeusKVM.Companion.exe`; its update flow replaces the installed service/worker.
-Keep existing pairings and **Settings → Share clipboard with Windows** enabled.
-Keep both computers on the same local network (Wi-Fi or Ethernet). Allow DeusKVM
-local-network/incoming access on the Mac if macOS prompts, then copy the file again.
-No new setting or Windows inbound firewall rule is needed.
+Quit the old Mac app, extract and launch the new Apple Silicon app. Close the old
+Windows tray app, extract the Windows ZIP into a fresh folder and launch
+`DeusKVM.Companion.exe`; its normal update flow replaces the installed components.
+Keep pairings and **Settings → Share clipboard with Windows** enabled. Both
+computers must be reachable on the local network. Allow Mac local-network access
+if prompted. No Windows listening port or new inbound firewall rule is required.
 
-## First test
+## First test: Windows → Mac
 
-1. Copy the **1.9 MB file itself** in Finder with Cmd+C.
-2. Switch to Windows and press Ctrl+V in an ordinary Explorer folder.
-3. The same native paste should complete substantially faster when LAN is
-   reachable. Open the result and check its contents. Re-copy before each retry.
-4. If it is still slow, send `%LOCALAPPDATA%\DeusKVM\file-paste.log` (and `.previous`
-   if rotated). `network-block` means LAN was used;
-   `network-unavailable fallback=bluetooth` means connection setup failed and
-   the existing slower Bluetooth path was used. Logs omit names, paths, keys and
-   contents.
+1. Copy **one small regular file** in Windows Explorer with Ctrl+C.
+2. Return to the Mac, open the destination folder in Finder, and press **Cmd+V**.
+   Keep keyboard focus on the folder, outside its search/rename fields.
+3. On the first attempt, allow DeusKVM to control Finder if macOS asks. This
+   permission is used to locate the destination folder. If needed, enable it in
+   System Settings → Privacy & Security → Automation → DeusKVM → Finder, then
+   press Cmd+V again. Existing Accessibility permission is also required.
+4. DeusKVM shows progress and Cancel while copying directly into that folder.
+   Open the result and check it. A same-name destination is rejected, never replaced.
 
-## Follow-up checks
+This first reverse implementation uses **Finder Cmd+V**, as agreed. Finder's
+Edit-menu/right-click Paste, other Mac apps, and Option+Cmd+V move are not handled.
+No pre-download occurs. A hidden partial file exists in the destination only while
+paste is running; it is renamed on success and removed on cancellation/failure.
 
+## Then verify Mac → Windows and larger files
+
+- Finder Cmd+C → Explorer Ctrl+V or right-click Paste remains the native flow.
+- Test the known 1.9 MB file, then a file larger than the old 10 MiB limit, then
+  a large file approaching **2 GB (2,000,000,000 bytes)** in both directions.
 - Compare SHA-256: `shasum -a 256 /path/to/file` on Mac and
   `Get-FileHash -Algorithm SHA256 'C:\path\to\file'` in Windows PowerShell.
-- Copy without pasting: no contents should transfer. Metadata inspection does
-  not fetch bytes. A third-party clipboard manager explicitly reading the native
-  file stream can trigger transfer, as with the prior build.
-- Try right-click Paste, an empty file, then normal text copy/paste both ways.
-- Check mouse, typing, edge return and hotkey return during a transfer.
-- Cancel Explorer's copy; re-copy and retry. Change/delete the source or disable,
-  lock, disconnect or change Mac ownership during transfer: paste must stop, not
-  silently finish with mixed bytes. Remove any incomplete Explorer destination.
-- Copy something locally on Windows: it must supersede the Mac offer.
-- With Bluetooth still connected, temporarily disconnect the local network,
-  re-copy a **small** file and paste. Bluetooth fallback should still work.
+- Try an empty file and normal text copy/paste both ways.
+- Copy without pasting: no file contents should transfer. Third-party Windows
+  clipboard tools that explicitly read the virtual file stream can act as consumers.
 
-## Scope and behavior
+## Cancellation and regression checks
 
-Same **Mac → Windows Explorer**, one regular file, **10 MiB maximum**. No folders,
-symlinks, multi-selection, cut/move or reverse file paste. Use a Windows-compatible
-filename. The source must remain unchanged, available and on the Mac clipboard.
+- Cancel a large transfer, then re-copy and retry. No incomplete destination
+  should remain from the Mac receiver; Explorer manages its own failed output.
+- Replace the source clipboard, modify/delete the source, disable DeusKVM, lock,
+  disconnect or change ownership during transfer: it must stop without reporting
+  a successful mixed/truncated copy.
+- Disconnect networking but retain Bluetooth: plain text still works; file paste
+  fails without falling back to Bluetooth. Restore networking and copy again.
+- Check mouse, typing, edge switching and hotkey return throughout.
 
-Copying sends metadata and a fresh secret through encrypted Bluetooth. Content
-reads connect to the Mac over private/local IPv4 TCP, using authenticated encryption
-and blocks up to 256 KiB. No contents are pre-downloaded or staged by DeusKVM.
-Explorer owns the destination and native copy UI. Bluetooth still handles input,
-ownership and text clipboard sharing.
+One regular file at a time, maximum 2 GB. No folders, symlinks, multiple selection,
+cut/move or arbitrary destination apps. Keep the source unchanged and copied until
+paste completes. File contents are authenticated/encrypted LAN traffic; text,
+file metadata and transfer authentication stay on encrypted paired Bluetooth.
+Local IPv4 reachability is required; guest isolation and IPv6-only networks fail.
 
-If network setup fails before an authenticated response, the existing 1 KiB
-Bluetooth transfer is used. If an active network transfer fails, that paste fails;
-copy again to retry. A newly allowed network or changed address may require copying
-again. Guest Wi-Fi isolation, blocked incoming connections and IPv6-only networks
-can prevent this first version's LAN path.
-
-Local automated checks passed; **real Mac-to-Windows LAN performance, macOS
-permission prompts and the hardware follow-up checks remain pending**. The user
-confirmed the previous Bluetooth native paste interaction works, but is slow.
+Both directions passed full 2 GB socket transfers with matching SHA-256 locally.
+**Real Windows clipboard capture, Finder Cmd+V/Automation prompts and hardware
+regressions remain pending.** The prior Mac → Windows network flow was confirmed
+fast by the user. Windows diagnostics remain in
+`%LOCALAPPDATA%\DeusKVM\file-paste.log`, without names, paths, keys or contents.
