@@ -388,3 +388,41 @@ CRC passed. Windows code and its existing HID-restore ZIP are unchanged.
 
 Await user setup and subjective comparison. Bluetooth interval acceptance and
 smoother movement are not established by compilation or tests.
+
+
+## Windows connection-performance trial — 2026-09-22
+
+User reports the Mac low-latency request feels slightly better and approves a
+Windows-side performance preference trial. Keep the current Mac release and HID
+input behavior; no pointer scaling, smoothing, queue or capture changes.
+
+- [x] Request Windows 11 ThroughputOptimized only during the active Mac's remote
+  capture. Close the request on return/disable/takeover/reset/disconnect/disposal.
+- [x] Guard the API on older Windows and retain normal HID control on rejected or
+  failed requests. Compile against Windows SDK 22000, retain runtime minimum 19041.
+- [x] Test request lifetime, duplicate entry/resume, reset, unsupported/failure
+  fallback, then build the Windows x64 release and verify the package.
+- [x] Commit; retain only the new Windows ZIP and current Mac low-latency ZIP.
+- [ ] User updates Windows and compares the same Magic Trackpad during ordinary
+  motion, edge/hotkey return, idle and two-Mac takeover. Check other Bluetooth links.
+
+Request acceptance does not prove a different negotiated interval or smoother
+motion. Closing the request releases this app's preference; other apps, system
+HID policy and the Mac's low-latency preference still influence the connection.
+
+API references: [connection request](https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.bluetoothledevice.requestpreferredconnectionparameters?view=winrt-28000)
+and [request lifetime](https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.bluetoothlepreferredconnectionparametersrequest?view=winrt-28000).
+
+
+Validation: 113 .NET tests passed. The release compile passed with zero warnings
+and errors; self-contained Windows x64 publish passed. New tests cover one request
+per capture, duplicate/resume handling, release before new-owner capture, null or
+throwing acquisition, throwing disposal, disconnect and permanent disposal.
+Native API negotiation, Windows 10 fallback and actual radio/smoothness effects
+still need hardware validation; automated fallback tests use simulated requests.
+ZIP CRC/content checks pass; the executable PE architecture is x64. The current
+Mac ZIP SHA-256 is unchanged. Only the latest two platform ZIPs remain in releases.
+
+`DeusKVM-Companion-win-x64-throughput-2026-09-22.zip` — 52,596,338 bytes; SHA-256 `5297ed6aaa5fc5550f239fa37a27b177ca31d40e8727952b3eab92e63d5858fe`.
+
+Await user installation/setup before hardware comparison.

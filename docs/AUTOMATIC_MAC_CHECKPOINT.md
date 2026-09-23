@@ -3,17 +3,27 @@
 Update **Windows and both Macs**. Keep Bluetooth enabled and retain both pairings.
 The earlier Windows-only build does not implement this flow.
 
-## Low-latency trial — latest Mac build
+## Windows performance trial — latest checkpoint
 
-Only the Mac app changes for this trial. Keep the existing HID-restore Windows
-companion. Quit DeusKVM, replace the Mac app with the low-latency build below and
-relaunch. There is no new setting: the enabled Mac automatically requests low
-Bluetooth connection latency for its HID target. Disabled/former targets request
-balanced latency while still connected. Windows may choose a different interval.
+Update **Windows only** if you already installed the Mac low-latency build. Keep
+that Mac app; no new toggle, reset or Bluetooth pairing is needed.
 
-Use the mouse normally on Windows and compare smoothness/responsiveness. Mouse
-reports, acceleration behavior and queue handling are unchanged. Report whether
-it feels better, unchanged or worse; measurement work is deferred for this trial.
+The Windows companion requests performance-oriented Bluetooth connection settings
+while the active Mac controls Windows. Returning to the Mac, disabling it or
+transferring ownership closes that request. Merely being paired/enabled does not
+hold it. Windows 11 is required for the preference API; on older Windows or a
+rejected request, ordinary HID control continues. Request success does not prove
+that the negotiated interval changed.
+
+After setup, compare the same Magic Trackpad's Windows motion with the previous
+build. Then check edge/hotkey return and takeover in both directions, keeping both
+Macs connected. Note any effect on other Bluetooth devices. The companion records
+request acceptance/failure in its existing diagnostics. Mouse report contents,
+acceleration and queue handling are unchanged.
+
+The current Mac build still automatically requests low Bluetooth latency for its
+enabled HID target. The user reports that change feels slightly better; the extra
+Windows preference is a separate, as-yet-unverified trial.
 
 ## Pointer experiments removed
 
@@ -25,7 +35,7 @@ ownership/takeover, the display-selection fix and bounded recovery polling remai
 
 ## Update
 
-1. On Windows, extract `DeusKVM-Companion-win-x64-hid-restore-2026-09-22.zip`
+1. On Windows, extract `DeusKVM-Companion-win-x64-throughput-2026-09-22.zip`
    and open `DeusKVM.Companion.exe`. Approve the update prompt; it closes the old
    companion automatically. No scripts or .NET installation are needed.
 2. On **each Mac**, quit DeusKVM, unzip

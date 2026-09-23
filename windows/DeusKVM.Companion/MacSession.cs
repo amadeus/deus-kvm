@@ -13,6 +13,7 @@ internal sealed class MacSession : IDisposable
     private readonly Action<bool> connectionChanged;
     private readonly Action<string> detail;
     private readonly List<GattDeviceService> services = [];
+    private readonly CaptureConnectionRequest connectionPreference;
     private BluetoothLEDevice? device;
     private GattSession? session;
     private BluetoothControl? control;
@@ -38,6 +39,8 @@ internal sealed class MacSession : IDisposable
     public MacSession(ConnectedMac mac, Action<bool> connectionChanged, Action<string> detail)
     {
         Mac = mac; this.connectionChanged = connectionChanged; this.detail = detail;
+        connectionPreference = new CaptureConnectionRequest(RequestPerformanceConnection,
+            error => detail("Bluetooth performance preference unavailable; retaining HID control: " + Describe(error)));
     }
 
     public async Task Open()
@@ -75,10 +78,31 @@ internal sealed class MacSession : IDisposable
             if (disposed) { opened?.Dispose(); return; }
             session = opened;
             if (session is not null && session.CanMaintainConnection) session.MaintainConnection = true;
-            control = new BluetoothControl(value => { if (!disposed) detail(value); });
+            control = new BluetoothControl(value => { if (!disposed) detail(value); }, connectionPreference.SetCapturing);
             await control.Attach(services.First(service => service.Uuid == Protocol.Uuid(1)), CancellationToken.None);
         }
         catch (Exception error) { if (!disposed) Error = Describe(error); }
+    }
+
+    private IDisposable? RequestPerformanceConnection()
+    {
+        if (disposed || device is null || device.ConnectionStatus != BluetoothConnectionStatus.Connected) return null;
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        {
+            detail("Bluetooth performance preference requires Windows 11; retaining HID control");
+            return null;
+        }
+        var request = device.RequestPreferredConnectionParameters(BluetoothLEPreferredConnectionParameters.ThroughputOptimized);
+        try
+        {
+            var accepted = request.Status == BluetoothLEPreferredConnectionParametersRequestStatus.Success;
+            detail(accepted ? "Bluetooth performance preference requested for Windows control" :
+                $"Bluetooth performance preference: {request.Status}; retaining HID control");
+            if (accepted) return request; // Acceptance does not prove a faster negotiated interval.
+        }
+        catch { request.Dispose(); throw; }
+        request.Dispose();
+        return null;
     }
 
     public void Tick()
@@ -90,11 +114,15 @@ internal sealed class MacSession : IDisposable
     private void ConnectionChanged(BluetoothLEDevice sender, object args)
     {
         var connected = sender.ConnectionStatus == BluetoothConnectionStatus.Connected;
-        context.Post(_ => { if (!disposed && sender == device) connectionChanged(connected); }, null);
+        context.Post(_ => {
+            if (disposed || sender != device) return;
+            if (!connected) connectionPreference.SetCapturing(false);
+            connectionChanged(connected);
+        }, null);
     }
     private void ServicesChanged(BluetoothLEDevice sender, object args) => context.Post(_ =>
     {
-        if (!disposed && sender == device) changed = true;
+        if (!disposed && sender == device) { connectionPreference.SetCapturing(false); changed = true; }
     }, null);
     private static string Describe(Exception error) => $"{error.Message} (HRESULT 0x{error.HResult:X8}).";
 
@@ -103,6 +131,7 @@ internal sealed class MacSession : IDisposable
         if (disposed) return;
         disposed = true;
         control?.Dispose(); control = null;
+        connectionPreference.Dispose();
         foreach (var service in services) service.Dispose(); services.Clear();
         if (session is not null) { session.MaintainConnection = false; session.Dispose(); session = null; }
         if (device is not null)
