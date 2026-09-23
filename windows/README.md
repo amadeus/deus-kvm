@@ -229,12 +229,3 @@ command first; there is no migration from the old application/service identities
 Updates from an existing DeusKVM build preserve pairings, service running/stopped
 state and startup preferences. Its former selected Mac becomes an initial
 preference, without restricting automatic discovery of your other paired Macs.
-
-
-## Bluetooth performance trial
-
-On Windows 11, the companion requests a performance-oriented Bluetooth connection
-while the active Mac controls Windows, and closes the request when control returns
-or transfers. It runs automatically; no pointer settings change. Older Windows and
-rejected requests retain normal HID control. Keep the current Mac low-latency app.
-See the included CHECKPOINT.md for setup and the pending smoothness comparison.

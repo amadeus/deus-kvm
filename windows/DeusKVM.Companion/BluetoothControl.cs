@@ -8,7 +8,7 @@ using Windows.Storage.Streams;
 namespace DeusKVM.Companion;
 
 // Runs on the service's STA BLE worker. Desktop observations are requests; the Mac remains the routing authority.
-internal sealed partial class BluetoothControl(Action<string> status, Action<bool>? captureChanged = null) : IDisposable
+internal sealed partial class BluetoothControl(Action<string> status) : IDisposable
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -17,7 +17,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Action<boo
     };
     private readonly SynchronizationContext context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
     private readonly Queue<(GattCharacteristic Characteristic, byte[] Data, bool HelloEnd)> controls = new(), bulk = new();
-    private readonly CompanionHandoff handoff = new(captureChanged);
+    private readonly CompanionHandoff handoff = new();
     private Protocol.Encoder controlEncoder = new(), bulkEncoder = new();
     private Protocol.Decoder controlDecoder = new(), bulkDecoder = new();
     private GattCharacteristic? controlRead, controlWrite, bulkRead, bulkWrite;

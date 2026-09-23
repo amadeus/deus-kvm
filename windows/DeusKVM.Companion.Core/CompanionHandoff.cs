@@ -2,25 +2,15 @@ namespace DeusKVM.Companion.Core;
 
 // Mac ownership outlives an individual console worker. A worker/display change
 // invalidates configuration, while only Mac EXIT or link reset ends ownership.
-public sealed class CompanionHandoff(Action<bool>? captureChanged = null)
+public sealed class CompanionHandoff
 {
     public byte? Active { get; private set; }
     public byte? Edge { get; private set; }
     public EdgeConfiguration? Configuration { get; private set; }
 
-    public void Enter(byte id, byte edge)
-    {
-        var wasCapturing = Active is not null;
-        Active = id; Edge = edge;
-        if (!wasCapturing) captureChanged?.Invoke(true);
-    }
+    public void Enter(byte id, byte edge) { Active = id; Edge = edge; }
     public bool Accept(byte id) => Active == id;
-    public void Exit()
-    {
-        var wasCapturing = Active is not null;
-        Active = null; Edge = null;
-        if (wasCapturing) captureChanged?.Invoke(false);
-    }
+    public void Exit() { Active = null; Edge = null; }
     public void Reset() { Exit(); DesktopChanged(); }
     public void DesktopChanged() => Configuration = null;
 

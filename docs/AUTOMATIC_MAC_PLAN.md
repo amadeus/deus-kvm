@@ -426,3 +426,32 @@ Mac ZIP SHA-256 is unchanged. Only the latest two platform ZIPs remain in releas
 `DeusKVM-Companion-win-x64-throughput-2026-09-22.zip` — 52,596,338 bytes; SHA-256 `5297ed6aaa5fc5550f239fa37a27b177ca31d40e8727952b3eab92e63d5858fe`.
 
 Await user installation/setup before hardware comparison.
+
+
+## Withdraw Windows performance trial — 2026-09-22
+
+User feedback: initial mouse capture appeared trapped on Windows, then returned;
+re-entry was temporarily unavailable before recovering. No noticeable smoothness
+improvement. No timing/negotiation evidence establishes the cause of the transient
+handoff problem. Withdraw the Windows-side request and retain the Mac low-latency
+change, whose earlier subjective result was slightly positive.
+
+- [x] Restore Windows source/build target/tests/README exactly to `fbd6a04`, removing
+  the throughput request and its handoff callbacks. Keep Mac code/build unchanged.
+- [x] Update current checkpoint instructions; record the unsuccessful trial result.
+- [x] Run the restored Windows tests, build/publish x64 and verify the ZIP.
+- [x] Commit and retain only the replacement Windows ZIP and current Mac ZIP.
+- [ ] User installs Windows update and confirms ordinary return/re-entry behavior.
+
+Previous uncompleted hardware cases remain unverified. No further smoothing,
+acceleration, transport or queue changes are included in this rollback.
+
+
+Rollback validation: 108 .NET tests passed; self-contained Windows x64 publish
+passed. Windows and Mac source/build configuration match `fbd6a04` exactly. ZIP
+CRC and contents pass, and the executable is x64. The existing Mac ZIP SHA-256
+is unchanged. Only the current Windows and Mac ZIPs remain in releases.
+
+`DeusKVM-Companion-win-x64-standard-2026-09-22.zip` — 52,395,296 bytes; SHA-256 `cb454dab4358863dd0712ee7c68a071fa9d84665fc193b2d62a6512f6c58d832`.
+
+Await user installation and normal return/re-entry confirmation.

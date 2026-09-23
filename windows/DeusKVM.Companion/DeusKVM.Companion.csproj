@@ -6,7 +6,7 @@
     <Product>DeusKVM Companion</Product>
     <Title>DeusKVM Companion</Title>
     <Description>DeusKVM Windows companion service and settings</Description>
-    <TargetFramework>net10.0-windows10.0.22000.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>

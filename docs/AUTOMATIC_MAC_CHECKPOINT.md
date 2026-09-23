@@ -3,27 +3,21 @@
 Update **Windows and both Macs**. Keep Bluetooth enabled and retain both pairings.
 The earlier Windows-only build does not implement this flow.
 
-## Windows performance trial — latest checkpoint
+## Windows performance trial removed — latest checkpoint
 
 Update **Windows only** if you already installed the Mac low-latency build. Keep
-that Mac app; no new toggle, reset or Bluetooth pairing is needed.
+that Mac app; no toggle, reset or Bluetooth re-pairing is needed.
 
-The Windows companion requests performance-oriented Bluetooth connection settings
-while the active Mac controls Windows. Returning to the Mac, disabling it or
-transferring ownership closes that request. Merely being paired/enabled does not
-hold it. Windows 11 is required for the preference API; on older Windows or a
-rejected request, ordinary HID control continues. Request success does not prove
-that the negotiated interval changed.
+The Windows-side performance request has been removed after the user reported no
+noticeable smoothness improvement and temporary trouble returning from/re-entering
+Windows. The cause of that incident is unconfirmed; the trial is withdrawn.
+The replacement restores the pre-trial Windows connection and handoff behavior.
 
-After setup, compare the same Magic Trackpad's Windows motion with the previous
-build. Then check edge/hotkey return and takeover in both directions, keeping both
-Macs connected. Note any effect on other Bluetooth devices. The companion records
-request acceptance/failure in its existing diagnostics. Mouse report contents,
-acceleration and queue handling are unchanged.
-
-The current Mac build still automatically requests low Bluetooth latency for its
-enabled HID target. The user reports that change feels slightly better; the extra
-Windows preference is a separate, as-yet-unverified trial.
+The current Mac build continues to request low Bluetooth latency for its enabled
+HID target, which the user reported felt slightly better. Mouse reports,
+acceleration, queue handling and the earlier ownership/lag fixes are unchanged.
+After installation, confirm normal switching in both directions. Further hardware
+validation remains pending; the rollback is not proof the transient issue is fixed.
 
 ## Pointer experiments removed
 
@@ -35,7 +29,7 @@ ownership/takeover, the display-selection fix and bounded recovery polling remai
 
 ## Update
 
-1. On Windows, extract `DeusKVM-Companion-win-x64-throughput-2026-09-22.zip`
+1. On Windows, extract `DeusKVM-Companion-win-x64-standard-2026-09-22.zip`
    and open `DeusKVM.Companion.exe`. Approve the update prompt; it closes the old
    companion automatically. No scripts or .NET installation are needed.
 2. On **each Mac**, quit DeusKVM, unzip
