@@ -57,4 +57,44 @@ public sealed class RemoteFileStreamTests
         try { stream.Read(new byte[10], 10, count); Assert.Equal(0, Marshal.ReadInt32(count)); }
         finally { Marshal.FreeCoTaskMem(count); }
     }
+    [Fact]
+    public void TwoMegabyteTransferSurvivesWireSequenceWrapsAndLargeConsumerReads()
+    {
+        // Slightly over the reported 1.9 MB failure, with a partial final block.
+        var source = new byte[2 * 1024 * 1024 + 37];
+        new Random(1234).NextBytes(source);
+        var encoder = new Protocol.Encoder(); var decoder = new Protocol.Decoder();
+        var requests = 0;
+        FileClipboardSession? session = null;
+        session = new(new(1, 2, "file", source.Length), request =>
+        {
+            requests++;
+            var offset = (int)ClipboardTransfer.Read(request, 8);
+            var payload = ClipboardTransfer.Header(1, 2, (uint)offset)
+                .Concat(source.AsSpan(offset, Math.Min(1024, source.Length - offset)).ToArray()).ToArray();
+            foreach (var frame in encoder.Encode(new(1, (byte)Protocol.Message.FileData, payload)))
+                if (decoder.Receive(frame) is { } packet) session!.Receive(packet.Payload);
+        });
+        using (session)
+        {
+            var stream = new RemoteFileStream(session, () => { });
+            var received = new byte[source.Length];
+            var buffer = new byte[1024 * 1024];
+            var count = Marshal.AllocCoTaskMem(4);
+            try
+            {
+                for (var position = 0; position < received.Length;)
+                {
+                    stream.Read(buffer, buffer.Length, count);
+                    var n = Marshal.ReadInt32(count);
+                    Assert.InRange(n, 1, Math.Min(buffer.Length, received.Length - position));
+                    Array.Copy(buffer, 0, received, position, n); position += n;
+                }
+            }
+            finally { Marshal.FreeCoTaskMem(count); }
+            Assert.Equal(source, received);
+            Assert.Equal((source.Length + 1023) / 1024, requests);
+        }
+    }
+
 }

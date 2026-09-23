@@ -61,7 +61,7 @@ is not confirmed. Microsoft's API documents async extraction as optional.
 - [x] Add bounded fixed-event diagnostics without file names, paths or contents.
 - [x] Run regression tests/build; package and verify replacement Windows x64 ZIP.
 - [x] Commit fix and record final release receipt.
-- [ ] User updates Windows, makes a fresh Finder copy, and retests Explorer paste.
+- [x] User confirms native Explorer paste works with a small file after the Windows fix.
 
 Native on-demand semantics: a consumer actually reading contents starts transfer.
 DeusKVM never pre-downloads files or renders contents for metadata inspection.
@@ -80,3 +80,24 @@ Only the current Mac ZIP and replacement Windows ZIP remain in `releases/`.
 SHA-256 `4b93c5e1f09687ad705564e2774515de0c11e0f6910ff23937824bad8a41d048`.
 
 Native paste success remains pending a fresh user test.
+
+## Larger-file investigation — 2026-09-22
+
+Hardware feedback after the Access Denied fix: a small file pasted successfully.
+A **1.9 MB** file showed a loader without apparent progress, and the user canceled
+it. No Windows transfer error or timeout was reported for that attempt. This is
+below the 10 MiB cap. Do not label it a confirmed protocol failure or timeout.
+
+- [x] Record small-file native paste success without closing the larger-file,
+  cancellation, clipboard-manager or input-regression hardware checks.
+- [x] Add a 2 MiB + 37 byte stream/protocol regression covering 1 MiB consumer
+  reads, 1 KiB file blocks, repeated wire sequence wrap and a partial final block.
+  All 125 .NET tests passed; the resulting bytes exactly match the source.
+- [ ] Receive the user's Windows diagnostics and determine whether transfer was
+  advancing while Explorer awaited a large read, or had stopped for another reason.
+- [ ] Reproduce/fix the confirmed cause and prepare a replacement build if needed.
+
+The local test uses immediate simulated delivery; it does not measure Bluetooth
+throughput, native Explorer progress or COM responsiveness. Production behavior
+and release ZIPs are unchanged. User is collecting `file-paste.log`; wait for that
+evidence before changing timeouts or replacing the transport.
