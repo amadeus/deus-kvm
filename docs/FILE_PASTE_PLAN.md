@@ -135,3 +135,13 @@ SHA-256 `935ffa0dbdb5ca38445cadf1b68e53ffbf0b905860a657dec5a073a1396daf0a`.
 
 This is instrumentation, not a claimed fix for larger-file progress. Await the
 user's next 1.9 MB attempt and log before changing production transfer behavior.
+
+
+## User-confirmed flow and network follow-up — 2026-09-22
+
+The user confirms Mac-to-Windows native paste works and wants the same interaction
+with faster networking. This supersedes the pending Bluetooth measurement request;
+no precise Bluetooth throughput was established. The full hardware checklist above
+is still open. Track the authorized network implementation and new release receipts
+in [NETWORK_FILE_PASTE_PLAN.md](NETWORK_FILE_PASTE_PLAN.md), with current user
+instructions in [FILE_PASTE_CHECKPOINT.md](FILE_PASTE_CHECKPOINT.md).

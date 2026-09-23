@@ -49,7 +49,8 @@ BLE. No LAN connection is required.
   locked or signed out and skips recognized private clipboard markers. See
   [clipboard behavior and limits](docs/CLIPBOARD.md). The current prototype also
   supports [on-demand Mac file paste into Windows Explorer](docs/FILE_PASTE_CHECKPOINT.md)
-  for one regular file up to 10 MiB.
+  for one regular file up to 10 MiB, using the local network when available
+  and Bluetooth as fallback. Contents transfer only when pasted.
 - Vertical and horizontal scrolling can be inverted independently in Settings.
 - **Disable DeusKVM** in Settings or the menu bar restores local input and
   stops advertising, input capture, and clipboard exchange. Enabling reuses

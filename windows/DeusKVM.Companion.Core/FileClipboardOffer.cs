@@ -2,12 +2,12 @@ using System.Text.Json;
 
 namespace DeusKVM.Companion.Core;
 
-public sealed record FileClipboardOffer(uint Epoch, uint Sequence, string Name, int Size, uint ClipboardSequence = 0)
+public sealed record FileClipboardOffer(uint Epoch, uint Sequence, string Name, int Size, uint ClipboardSequence = 0, FileNetworkOffer? Network = null)
 {
     public const int MaximumBytes = 10 * 1024 * 1024;
     public static FileClipboardOffer Parse(byte[] data)
     {
-        if (data.Length > 1036) throw new InvalidDataException("Oversized file offer");
+        if (data.Length > 4096) throw new InvalidDataException("Oversized file offer");
         var offer = JsonSerializer.Deserialize<FileClipboardOffer>(data, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (offer is null || offer.Size is < 0 or > MaximumBytes || string.IsNullOrEmpty(offer.Name) || offer.Name.Length > 240 ||
             offer.Name is "." or ".." || offer.Name.EndsWith('.') || offer.Name.EndsWith(' ') ||
@@ -15,7 +15,7 @@ public sealed record FileClipboardOffer(uint Epoch, uint Sequence, string Name, 
             new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
                 "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" }.Contains(offer.Name.Split('.')[0].ToUpperInvariant()))
             throw new InvalidDataException("Unsupported file offer");
-        return offer;
+        return offer.Network is not null && !offer.Network.Valid ? offer with { Network = null } : offer;
     }
 }
 
@@ -24,6 +24,7 @@ public sealed class FileClipboardSession(FileClipboardOffer offer, Action<byte[]
 {
     private readonly object gate = new(), reader = new();
     private bool canceled;
+    private NetworkFileReader? network = offer.Network is null ? null : new NetworkFileReader(offer, diagnostic);
     private long started, lastProgress, receivedBytes;
     private int blocks;
     private string failure = "none";
@@ -38,6 +39,7 @@ public sealed class FileClipboardSession(FileClipboardOffer offer, Action<byte[]
             if (!canceled && started != 0) Trace($"transfer-released received={receivedBytes} blocks={blocks} waiting={waiting?.ToString() ?? "none"}");
             canceled = true; Monitor.PulseAll(gate);
         }
+        network?.Dispose();
     }
     public void Receive(byte[] payload)
     {
@@ -56,6 +58,18 @@ public sealed class FileClipboardSession(FileClipboardOffer offer, Action<byte[]
     public byte[] Read(uint offset)
     {
         lock (reader)
+        {
+            lock (gate) { if (canceled) throw new IOException("File offer expired"); }
+            if (network is { } connection)
+            {
+                try { return connection.Read(offset); }
+                catch (NetworkUnavailableException) { connection.Dispose(); network = null; }
+            }
+            return ReadBluetooth(offset);
+        }
+    }
+    private byte[] ReadBluetooth(uint offset)
+    {
         lock (gate)
         {
             if (canceled) throw new IOException("File offer expired; copy the file again on the Mac.");

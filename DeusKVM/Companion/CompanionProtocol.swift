@@ -124,6 +124,7 @@ struct CompanionHello: Codable {
     var center: Bool?
     var clipboard: Int?
     var files: Int?
+    var fileNetwork: Int?
     var computerName: String?
     var selection: Int?
     var available: Bool?

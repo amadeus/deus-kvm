@@ -109,7 +109,9 @@ Native memory ownership follows
 
 The same sharing toggle also enables **one regular Mac file up to 10 MiB** to
 be pasted in Windows Explorer. Copy sends metadata, not file contents. The OLE
-virtual-file stream requests 1 KiB blocks only when a consumer reads contents.
+virtual-file stream requests content only when a consumer reads it. With both
+updated apps, file bytes prefer encrypted local-network blocks up to 256 KiB;
+unavailable network setup falls back to the original 1 KiB Bluetooth blocks.
 Metadata inspection does not start a download. Synchronous and asynchronous
 consumers are supported; asynchronous callbacks are optional. A clipboard manager
 that actively reads file contents can trigger a transfer; Windows does not label
@@ -127,3 +129,13 @@ carry the text clipboard offer sequence so delayed metadata cannot supersede a
 newer clipboard offer. All file traffic shares the existing ownership, desktop,
 sharing-preference and clipboard epoch gates. Contents remain off input loops;
 file blocks use the existing bulk priority beneath HID/control traffic.
+
+
+HELLO capability `fileNetwork: 1` adds an optional `network` object to FILE_OFFER:
+`hosts` (up to four private/link-local IPv4 strings), `port` and `key` (base64
+32-byte per-offer secret). FILE_OFFER permits up to 4096 bytes; other clipboard
+message bounds are unchanged. Metadata/key delivery requires the existing encrypted
+GATT characteristics. Older peers receive the original Bluetooth-only offer.
+For socket framing, authentication, lifecycle and test receipts, see
+[NETWORK_FILE_PASTE_PLAN.md](NETWORK_FILE_PASTE_PLAN.md). Native clipboard formats
+and input transport are unchanged.

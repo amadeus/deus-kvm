@@ -26,6 +26,8 @@
 	<false/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>DeusKVM uses Bluetooth as a keyboard and mouse.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>DeusKVM transfers copied files directly to your paired Windows PC when you paste.</string>
 	<key>LSUIElement</key>
 	<true/>
 </dict>

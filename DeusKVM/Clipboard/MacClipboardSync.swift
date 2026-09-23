@@ -33,7 +33,8 @@ final class MacClipboardSync {
                 clipboardSequence: transfer.sequence,
                 sequence: UInt32(truncatingIfNeeded: revision),
                 name: $0.url.lastPathComponent,
-                size: $0.size
+                size: $0.size,
+                network: target.map { service.supportsFileNetwork($0) } == true ? snapshot.network : nil
             ))
         }
         if snapshot.announce { offerFile() }

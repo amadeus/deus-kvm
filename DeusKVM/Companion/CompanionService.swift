@@ -43,6 +43,7 @@ final class CompanionService: ObservableObject {
         var supportsCenter = false
         var supportsClipboard = false
         var supportsFiles = false
+        var supportsFileNetwork = false
         var supportsSelection = false
         var supportsTakeover = false
     }
@@ -118,7 +119,7 @@ final class CompanionService: ObservableObject {
         if !subscribedHosts.contains(central.identifier) { subscribedHosts.insert(central.identifier) }
         if sendHello {
             sendJSON(CompanionHello(
-                v: 1, role: "mac", name: "DeusKVM", chunk: 20, clipboard: 1, files: 1,
+                v: 1, role: "mac", name: "DeusKVM", chunk: 20, clipboard: 1, files: 1, fileNetwork: 1,
                 selection: 1, available: selection.available(to: central.identifier), availabilityEpoch: selection.epoch,
                 takeover: true, requestControl: wantsControl
             ), type: .hello, to: central.identifier)
@@ -234,6 +235,7 @@ final class CompanionService: ObservableObject {
         clients[id]?.supportsCenter = hello.center == true
         clients[id]?.supportsClipboard = hello.clipboard == 1
         clients[id]?.supportsFiles = hello.files == 1
+        clients[id]?.supportsFileNetwork = hello.fileNetwork == 1
         clients[id]?.supportsSelection = hello.selection == 1
         clients[id]?.supportsTakeover = hello.takeover == true
         selection.disconnect(id)
@@ -272,6 +274,10 @@ final class CompanionService: ObservableObject {
         supportsClipboard(id) && clients[id]?.supportsFiles == true
     }
 
+    func supportsFileNetwork(_ id: UUID) -> Bool {
+        supportsFiles(id) && clients[id]?.supportsFileNetwork == true
+    }
+
     func allowsControl(_ id: UUID, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         guard selection.available(to: id), ready.contains(id), let seen = lastSeen[id], now - seen < 10 else { return false }
         return clients[id]?.supportsSelection != true || selection.granted(to: id)
@@ -283,7 +289,7 @@ final class CompanionService: ObservableObject {
 
     func sendClipboard(_ type: CompanionProtocol.Message, payload: Data, to id: UUID) {
         guard clipboardTarget?() == id, allowsControl(id), supportsClipboard(id),
-              payload.count <= ClipboardTransfer.blockBytes + 12 else { return }
+              payload.count <= (type == .fileOffer ? 4096 : ClipboardTransfer.blockBytes + 12) else { return }
         if [.clipData, .fileOffer, .fileData].contains(type) {
             enqueue(type, stream: 1, payload: payload, to: id)
         } else {

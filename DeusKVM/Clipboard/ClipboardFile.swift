@@ -18,14 +18,14 @@ struct ClipboardFile: Sendable {
         self.url = url; self.size = size; self.modified = modified; self.identity = identity
     }
 
-    func read(offset: UInt32) -> Data? {
-        guard offset <= size, let current = ClipboardFile(url), current.size == size,
+    func read(offset: UInt32, count: Int = ClipboardTransfer.blockBytes) -> Data? {
+        guard offset <= size, count > 0, count <= FileNetworkCrypto.maximumBlock, let current = ClipboardFile(url), current.size == size,
               current.modified == modified, current.identity == identity,
               let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         do {
             try handle.seek(toOffset: UInt64(offset))
-            let count = min(ClipboardTransfer.blockBytes, size - Int(offset))
+            let count = min(count, size - Int(offset))
             let bytes = try handle.read(upToCount: count) ?? Data()
             guard bytes.count == count, let after = ClipboardFile(url),
                   after.size == size, after.modified == modified, after.identity == identity else { return nil }
@@ -40,4 +40,5 @@ struct ClipboardFileOffer: Codable {
     let sequence: UInt32
     let name: String
     let size: Int
+    var network: FileNetworkOffer?
 }
