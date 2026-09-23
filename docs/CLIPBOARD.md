@@ -24,10 +24,10 @@ when the tray window is closed. Keep the existing Bluetooth pairing.
    private. Confirm that private text, images and text over 64 KiB do not
    replace the other machine's clipboard.
 
-Neither app was launched/restarted during the overnight implementation, and no
-system clipboard or computer-use interaction was used. Native clipboard reads,
-writes, privacy markers and Bluetooth timing await these checks. Automated
-unit tests do not establish live integration behavior.
+The handoff-only Mac update is tested using isolated named pasteboards, including
+native reads/writes and stale-write rejection; the user's clipboard is untouched.
+Bluetooth timing, real handoffs and Finder/Explorer integration still require the
+hardware checks above. Automated tests do not establish live end-to-end behavior.
 
 ## Behavior and limits
 
@@ -35,13 +35,16 @@ unit tests do not establish live integration behavior.
   normalization**. Rich copies may supply their plain-text representation;
   formatting and images are not transferred. File-list clipboards are excluded
   from text sharing, even if they also contain a text representation.
-- New copies are offered to the other machine. The destination fetches them
-  when it is active, or at the next handoff. The initial clipboard snapshot is
-  offered only when leaving that machine, preventing connection alone from
-  replacing the active machine's clipboard with old text.
+- Mac copies stay local until switching to Windows. At handoff, DeusKVM reads
+  the latest clipboard and offers its text/file metadata, including menu and
+  right-click copies. Connecting alone does not publish the Mac clipboard.
+  Windows offers continue to arrive through the companion; text is fetched when
+  the Mac becomes active. File contents transfer only when pasted.
 - Transfers run asynchronously; switching does not wait for the clipboard.
-  Polling is every 200 ms while sharing is available. A large copy may take
-  time before a paste sees it. Text over the cap is skipped rather than truncated.
+  The Mac has no repeating clipboard poll. It reads for initial session setup,
+  handoff and validation of incoming writes; operation-specific retries stop
+  after at most two seconds. Large text may take time before a paste sees it.
+  Text over the cap is skipped rather than truncated.
 - Empty text is supported. Embedded NUL and malformed Unicode are rejected.
   Newlines are LF on the wire and CRLF when written to Windows.
 - Imported revisions are recorded and marked so they are not echoed back. A

@@ -10,7 +10,6 @@ final class ClipboardPasteboard: @unchecked Sendable {
         let text: Data?
         let file: ClipboardFile?
         let network: FileNetworkOffer?
-        let announce: Bool
     }
 
     static let ownType = NSPasteboard.PasteboardType("io.github.amadeus.deuskvm.clipboard")
@@ -24,7 +23,9 @@ final class ClipboardPasteboard: @unchecked Sendable {
     private var generation: UInt64 = 0
     private var permitted = false
     private let queue = DispatchQueue(label: "DeusKVM.clipboard")
-    private var timer: DispatchSourceTimer?
+    private let board: NSPasteboard
+    private var retry: DispatchWorkItem?
+    private var requestDeadline: TimeInterval = 0
     private var epoch: UInt32 = 0
     private var enabled = false
     private var versions = ClipboardRevision()
@@ -47,8 +48,12 @@ final class ClipboardPasteboard: @unchecked Sendable {
     private let snapshot: @Sendable (Snapshot) -> Void
     private let yielded: @Sendable (UInt32, UInt64) -> Void
 
-    init(snapshot: @escaping @Sendable (Snapshot) -> Void, yielded: @escaping @Sendable (UInt32, UInt64) -> Void) {
-        self.snapshot = snapshot; self.yielded = yielded
+    init(
+        board: NSPasteboard = .general,
+        snapshot: @escaping @Sendable (Snapshot) -> Void,
+        yielded: @escaping @Sendable (UInt32, UInt64) -> Void
+    ) {
+        self.board = board; self.snapshot = snapshot; self.yielded = yielded
     }
 
     @discardableResult
@@ -62,26 +67,21 @@ final class ClipboardPasteboard: @unchecked Sendable {
             self.epoch = epoch; self.enabled = enabled
             versions = ClipboardRevision(); pending = nil; file = nil; priming = true; pendingYield = false
             network.configure(enabled)
-            if !enabled { timer?.cancel(); timer = nil; return }
-            if timer == nil {
-                let source = DispatchSource.makeTimerSource(queue: queue)
-                source.schedule(deadline: .now(), repeating: .milliseconds(200), leeway: .milliseconds(40))
-                source.setEventHandler { [weak self] in self?.poll() }
-                source.resume(); timer = source
-            }
+            retry?.cancel(); retry = nil
+            if enabled { requestPoll() }
         }
         return next
     }
 
     func yield() {
-        queue.async { [self] in pendingYield = true; poll() }
+        queue.async { [self] in pendingYield = true; requestPoll() }
     }
 
     func write(_ text: Data, epoch: UInt32, revision: Int) {
         queue.async { [self] in
             guard enabled, self.epoch == epoch else { return }
             pending = Pending(text: text, file: nil, revision: revision, deadline: ProcessInfo.processInfo.systemUptime + 2)
-            poll()
+            requestPoll()
         }
     }
 
@@ -89,17 +89,17 @@ final class ClipboardPasteboard: @unchecked Sendable {
         queue.async { [self] in
             guard enabled, epoch == offer.epoch, offer.valid else { return }
             pending = Pending(text: nil, file: offer, revision: revision, deadline: ProcessInfo.processInfo.systemUptime + 2)
-            poll()
+            requestPoll()
         }
     }
 
     private func fileBytes(epoch: UInt32, sequence: UInt32, offset: UInt32, count: Int) -> Data? {
         guard enabled, canAccess, !IsSecureEventInputEnabled(), self.epoch == epoch,
-              UInt32(truncatingIfNeeded: NSPasteboard.general.changeCount) == sequence,
+              UInt32(truncatingIfNeeded: board.changeCount) == sequence,
               let file else { return nil }
         let bytes = file.read(offset: offset, count: count)
         guard canAccess, !IsSecureEventInputEnabled(),
-              UInt32(truncatingIfNeeded: NSPasteboard.general.changeCount) == sequence else { return nil }
+              UInt32(truncatingIfNeeded: board.changeCount) == sequence else { return nil }
         return bytes
     }
 
@@ -107,9 +107,29 @@ final class ClipboardPasteboard: @unchecked Sendable {
         gate.withLock { permitted && permittedGeneration == generation }
     }
 
+    /// Only initialization, handoff and incoming writes request a read. Retries are
+    /// bounded to this operation (pasteboard contention or a starting network listener).
+    private func requestPoll() {
+        requestDeadline = ProcessInfo.processInfo.systemUptime + 2
+        poll()
+    }
+
+    private func retryIfNeeded() {
+        guard enabled, canAccess, priming || pendingYield || pending != nil,
+              ProcessInfo.processInfo.systemUptime < requestDeadline else { return }
+        let expected = generation
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, generation == expected, canAccess else { return }
+            poll()
+        }
+        retry = work
+        queue.asyncAfter(deadline: .now() + 0.05, execute: work)
+    }
+
     private func poll() {
+        retry?.cancel(); retry = nil
         guard enabled, canAccess else { return }
-        let board = NSPasteboard.general
+        defer { retryIfNeeded() }
         let revision = board.changeCount
         if versions.observed != revision {
             guard !IsSecureEventInputEnabled() else { return }
@@ -136,8 +156,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
                 revision: revision,
                 text: bytes,
                 file: file,
-                network: endpoint,
-                announce: !priming
+                network: endpoint
             ))
             priming = false
         }
@@ -147,7 +166,6 @@ final class ClipboardPasteboard: @unchecked Sendable {
 
     private func apply(_ update: Pending, revision: Int) {
         guard !IsSecureEventInputEnabled() else { return }
-        let board = NSPasteboard.general
         guard versions.canApply(expectedLocal: update.revision, current: revision),
               ProcessInfo.processInfo.systemUptime <= update.deadline else { pending = nil; return }
         let item = NSPasteboardItem()
@@ -168,5 +186,5 @@ final class ClipboardPasteboard: @unchecked Sendable {
         }
     }
 
-    deinit { timer?.cancel() }
+    deinit { retry?.cancel() }
 }

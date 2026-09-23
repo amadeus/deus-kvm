@@ -33,7 +33,7 @@ final class MacClipboardSync {
         guard enabled, snapshot.epoch == epoch, snapshot.generation == generation else { return }
         finder.clear()
         revision = snapshot.revision
-        transfer.observe(snapshot.text, announce: snapshot.announce)
+        transfer.observe(snapshot.text, announce: false)
         fileOffer = snapshot.file.flatMap {
             try? JSONEncoder().encode(ClipboardFileOffer(
                 epoch: epoch,
@@ -44,7 +44,6 @@ final class MacClipboardSync {
                 network: target.map { service.supportsFileNetwork($0) } == true ? snapshot.network : nil
             ))
         }
-        if snapshot.announce { offerFile() }
         if !primed {
             primed = true
             if let target { acknowledge(target, enabled: true) }
@@ -52,7 +51,7 @@ final class MacClipboardSync {
     }
 
     private func yield(_ epoch: UInt32, generation: UInt64) {
-        guard enabled, self.epoch == epoch, self.generation == generation else { return }
+        guard enabled, remote, self.epoch == epoch, self.generation == generation else { return }
         transfer.yield()
         offerFile()
     }

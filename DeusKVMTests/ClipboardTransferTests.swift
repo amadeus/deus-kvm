@@ -57,6 +57,23 @@ final class ClipboardTransferTests: XCTestCase {
         XCTAssertEqual(pair.appliedPC.first.flatMap(ClipboardTransfer.decode), "initial")
     }
 
+    func testMacCopiesOnlyAnnounceAtHandoffAndWindowsReturnStillWorks() throws {
+        let pair = Pair()
+        pair.mac.setActive(true, now: 0); pair.pc.setActive(false, now: 0)
+        pair.mac.observe(ClipboardTransfer.text("first local copy"), announce: false)
+        pair.mac.observe(ClipboardTransfer.text("latest menu copy"), announce: false)
+        XCTAssertTrue(pair.queue.isEmpty)
+        XCTAssertTrue(pair.appliedPC.isEmpty)
+        pair.mac.setActive(false, now: 1); pair.pc.setActive(true, now: 1)
+        pair.mac.yield(); try pair.pump()
+        XCTAssertEqual(pair.appliedPC.compactMap(ClipboardTransfer.decode), ["latest menu copy"])
+        pair.pc.observe(ClipboardTransfer.text("Windows copy")); try pair.pump()
+        XCTAssertTrue(pair.appliedMac.isEmpty)
+        pair.pc.setActive(false, now: 2); pair.mac.setActive(true, now: 2)
+        pair.pc.yield(); try pair.pump()
+        XCTAssertEqual(pair.appliedMac.compactMap(ClipboardTransfer.decode), ["Windows copy"])
+    }
+
     func testLocalCopyOrPrivateContentCancelsIncomingText() throws {
         let pair = Pair()
         pair.mac.observe(Data(repeating: 120, count: 3000))

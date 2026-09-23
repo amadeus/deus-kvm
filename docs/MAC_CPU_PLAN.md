@@ -99,3 +99,35 @@ code changed; retain the tested cpu-edge Windows ZIP. No running app was replace
 Current Mac artifact: `DeusKVM-mac-arm64-idle-events-2026-09-23.zip` — 1,026,880 bytes;
 SHA-256 `98bc646f41fea3a1b0ee5e3a205e3a63f7415f7034c386e008f51e6f21e31d9a`. Supersedes the Mac cpu-edge ZIP above; only the current
 Mac and Windows archives remain in `releases/`. Hardware results remain pending.
+
+## Phase 3: clipboard sharing at handoff only
+
+User explicitly confirmed Mac copies should not update Windows until switching
+to Windows. This replaces the always-live Mac clipboard-monitoring requirement.
+
+- [x] Remove the 200 ms repeating Mac pasteboard timer. Read once for session
+  priming, when crossing to Windows, or to validate/apply an incoming Windows write.
+- [x] Prepare snapshots without announcing text/file metadata; announce only from
+  the handoff completion while still controlling Windows. Include copies made by
+  menus and other apps before crossing; no keyboard shortcut interception needed.
+- [x] Preserve incoming-write revision guards and per-chunk source validation.
+  A newer local clipboard copy rejects a stale incoming Windows write even when
+  it was never observed by a timer. File bytes remain paste-on-demand over LAN.
+- [x] Keep only operation-scoped read retries (50 ms, at most 2 seconds) for
+  contention, failed writes or listener startup; no repeating idle clipboard timer.
+- [x] Verify production pasteboard behavior using isolated named pasteboards,
+  protocol round trips, lint, signed arm64 release and commit.
+- [ ] Hardware: copy text/file on Mac and stay local (Windows unchanged), cross
+  and paste latest item, copy via menus, reverse text/file paste, edge/hotkey,
+  rapid out-and-back handoff, two-Mac takeover and idle CPU comparison.
+
+Phase 3 local verification (2026-09-23): all 95 Mac tests pass, including native
+named-pasteboard idle/handoff reads, direct incoming writes, stale-write rejection,
+file metadata capture and bidirectional protocol round trips. No user clipboard
+was touched. Strict SwiftLint and `git diff --check` pass. Release build succeeds;
+the extracted signed app verifies with `codesign --verify --deep --strict`, and
+`lipo -archs` reports only `arm64`. Existing Windows package retained unchanged.
+
+Current Mac artifact: `DeusKVM-mac-arm64-handoff-clipboard-2026-09-23.zip` — 1,026,140 bytes;
+SHA-256 `c1f1e2d1518c93837f22089bd4c586b8d523acf63e26ed8c4f4e771c38eebbd7`. Replaces the previous Mac ZIP in visible `releases/`.
+Hardware clipboard/edge behavior and idle CPU measurement remain pending.
