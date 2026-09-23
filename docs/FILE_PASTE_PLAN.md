@@ -29,7 +29,7 @@ Current visible `releases/` contains only:
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
 | DeusKVM-mac-arm64-file-paste-2026-09-22.zip | 963233 | `3244c2bc755f12b62e3fe2b34174daf3a0a633c88d4023102a699b625d207214` |
-| DeusKVM-Companion-win-x64-file-paste-2026-09-22.zip | 52404957 | `53f987160600c193ae012595683cf13f43f7919961dc8245eedf01237241a88b` |
+| DeusKVM-Companion-win-x64-file-paste-2026-09-22.zip | 52405003 | `372232d2da0ae6a5a385a5519ee799f1094d9364dcab8f566a5fc6a410f6db96` |
 
 Follow [FILE_PASTE_CHECKPOINT.md](FILE_PASTE_CHECKPOINT.md). Wait for user setup
 and feedback before extending scope or claiming native integration success.
@@ -37,3 +37,9 @@ and feedback before extending scope or claiming native integration success.
 Native API references:
 [Shell clipboard formats](https://learn.microsoft.com/en-us/windows/win32/shell/clipboard),
 [asynchronous extraction](https://learn.microsoft.com/en-us/windows/win32/api/shldisp/nn-shldisp-idataobjectasynccapability).
+
+Native ownership follow-up: OLE delayed rendering can advance the Win32 clipboard
+sequence while retaining the same data object. File ownership therefore uses
+`OleIsCurrentClipboard`, and the poller treats those sequence changes as imported
+updates instead of external copies. A genuinely replaced clipboard still stops
+reads. The Windows package is rebuilt after this adjustment.

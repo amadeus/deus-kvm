@@ -28,6 +28,7 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
     private bool asyncMode = true;
     private volatile bool operating;
     public VirtualFileClipboard(FileClipboardSession session, Func<bool> permitted) { this.session = session; this.permitted = permitted; }
+    internal bool IsCurrent => OleIsCurrentClipboard(this) == 0;
     internal bool Install() => OleSetClipboard(this) >= 0;
     internal bool Revoke()
     {
@@ -49,7 +50,7 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
         Check();
         // Clipboard inspection must not start a download. This prototype supports
         // Explorer's asynchronous extraction only, not synchronous clipboard consumers.
-        if (!operating) throw new COMException("Paste must start an asynchronous operation", unchecked((int)0x80030005));
+        if (!operating || !IsCurrent) throw new COMException("Paste must start an asynchronous operation", unchecked((int)0x80030005));
     }
     private static FORMATETC Entry(short id, TYMED medium, int index = -1) => new() { cfFormat = id, dwAspect = DVASPECT.DVASPECT_CONTENT, lindex = index, tymed = medium };
     private static FORMATETC[] Formats => [Entry(Descriptor, TYMED.TYMED_HGLOBAL), Entry(Contents, TYMED.TYMED_ISTREAM, 0),

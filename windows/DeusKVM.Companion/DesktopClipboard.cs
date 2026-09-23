@@ -79,6 +79,9 @@ internal sealed class DesktopClipboard : IDisposable
             }
             if (!enabled || !accessible || !CanAccess()) return;
             var revision = ClipboardNative.GetClipboardSequenceNumber();
+            // OLE delayed rendering may advance the sequence without a new copy.
+            // Preserve the local token while our original data object still owns it.
+            if (virtualFile?.IsCurrent == true) versions.Imported(revision);
             if (versions.Observed != revision)
             {
                 ClearFile(); pending = null;
@@ -94,12 +97,11 @@ internal sealed class DesktopClipboard : IDisposable
                 if (!versions.CanApply(fileUpdate.Revision, revision) || Environment.TickCount64 > applyDeadline) { pendingFile = null; return; }
                 var offer = FileClipboardOffer.Parse(fileUpdate.Clipboard!);
                 var fileEpoch = epoch;
-                uint fileRevision = 0;
                 var session = new FileClipboardSession(offer, request => send(new DesktopMessage("clipboard-file-get", Epoch: fileEpoch, Clipboard: request)));
                 var dataObject = new VirtualFileClipboard(session, () => !disposed && permitted && permittedEpoch == fileEpoch &&
-                    ReferenceEquals(fileSession, session) && (fileRevision == 0 || ClipboardNative.GetClipboardSequenceNumber() == fileRevision) && DesktopNative.IsDefaultDesktop());
+                    ReferenceEquals(fileSession, session) && DesktopNative.IsDefaultDesktop());
                 fileSession = session;
-                if (dataObject.Install()) { fileRevision = ClipboardNative.GetClipboardSequenceNumber(); virtualFile = dataObject; versions.Imported(fileRevision); pendingFile = null; }
+                if (dataObject.Install()) { virtualFile = dataObject; versions.Imported(ClipboardNative.GetClipboardSequenceNumber()); pendingFile = null; }
                 else { session.Dispose(); fileSession = null; }
                 return;
             }
