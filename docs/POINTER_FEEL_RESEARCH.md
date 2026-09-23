@@ -127,3 +127,58 @@ signature checks. Native UI interaction and physical pointer feel remain pending
 Artifact: `releases/DeusKVM-mac-arm64-pointer-speed-2026-09-22.zip`
 (951,700 bytes). SHA-256:
 `7a66efb06ee4b2e7a23d5b4af18894d7364325c9b1f9022028323823beb16d6a`.
+
+## User result and acceleration alternatives — 2026-09-22
+
+The user confirms the slider works functionally but does not correct the
+Windows-side acceleration feel. This is feedback on pointer tuning, not proof
+that every takeover, lag or hardware checkpoint has passed. They request options
+for correcting the response curve while preserving other Windows mice's settings.
+No further pointer implementation is authorized by this options discussion.
+
+Two viable directions:
+
+1. **Curve adjustment on the current relative HID path.** Apply speed-dependent
+   gain using source timestamps and measured motion. Smaller change and retains
+   current HID behavior, but Windows still processes the resulting reports.
+   Therefore this is approximate compensation, not a true per-device override
+   of Windows acceleration. A second slider alone should not be sold as an exact
+   Mac match. Transport clipping/coalescing must remain distinguishable from the
+   response curve during measurement.
+2. **Optional direct-position mode (recommended prototype).** Send movement data
+   over the existing Bluetooth companion link, calculate the intended desktop
+   position, and inject absolute coordinates in the Windows desktop worker.
+   Do not also send those deltas as HID mouse motion, or they will move twice.
+   Absolute positioning avoids the relative-injection acceleration path without
+   writing global Windows mouse parameters. Retain negotiated HID fallback for
+   unavailable desktop/companion paths. This is a cross-platform change, not a
+   reinterpretation of the speed slider.
+
+Source checks relevant to the prototype:
+
+- CursorConcealer.hide calls CGAssociateMouseAndMouseCursorPosition(0). Apple's
+  local SDK CGRemoteOperation.h documents fixed absolute event positions with
+  delta data in this state. Therefore diffing captured event positions alone
+  cannot recover the normal Mac cursor trajectory. Compare source deltas,
+  unaccelerated movement fields when supported, and actual local cursor travel
+  across slow/fast movement before claiming a macOS-equivalent curve.
+- The SDK declares eventUnacceleratedPointerMovementX/Y separately. Availability
+  and behavior on supported macOS versions/input devices require checking; these
+  fields do not themselves provide the Mac acceleration curve.
+- Microsoft's MOUSEINPUT documentation distinguishes absolute coordinates from
+  the relative motion affected by mouse settings; Deskflow's deskMouseMove uses
+  the absolute path. Deskflow's relative path still modifies global parameters,
+  so it remains excluded from our design.
+- [SendInput restrictions](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)
+  require explicit testing of elevated applications and secure desktops; normal
+  desktop software injection cannot be assumed to match HID accessibility there.
+- Existing Windows edge return is driven by selected-device raw mouse reports.
+  A direct-position mode must supply equivalent edge observations explicitly,
+  preserve button/drag ordering, and coexist with directly attached mouse input.
+  It also needs DPI/multi-monitor conversion, bounded low-latency Bluetooth
+  transport, takeover cancellation, and clean capability-negotiated fallback.
+
+Recommended next work: measure local versus remote slow/fast response, then
+prototype direct-position mode behind an option for a normal-desktop checkpoint.
+Keep the current HID path available. No promise of exact native Mac acceleration
+until the source mapping and hardware tests support it.

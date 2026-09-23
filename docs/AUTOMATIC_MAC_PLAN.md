@@ -313,3 +313,12 @@ Artifact: `releases/DeusKVM-mac-arm64-pointer-speed-2026-09-22.zip`
 `7a66efb06ee4b2e7a23d5b4af18894d7364325c9b1f9022028323823beb16d6a`.
 No new Windows build required; no user application was replaced or launched.
 The latest Mac ZIP includes the earlier takeover and display-selection fixes.
+
+## Pointer-speed feedback — 2026-09-22
+
+The user confirms the slider functions but the acceleration still feels wrong on
+Windows. Recorded curve-compensation and optional direct-position alternatives
+in POINTER_FEEL_RESEARCH.md, with direct-position mode recommended for a measured
+prototype. No new input implementation or settings changes in this discussion.
+Other pending hardware checks remain pending; slider functionality alone does
+not close the lag or two-Mac checkpoints.
