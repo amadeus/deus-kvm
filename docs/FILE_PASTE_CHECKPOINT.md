@@ -3,9 +3,9 @@
 Use these two builds from the visible `releases/` folder:
 
 - `DeusKVM-mac-arm64-file-paste-2026-09-22.zip`
-- `DeusKVM-Companion-win-x64-file-paste-fix-2026-09-22.zip`
+- `DeusKVM-Companion-win-x64-file-paste-progress-2026-09-22.zip`
 
-For the Access Denied fix, update **Windows only**; keep the existing file-paste
+For the transfer-progress diagnostics, update **Windows only**; keep the existing file-paste
 Mac build. For a first installation, quit the old Mac app and launch the new
 arm64 app. On Windows, close the old
 tray UI, extract the ZIP into a fresh folder and launch `DeusKVM.Companion.exe`;
@@ -69,3 +69,19 @@ Copy the file again on the Mac after updating Windows; do not retry the stale
 clipboard entry. If it still fails, the fixed-event diagnostics are in
 `%LOCALAPPDATA%\DeusKVM\file-paste.log`. They contain no file names, paths or
 contents. Report the entries for that attempt and the exact Windows error.
+
+## 1.9 MB transfer diagnostics
+
+The supplied first log shows native success for the small file and cancellation
+roughly 24 seconds into the larger attempt. It contains no byte counts, so it
+cannot establish throughput or prove the larger transfer stalled. The latest
+Windows build adds received-byte totals, per-block timeout/source failure reasons,
+and the sizes and durations of Explorer's stream reads. Normal progress events
+are rate-limited; names, paths and contents are not recorded.
+
+After updating Windows, copy the 1.9 MB file again in Finder and paste once into
+an ordinary Explorer folder. Keep the source file/clipboard unchanged and leave
+DeusKVM enabled on that Mac. Allow about **60 seconds** unless Windows reports
+an error sooner, then cancel if it still shows no useful progress. Send the new
+`%LOCALAPPDATA%\DeusKVM\file-paste.log` (and `.previous` if rotated). This is a
+measurement build; the transport, block size and timeout have not been changed.

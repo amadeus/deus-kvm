@@ -73,7 +73,7 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
         {
             FilePasteDiagnostics.Write("contents-stream-requested");
             medium = new STGMEDIUM { tymed = TYMED.TYMED_ISTREAM,
-                unionmember = Marshal.GetComInterfaceForObject(new RemoteFileStream(session, operation.CheckRead), typeof(IStream)) };
+                unionmember = Marshal.GetComInterfaceForObject(new RemoteFileStream(session, operation.CheckRead, FilePasteDiagnostics.Write), typeof(IStream)) };
             return;
         }
         byte[] bytes;

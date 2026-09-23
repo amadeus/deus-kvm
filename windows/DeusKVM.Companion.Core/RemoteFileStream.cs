@@ -4,25 +4,37 @@ using System.Runtime.InteropServices.ComTypes;
 namespace DeusKVM.Companion.Core;
 
 [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
-public sealed class RemoteFileStream(FileClipboardSession session, Action check) : IStream
+public sealed class RemoteFileStream(FileClipboardSession session, Action check, Action<string>? diagnostic = null) : IStream
 {
     private long position;
     private byte[] block = [];
-    private long blockOffset = -1;
+    private long blockOffset = -1, lastReadLog = -1;
     public void Read(byte[] buffer, int count, IntPtr read)
     {
-        check();
+        var began = Environment.TickCount64;
+        var logRead = diagnostic is not null && (lastReadLog < 0 || began - lastReadLog >= 1000);
+        if (logRead) { lastReadLog = began; diagnostic?.Invoke($"consumer-read offset={position} requested={count}"); }
         var total = 0;
-        while (total < count && position < session.Offer.Size)
+        try
         {
             check();
-            if (position < blockOffset || position >= blockOffset + block.Length)
-            { blockOffset = position; block = session.Read((uint)position); }
-            var index = (int)(position - blockOffset);
-            var n = Math.Min(count - total, block.Length - index);
-            Array.Copy(block, index, buffer, total, n); total += n; position += n;
+            while (total < count && position < session.Offer.Size)
+            {
+                check();
+                if (position < blockOffset || position >= blockOffset + block.Length)
+                { blockOffset = position; block = session.Read((uint)position); }
+                var index = (int)(position - blockOffset);
+                var n = Math.Min(count - total, block.Length - index);
+                Array.Copy(block, index, buffer, total, n); total += n; position += n;
+            }
+            if (read != IntPtr.Zero) Marshal.WriteInt32(read, total);
+            if (logRead) diagnostic?.Invoke($"consumer-read-complete returned={total} elapsedMs={Environment.TickCount64 - began}");
         }
-        if (read != IntPtr.Zero) Marshal.WriteInt32(read, total);
+        catch (Exception error)
+        {
+            diagnostic?.Invoke($"consumer-read-failed hr=0x{error.HResult:X8} copied={total} elapsedMs={Environment.TickCount64 - began}");
+            throw;
+        }
     }
     public void Seek(long move, int origin, IntPtr result)
     {
@@ -31,7 +43,7 @@ public sealed class RemoteFileStream(FileClipboardSession session, Action check)
         position = next; if (result != IntPtr.Zero) Marshal.WriteInt64(result, position);
     }
     public void Stat(out STATSTG stat, int flags) => stat = new STATSTG { type = 2, cbSize = session.Offer.Size, grfMode = 0, pwcsName = (flags & 1) == 0 ? session.Offer.Name : null! };
-    public void Clone(out IStream stream) => stream = new RemoteFileStream(session, check) { position = position };
+    public void Clone(out IStream stream) => stream = new RemoteFileStream(session, check, diagnostic) { position = position };
     public void CopyTo(IStream target, long count, IntPtr read, IntPtr written)
     {
         var buffer = new byte[4096]; long total = 0;

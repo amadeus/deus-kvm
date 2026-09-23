@@ -69,4 +69,45 @@ public sealed class FileClipboardTests
         session = new(new(1, 2, "file", 4), _ => session!.Receive(ClipboardTransfer.Header(1, 2, 0).Concat(new byte[3]).ToArray()));
         using (session) Assert.Throws<IOException>(() => session.Read(0));
     }
+    [Fact]
+    public void DiagnosticsDistinguishDeliveredBytesFromConsumerReadCompletion()
+    {
+        List<string> events = [];
+        FileClipboardSession? session = null;
+        session = new(new(1, 2, "private-name", 2500), request =>
+        {
+            var offset = ClipboardTransfer.Read(request, 8);
+            session!.Receive(ClipboardTransfer.Header(1, 2, offset)
+                .Concat(new byte[Math.Min(1024, 2500 - offset)]).ToArray());
+        }, events.Add);
+        using (session)
+        {
+            var stream = new RemoteFileStream(session, () => { }, events.Add);
+            stream.Stat(out _, 0); Assert.Empty(events);
+            stream.Read(new byte[3000], 3000, IntPtr.Zero);
+            Assert.Contains("consumer-read offset=0 requested=3000", events);
+            Assert.Contains("transfer-start size=2500 block=1024", events);
+            Assert.Contains(events, e => e.StartsWith("transfer-progress received=2500 through=2500 size=2500 blocks=3 elapsedMs="));
+            Assert.Contains(events, e => e.StartsWith("consumer-read-complete returned=2500 elapsedMs="));
+            Assert.DoesNotContain(events, e => e.Contains("private-name"));
+        }
+    }
+
+    [Fact]
+    public void DiagnosticsDistinguishSourceFailureFromAnIncompleteConsumerRead()
+    {
+        List<string> events = [];
+        FileClipboardSession? session = null;
+        session = new(new(1, 2, "private-name", 2500), _ =>
+            session!.Receive(ClipboardTransfer.Header(1, 2, uint.MaxValue)), events.Add);
+        using (session)
+        {
+            var stream = new RemoteFileStream(session, () => { }, events.Add);
+            Assert.Throws<IOException>(() => stream.Read(new byte[3000], 3000, IntPtr.Zero));
+            Assert.Contains(events, e => e.StartsWith("transfer-failed reason=source-unavailable offset=0 received=0 elapsedMs="));
+            Assert.Contains(events, e => e.StartsWith("consumer-read-failed hr="));
+            Assert.DoesNotContain(events, e => e.StartsWith("consumer-read-complete"));
+        }
+    }
+
 }

@@ -97,7 +97,7 @@ internal sealed class DesktopClipboard : IDisposable
                 if (!versions.CanApply(fileUpdate.Revision, revision) || Environment.TickCount64 > applyDeadline) { pendingFile = null; return; }
                 var offer = FileClipboardOffer.Parse(fileUpdate.Clipboard!);
                 var fileEpoch = epoch;
-                var session = new FileClipboardSession(offer, request => send(new DesktopMessage("clipboard-file-get", Epoch: fileEpoch, Clipboard: request)));
+                var session = new FileClipboardSession(offer, request => send(new DesktopMessage("clipboard-file-get", Epoch: fileEpoch, Clipboard: request)), FilePasteDiagnostics.Write);
                 var dataObject = new VirtualFileClipboard(session, () => !disposed && permitted && permittedEpoch == fileEpoch &&
                     ReferenceEquals(fileSession, session) && DesktopNative.IsDefaultDesktop());
                 fileSession = session;

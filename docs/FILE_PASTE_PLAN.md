@@ -101,3 +101,37 @@ The local test uses immediate simulated delivery; it does not measure Bluetooth
 throughput, native Explorer progress or COM responsiveness. Production behavior
 and release ZIPs are unchanged. User is collecting `file-paste.log`; wait for that
 evidence before changing timeouts or replacing the transport.
+
+## Supplied log analysis and progress instrumentation — 2026-09-22
+
+Read `/Users/amadeus/Downloads/file-paste.log`. The small attempt started at
+05:47:39.365 UTC and ended at 05:47:39.417 with S_OK. The larger attempt started
+at 05:47:53.792 and ended at 05:48:17.951 with 0x800704C7 (user cancellation),
+about 24.16 seconds later. Both used async extraction. Thus the earlier missing
+async callback hypothesis does not explain these recorded attempts. A later
+session-unavailable rejection at 05:49:12 is after the cancellation and is not
+evidence of what caused the original apparent stall.
+
+The log has no byte counts, block timing or stream request size. No measured
+throughput, pre-cancel timeout or original failure cause can be inferred from it.
+
+- [x] Interpret supplied lifecycle evidence and retain unknowns explicitly.
+- [x] Add rate-limited byte progress, consumer read size/duration and bounded
+  failure classification to Windows diagnostics; keep filenames/content out.
+- [x] Test, publish, verify and commit the Windows-only measurement build.
+- [ ] User repeats the 1.9 MB paste and supplies byte-progress diagnostics.
+- [ ] Use the measurement to choose a targeted fix or transport improvement.
+
+No timeout, Bluetooth framing, source reads, input behavior or paste trigger is
+changed. The current Mac ZIP is retained unchanged.
+
+Measurement build verification: 127 .NET tests passed; solution Release build
+and self-contained x64 publish passed. ZIP CRC, four expected entries and PE
+architecture checks passed. Mac ZIP SHA-256 remains unchanged. Only the latest
+Windows measurement ZIP and existing Mac ZIP remain in `releases/`.
+
+`DeusKVM-Companion-win-x64-file-paste-progress-2026-09-22.zip` — 52407682 bytes;
+SHA-256 `935ffa0dbdb5ca38445cadf1b68e53ffbf0b905860a657dec5a073a1396daf0a`.
+
+This is instrumentation, not a claimed fix for larger-file progress. Await the
+user's next 1.9 MB attempt and log before changing production transfer behavior.
