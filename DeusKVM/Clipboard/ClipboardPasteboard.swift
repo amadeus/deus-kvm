@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 
 /// All potentially blocking pasteboard reads stay off the input/main run loops.
 final class ClipboardPasteboard: @unchecked Sendable {
@@ -93,11 +94,12 @@ final class ClipboardPasteboard: @unchecked Sendable {
     }
 
     private func fileBytes(epoch: UInt32, sequence: UInt32, offset: UInt32, count: Int) -> Data? {
-        guard enabled, canAccess, self.epoch == epoch,
+        guard enabled, canAccess, !IsSecureEventInputEnabled(), self.epoch == epoch,
               UInt32(truncatingIfNeeded: NSPasteboard.general.changeCount) == sequence,
               let file else { return nil }
         let bytes = file.read(offset: offset, count: count)
-        guard canAccess, UInt32(truncatingIfNeeded: NSPasteboard.general.changeCount) == sequence else { return nil }
+        guard canAccess, !IsSecureEventInputEnabled(),
+              UInt32(truncatingIfNeeded: NSPasteboard.general.changeCount) == sequence else { return nil }
         return bytes
     }
 
@@ -110,6 +112,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
         let board = NSPasteboard.general
         let revision = board.changeCount
         if versions.observed != revision {
+            guard !IsSecureEventInputEnabled() else { return }
             pending = nil
             let types = Set((board.types ?? []).map(\.rawValue))
             var bytes: Data?
@@ -139,7 +142,12 @@ final class ClipboardPasteboard: @unchecked Sendable {
             priming = false
         }
         if pendingYield { pendingYield = false; yielded(epoch, generation) }
-        guard let update = pending else { return }
+        if let update = pending { apply(update, revision: revision) }
+    }
+
+    private func apply(_ update: Pending, revision: Int) {
+        guard !IsSecureEventInputEnabled() else { return }
+        let board = NSPasteboard.general
         guard versions.canApply(expectedLocal: update.revision, current: revision),
               ProcessInfo.processInfo.systemUptime <= update.deadline else { pending = nil; return }
         let item = NSPasteboardItem()

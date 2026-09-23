@@ -19,6 +19,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private let diagnostics = CaptureDiagnostics()
     private lazy var tap = InputTap { [weak self] event in self?._receive(event) }
     private var timer: Timer?
+    private var companionDeadlineTimer: Timer?
+    private var started = false
     private var observers: [NSObjectProtocol] = []
     private var subscriptions = Set<AnyCancellable>()
     private var tapReady = false
@@ -95,8 +97,15 @@ final class EdgeSwitchCoordinator: ObservableObject {
     }
 
     func start() {
-        guard timer == nil else { return }
-        lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion() }
+        guard !started else { return }
+        started = true
+        lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion(); self?._refresh() }
+        lowEnergy.companion.onActivity = { [weak self] id in
+            guard let self, started, isEnabled, id == currentTarget else { return }
+            let recovering = companionDeadlineTimer == nil
+            companionDeadlineTimer?.invalidate(); companionDeadlineTimer = nil
+            if recovering { _refresh() } else { scheduleChecks() }
+        }
         lowEnergy.companion.onSelection = { [weak self] in self?._refresh() }
         lowEnergy.companion.onDisableRequested = { [weak self] current, acknowledge in
             guard let self else { return }
@@ -123,7 +132,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         lowEnergy.$subscribedCentrals.map { _ in () }
             .merge(with: lowEnergy.companion.objectWillChange.map { _ in () })
             .sink { [weak self] in
-                DispatchQueue.main.async { self?._refreshConnectionState() }
+                DispatchQueue.main.async { self?._refresh() }
             }.store(in: &subscriptions)
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -131,6 +140,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
             Task { @MainActor in
                 self?.returnLocal()
                 self?._refreshDisplays()
+                self?._refresh()
             }
         })
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
@@ -138,19 +148,36 @@ final class EdgeSwitchCoordinator: ObservableObject {
                 Task { @MainActor in self?.returnLocal() }
             })
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?._refresh() }
+        for name in [
+            NSWorkspace.didWakeNotification,
+            NSWorkspace.sessionDidBecomeActiveNotification,
+            NSWorkspace.didActivateApplicationNotification
+        ] {
+            observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?._refresh() }
+            })
         }
-        timer?.tolerance = 0.1
+        for name in [NSApplication.didBecomeActiveNotification, UserDefaults.didChangeNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?._refresh() }
+            })
+        }
         _refresh()
     }
 
     func stop() {
+        started = false
         returnLocal()
         lowEnergy.companion.setAvailability(enabled: false, allowed: lowEnergy.hostPolicy.allowed)
         clipboard.stop()
         timer?.invalidate()
         timer = nil
+        companionDeadlineTimer?.invalidate(); companionDeadlineTimer = nil
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        observers.removeAll(); subscriptions.removeAll()
         tap.stop()
         tapReady = false
         tapStarting = false
@@ -197,6 +224,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         isRemote = false
         captureTarget = nil
         refreshClipboard()
+        scheduleChecks()
         if wasRemote {
             let duration = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
             diagnostics.transition("return: \(reason) localRestoreMs=\(duration)")
@@ -237,11 +265,17 @@ final class EdgeSwitchCoordinator: ObservableObject {
     }
 
     private func _refresh() {
+        guard started else { return }
+        defer { scheduleChecks() }
         let permission = AccessibilityPermission.isTrusted
         let secure = IsSecureEventInputEnabled()
         if permissionGranted != permission { permissionGranted = permission }
         if secureInput != secure { secureInput = secure }
-        currentTarget = isEnabled && lowEnergy.state == .poweredOn ? lowEnergy.hostPolicy.target : nil
+        let nextTarget = isEnabled && lowEnergy.state == .poweredOn ? lowEnergy.hostPolicy.target : nil
+        if nextTarget != currentTarget {
+            companionDeadlineTimer?.invalidate(); companionDeadlineTimer = nil
+            currentTarget = nextTarget
+        }
         let available = currentTarget != nil
         if targetAvailable != available { targetAvailable = available }
         refreshCaptureReadiness()
@@ -267,20 +301,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
             enabled: UserDefaults.standard.object(forKey: AppSettings.clipboardEnabledKey) as? Bool ?? true,
             available: !secureInput
         )
-    }
-
-    private func _refreshConnectionState() {
-        let companion = lowEnergy.companion
-        let state = StatusBarConnectionState.resolve(
-            enabled: isEnabled, bluetooth: lowEnergy.state,
-            link: .init(
-                target: lowEnergy.hostPolicy.target,
-                subscribers: Set(lowEnergy.subscribedCentrals.keys).union(companion.subscribedHosts),
-                companions: companion.ready, lastSeen: companion.lastSeen,
-                captureReady: canSwitch, waiting: currentTarget.map { companion.isWaiting($0) } ?? false
-            ), now: ProcessInfo.processInfo.systemUptime
-        )
-        if connectionState != state { connectionState = state }
     }
 
     private func _configure() {
@@ -362,13 +382,18 @@ final class EdgeSwitchCoordinator: ObservableObject {
         case let .keyboardMonitoring(token, ready):
             guard isEnabled, tap.isCurrentRun(token) else { return }
             keyboardMonitoringReady = ready
+            _refresh()
         case let .installed(token, success):
             guard isEnabled, tap.isCurrentRun(token) else { return }
             tapStarting = false
             tapReady = success
-            if !success { lastError = L10n.DirectInput.captureFailedString }
+            if success { _refresh() } else {
+                lastError = L10n.DirectInput.captureFailedString
+                scheduleChecks()
+            }
         case let .begin(generation, origin, fromEdge):
             let startedAt = ProcessInfo.processInfo.systemUptime
+            _refresh()
             guard tap.isCurrent(generation) else { return }
             guard canSwitch, !IsSecureEventInputEnabled(),
                   let geometry else { returnLocal(); return }
@@ -381,6 +406,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
             captureTarget = currentTarget
             directInput.start(HIDInput.make(lowEnergy: lowEnergy, central: central))
             isRemote = true
+            scheduleChecks()
             refreshClipboard()
             let setupMs = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
             diagnostics.transition("remote capture began setupMs=\(setupMs)")
@@ -405,6 +431,50 @@ final class EdgeSwitchCoordinator: ObservableObject {
         case .disabled:
             returnLocal(reason: "event tap disabled")
             tap.reenable()
+        }
+    }
+}
+
+extension EdgeSwitchCoordinator {
+    private func _refreshConnectionState() {
+        let companion = lowEnergy.companion
+        let state = StatusBarConnectionState.resolve(
+            enabled: isEnabled, bluetooth: lowEnergy.state,
+            link: .init(
+                target: lowEnergy.hostPolicy.target,
+                subscribers: Set(lowEnergy.subscribedCentrals.keys).union(companion.subscribedHosts),
+                companions: companion.ready, lastSeen: companion.lastSeen,
+                captureReady: canSwitch, waiting: currentTarget.map { companion.isWaiting($0) } ?? false
+            ), now: ProcessInfo.processInfo.systemUptime
+        )
+        if connectionState != state { connectionState = state }
+    }
+
+    private func scheduleChecks() {
+        guard started else { return }
+        let interval = CoordinatorSchedule.pollInterval(
+            enabled: isEnabled, remote: isRemote, permission: permissionGranted, secure: secureInput, tapReady: tapReady
+        )
+        if let interval {
+            if timer?.timeInterval != interval {
+                timer?.invalidate()
+                timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated { self?._refresh() }
+                }
+                timer?.tolerance = interval / 5
+            }
+        } else { timer?.invalidate(); timer = nil }
+        guard companionDeadlineTimer == nil,
+              let seen = currentTarget.flatMap({ lowEnergy.companion.lastSeen[$0] }),
+              let deadline = CoordinatorSchedule.linkDeadline(lastSeen: seen, now: ProcessInfo.processInfo.systemUptime)
+        else { return }
+        companionDeadlineTimer = Timer.scheduledTimer(
+            withTimeInterval: max(0.001, deadline - ProcessInfo.processInfo.systemUptime), repeats: false
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.companionDeadlineTimer = nil
+                self?._refresh()
+            }
         }
     }
 

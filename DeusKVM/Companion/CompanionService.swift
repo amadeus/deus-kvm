@@ -14,6 +14,7 @@ final class CompanionService: ObservableObject {
     var clipboardTarget: (() -> UUID?)?
     var onClipboard: ((UUID, CompanionProtocol.Message, Data) throws -> Void)?
     var onReady: ((UUID) -> Void)?
+    var onActivity: ((UUID) -> Void)?
     var onComputerName: ((UUID, String) -> Void)?
     private var manager: CBPeripheralManager?
     private var clients: [UUID: Client] = [:]
@@ -173,6 +174,7 @@ final class CompanionService: ObservableObject {
         }
         guard ready.contains(id) else { throw CompanionProtocol.Failure.malformed }
         lastSeen[id] = ProcessInfo.processInfo.systemUptime
+        defer { onActivity?(id) }
         if [.clipGrab, .clipGet, .clipData, .clipState, .fileOffer, .fileGet, .fileData, .fileAccept].contains(type) {
             try receiveClipboard(packet, type: type, from: id)
             return

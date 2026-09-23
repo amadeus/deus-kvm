@@ -2,8 +2,11 @@
 
 Use the two current ZIPs in the visible `releases/` folder:
 
-- `DeusKVM-mac-arm64-cpu-edge-2026-09-23.zip`
+- `DeusKVM-mac-arm64-idle-events-2026-09-23.zip`
 - `DeusKVM-Companion-win-x64-cpu-edge-2026-09-23.zip`
+
+This idle-events update needs only the Mac app replaced if the cpu-edge Windows
+companion is already installed.
 
 Quit DeusKVM on the Mac, extract the new app and replace your existing copy before
 launching it. On Windows, extract the new ZIP and launch its EXE; approve the
@@ -41,3 +44,17 @@ unit tests and cross-builds do not establish the actual reduction.
 
 Finish with a small file and plain text in both directions to check the working
 clipboard baseline. Full file-transfer instructions remain in FILE_PASTE_CHECKPOINT.md.
+
+## Idle-events follow-up
+
+Ready local capture now uses notifications instead of a repeating status timer.
+Heartbeat expiry and text-transfer retries are one-shot deadlines. The permission
+view stops polling once authorized. Clipboard change-count monitoring remains
+while sharing is enabled; remote safety and blocked-capture recovery retain
+bounded checks.
+
+Compare idle CPU with the settings window closed, then open. Also toggle clipboard
+sharing off briefly to distinguish clipboard observation from other idle work.
+Re-enable sharing and verify text and a small file both ways. Check edge/hotkey
+return, disable/enable, reconnect and permission/secure-input recovery. These
+hardware results are pending; local unit tests do not measure CPU improvement.

@@ -45,13 +45,27 @@ struct PermissionsSection: View {
                 }
             }
         }
-        .task {
-            while !Task.isCancelled {
-                bluetoothAuthorization = CBManager.authorization
-                keyboardGranted = KeyboardMonitoringPermission.isGranted
+        .onAppear(perform: refreshPermissions)
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in
+            refreshPermissions()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissions()
+        }
+        .task(id: bluetoothAuthorization == .notDetermined || !keyboardGranted) {
+            // Only permission setup needs retries; an already-authorized view has no timer.
+            while bluetoothAuthorization == .notDetermined || !keyboardGranted {
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                refreshPermissions()
             }
         }
+    }
+
+    private func refreshPermissions() {
+        let bluetooth = CBManager.authorization
+        let keyboard = KeyboardMonitoringPermission.isGranted
+        if bluetoothAuthorization != bluetooth { bluetoothAuthorization = bluetooth }
+        if keyboardGranted != keyboard { keyboardGranted = keyboard }
     }
 
     private func permissionRow(

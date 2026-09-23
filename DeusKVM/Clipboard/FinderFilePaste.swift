@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 
 private final class FilePasteLease: @unchecked Sendable {
     private let lock = NSLock()
@@ -120,7 +121,7 @@ final class FinderFilePaste: NSObject {
         lease = token
         showProgress(copied)
         let next = FileNetworkReceiver(offer: copied, destination: destination, canAccess: {
-            token.valid && NSPasteboard.general.changeCount == expected
+            token.valid && !IsSecureEventInputEnabled() && NSPasteboard.general.changeCount == expected
         }, ready: { [weak self] request in
             Task { @MainActor in
                 guard token.valid, let self else { return }; self.send(request)

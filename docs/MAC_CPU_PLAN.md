@@ -66,3 +66,36 @@ Only the current two ZIPs remain in visible `releases/`.
 
 - `DeusKVM-mac-arm64-cpu-edge-2026-09-23.zip` — 1,021,595 bytes; SHA-256 `02d0f5c83a79ebb2a0b3a9e9948cb9bedac2c6a22fc86044bcb2ca66ea0cf1b7`.
 - `DeusKVM-Companion-win-x64-cpu-edge-2026-09-23.zip` — 52,416,716 bytes; SHA-256 `cc39241cc4525b19297d33519c23d0709ecceca852bc8c37ad54d62e9cf97750`.
+
+## Phase 2: remove unnecessary polling
+
+- [x] Replace the always-on 0.5-second coordinator refresh with Bluetooth,
+  display, settings, app/session activation and capture lifecycle events.
+- [x] Reset a one-shot 10-second link deadline on received traffic. Normal
+  heartbeats only rearm it; they do not trigger permission/status recomputation.
+- [x] Schedule text clipboard retries only while awaiting a block, cancel on
+  completion, local replacement, timeout or session reset.
+- [x] Stop permission-view polling once authorized; retain retries during setup.
+- [x] Preserve remote safety checks (0.5 s), blocked capture recovery (1 s),
+  and clipboard change-count observation (200 ms while sharing). These still
+  require checks; ready local capture no longer polls status/permissions.
+- [x] Run regression tests/lint, sign and verify arm64 package, commit.
+- [ ] Hardware: idle CPU with settings closed and open, permissions/settings
+  changes, secure-input recovery, link loss/reconnect, edge/hotkey switching,
+  plain text/file clipboard in both directions.
+
+macOS NSPasteboard has no public change notification. Chromium observes private
+`_CFPasteboardCache` internals instead; we retain the existing clipboard monitor
+rather than introduce a private runtime hook or miss menu/programmatic copies.
+Reference: https://chromium.googlesource.com/chromium/src/+/lkgr/base/mac/pasteboard_changed_observation.mm
+Secure-input checks also guard actual clipboard reads/writes/file chunks so
+removing idle coordinator refresh cannot bypass that boundary.
+
+Phase 2 local verification (2026-09-23): all 90 Mac tests pass, strict SwiftLint
+and `git diff --check` pass, Release build succeeds. Extracted package passes
+`codesign --verify --deep --strict`; architecture is exactly `arm64`. No Windows
+code changed; retain the tested cpu-edge Windows ZIP. No running app was replaced.
+
+Current Mac artifact: `DeusKVM-mac-arm64-idle-events-2026-09-23.zip` — 1,026,880 bytes;
+SHA-256 `98bc646f41fea3a1b0ee5e3a205e3a63f7415f7034c386e008f51e6f21e31d9a`. Supersedes the Mac cpu-edge ZIP above; only the current
+Mac and Windows archives remain in `releases/`. Hardware results remain pending.

@@ -112,6 +112,31 @@ final class ClipboardTransferTests: XCTestCase {
         XCTAssertTrue(pair.appliedPC.isEmpty)
     }
 
+    func testRetryDeadlineOnlyExistsWhileWaitingAndMovesWithProgress() throws {
+        let transfer = ClipboardTransfer()
+        var deadlines: [TimeInterval?] = []
+        transfer.onDeadlineChanged = { deadlines.append(transfer.retryDeadline) }
+        transfer.reset(42)
+        transfer.setActive(true, now: 10)
+        XCTAssertNil(transfer.retryDeadline)
+        try transfer.receive(.clipGrab, payload: ClipboardTransfer.header(42, 1, 1025), now: 10)
+        XCTAssertEqual(transfer.retryDeadline, 15)
+        try transfer.receive(.clipData, payload: ClipboardTransfer.header(42, 1, 0) + Data(repeating: 65, count: 1024), now: 11)
+        XCTAssertEqual(transfer.retryDeadline, 16)
+        transfer.tick(15)
+        XCTAssertEqual(transfer.retryDeadline, 16)
+        try transfer.receive(.clipData, payload: ClipboardTransfer.header(42, 1, 1024) + Data([66]), now: 12)
+        XCTAssertNil(transfer.retryDeadline)
+        try transfer.receive(.clipGrab, payload: ClipboardTransfer.header(42, 2, 1), now: 13)
+        XCTAssertEqual(transfer.retryDeadline, 18)
+        transfer.observe(Data([67]))
+        XCTAssertNil(transfer.retryDeadline)
+        try transfer.receive(.clipGrab, payload: ClipboardTransfer.header(42, 3, 1), now: 14)
+        transfer.reset(43)
+        XCTAssertNil(transfer.retryDeadline)
+        XCTAssertEqual(deadlines, [nil, nil, 15, 16, 16, nil, 18, nil, 19, nil])
+    }
+
     private struct Message {
         let toPC: Bool
         let type: CompanionProtocol.Message

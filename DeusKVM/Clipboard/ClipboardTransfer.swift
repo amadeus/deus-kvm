@@ -6,6 +6,11 @@ final class ClipboardTransfer {
     static let blockBytes = 1024
     var send: (CompanionProtocol.Message, Data) -> Void = { _, _ in }
     var apply: (Data) -> Void = { _ in }
+    var onDeadlineChanged: () -> Void = {}
+    var retryDeadline: TimeInterval? {
+        incoming == nil ? nil : requestedAt + 5
+    }
+
     private var epoch: UInt32 = 0
     private(set) var sequence: UInt32 = 0
     private var local: Data?
@@ -29,10 +34,12 @@ final class ClipboardTransfer {
     }
 
     func reset(_ nextEpoch: UInt32) {
+        defer { onDeadlineChanged() }
         epoch = nextEpoch; seenOffer = nil; local = nil; offer = nil; incoming = nil; sequence &+= 1; retries = 0
     }
 
     func observe(_ text: Data?, announce: Bool = true) {
+        defer { onDeadlineChanged() }
         local = text.flatMap { Self.decode($0) == nil ? nil : $0 }
         sequence &+= 1; offer = nil; incoming = nil
         if announce { yield() }
@@ -43,11 +50,13 @@ final class ClipboardTransfer {
     }
 
     func setActive(_ value: Bool, now: TimeInterval) {
+        defer { onDeadlineChanged() }
         active = value
         if active, offer != nil, incoming == nil { request(now) }
     }
 
     func tick(_ now: TimeInterval) {
+        defer { onDeadlineChanged() }
         guard incoming != nil, now - requestedAt >= 5 else { return }
         retries += 1
         guard retries <= 3 else { offer = nil; incoming = nil; return }
@@ -55,6 +64,7 @@ final class ClipboardTransfer {
     }
 
     func receive(_ type: CompanionProtocol.Message, payload: Data, now: TimeInterval) throws {
+        defer { onDeadlineChanged() }
         guard payload.count >= 12, type == .clipData || payload.count == 12 else { throw CompanionProtocol.Failure.malformed }
         let scope = CompanionProtocol.read32(payload, 0)
         let id = CompanionProtocol.read32(payload, 4)

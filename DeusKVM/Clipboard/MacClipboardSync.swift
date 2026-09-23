@@ -4,6 +4,8 @@ import AppKit
 final class MacClipboardSync {
     private let service: CompanionService
     private let transfer = ClipboardTransfer()
+    private var retryTimer: Timer?
+    private var retryDeadline: TimeInterval?
     private var target: UUID?
     private var epoch: UInt32 = 0
     private var generation: UInt64 = 0
@@ -63,6 +65,7 @@ final class MacClipboardSync {
 
     init(service: CompanionService) {
         self.service = service
+        transfer.onDeadlineChanged = { [weak self] in self?.scheduleRetry() }
         pasteboard.remoteFile = { [weak self] offer, revision, generation in
             Task { @MainActor in
                 guard let self, self.enabled, self.generation == generation, self.epoch == offer.epoch,
@@ -114,7 +117,21 @@ final class MacClipboardSync {
         reconcile()
         transfer.setActive(!remote, now: ProcessInfo.processInfo.systemUptime)
         if entering, self.enabled { pasteboard.yield() }
-        if self.enabled { transfer.tick(ProcessInfo.processInfo.systemUptime) }
+    }
+
+    private func scheduleRetry() {
+        let next = transfer.retryDeadline
+        guard next != retryDeadline else { return }
+        retryTimer?.invalidate(); retryTimer = nil; retryDeadline = next
+        guard let next else { return }
+        retryTimer = Timer.scheduledTimer(
+            withTimeInterval: max(0.001, next - ProcessInfo.processInfo.systemUptime), repeats: false
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.retryTimer = nil; self?.retryDeadline = nil
+                self?.transfer.tick(ProcessInfo.processInfo.systemUptime)
+            }
+        }
     }
 
     func stop() {
