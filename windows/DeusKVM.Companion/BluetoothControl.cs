@@ -28,7 +28,6 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
     private bool subscribing, ready, writing, helloSent, disposed;
     private int generation;
     private byte blind = 4;
-    private bool directPointer;
     private MacAvailability availability = new();
     private bool active;
     private int desktopGeneration;
@@ -120,7 +119,6 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
         if (!value)
         {
             desktopGeneration++;
-            directPointer = false;
             handoff.Reset(); UpdateClipboardSession(true);
             desktop?.Dispose(); desktop = null; monitors = []; blind = 4;
             clipboardDesktopAvailable = clipboardDefaultDesktop = false;
@@ -182,7 +180,7 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
                 clipboardPeer = hello.RootElement.TryGetProperty("clipboard", out var capability) &&
                     capability.TryGetInt32(out var clipboardVersion) && clipboardVersion == 1;
                 SendJson(Protocol.Message.Hello, new { v = 1, role = "pc", name = "DeusKVM Companion",
-                    computerName = Environment.MachineName, chunk = 20, resume = true, center = true, clipboard = 1, selection = 1, takeover = true, directPointer = 1 });
+                    computerName = Environment.MachineName, chunk = 20, resume = true, center = true, clipboard = 1, selection = 1, takeover = true });
                 UpdateClipboardSession(true);
                 if (active && monitors.Length > 0) SendScreens();
                 SetDetail("Companion connected; waiting for desktop status");
@@ -237,15 +235,6 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
                     desktop?.Send(new DesktopMessage("config", Config: config));
                 ResumeDesktop();
                 break;
-            case Protocol.Message.EnterDirect when payload.Length == 5 && payload[1] < 4 && payload[4] < 2:
-                EnterDesktop(payload, payload[4] == 1, direct: true);
-                break;
-            case Protocol.Message.Pointer:
-                var sample = PointerSample.Parse(payload);
-                if (directPointer && handoff.Accept(sample.Id) && desktop?.Connected == true)
-                    desktop.Send(new DesktopMessage("pointer", SwitchId: sample.Id, Pointer: sample));
-                else Send(Protocol.Message.PointerAck, [sample.Id, sample.Serial, 0]);
-                break;
             case Protocol.Message.Enter when payload.Length == 4 && payload[1] < 4:
                 EnterDesktop(payload, false);
                 break;
@@ -264,15 +253,13 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
         }
     }
 
-    private void EnterDesktop(byte[] payload, bool center, bool direct = false)
+    private void EnterDesktop(byte[] payload, bool center)
     {
-        directPointer = direct;
         handoff.Enter(payload[0], payload[1]);
         ClipboardSwitch(true);
         if (desktop?.Connected == true && config is not null && config.Edge == payload[1])
-            desktop.Send(new DesktopMessage("enter", SwitchId: payload[0], Edge: payload[1], Center: center, Direct: direct,
+            desktop.Send(new DesktopMessage("enter", SwitchId: payload[0], Edge: payload[1], Center: center,
                 Fraction: center ? (ushort)0 : BinaryPrimitives.ReadUInt16LittleEndian(payload.AsSpan(2))));
-        else if (direct) Send(Protocol.Message.PointerAck, [payload[0], 0, 0]);
         else Send(Protocol.Message.EnterAck, [payload[0], 0, 0, 0, 0, 0, blind]);
     }
 
@@ -300,12 +287,6 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
                 if (ready) Send(Protocol.Message.State, [blind, message.Desktop, (byte)(message.MousePresent ? 1 : 0)]);
                 SetDetail(message.Detail ?? "Desktop status received");
                 break;
-            case "pointer-ack" when directPointer && handoff.Accept(message.SwitchId):
-                Send(Protocol.Message.PointerAck, [message.SwitchId, message.Serial, message.Ok ? (byte)1 : (byte)0]);
-                break;
-            case "ack" when message.Direct && directPointer && handoff.Accept(message.SwitchId):
-                Send(Protocol.Message.PointerAck, [message.SwitchId, 0, message.Ok ? (byte)1 : (byte)0]);
-                break;
             case "ack" when handoff.Accept(message.SwitchId):
                 var ack = new byte[7]; ack[0] = message.SwitchId; ack[1] = message.Ok ? (byte)1 : (byte)0;
                 BinaryPrimitives.WriteInt16LittleEndian(ack.AsSpan(2), (short)Math.Clamp(message.X, short.MinValue, short.MaxValue));
@@ -321,7 +302,7 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
 
     private void ResumeDesktop()
     {
-        if (!directPointer && handoff.Resume(desktop?.Connected == true) is { } resume) desktop?.Send(resume);
+        if (handoff.Resume(desktop?.Connected == true) is { } resume) desktop?.Send(resume);
     }
 
     private void SendScreens() => SendJson(Protocol.Message.Screens, new { monitors });

@@ -7,7 +7,7 @@ struct DirectInputEvent: Sendable {
         case keyUp(Keycode)
         case flagsChanged(capsLock: Bool)
         case consumer(ConsumerKey, down: Bool)
-        case mouseMove(Int64, Int64)
+        case mouseMove(Int8, Int8)
         case mouseButton(MouseButtons, Bool)
         case scroll(wheel: Int8, pan: Int8)
     }
@@ -45,8 +45,8 @@ struct DirectInputEvent: Sendable {
         case .flagsChanged:
             kind = .flagsChanged(capsLock: flags.contains(.maskAlphaShift))
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
-            let dx = event.getIntegerValueField(.mouseEventDeltaX)
-            let dy = event.getIntegerValueField(.mouseEventDeltaY)
+            let dx = Self.clampInt8(event.getIntegerValueField(.mouseEventDeltaX))
+            let dy = Self.clampInt8(event.getIntegerValueField(.mouseEventDeltaY))
             guard dx != 0 || dy != 0 else { return nil }
             kind = .mouseMove(dx, dy)
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:

@@ -9,7 +9,6 @@ enum CompanionProtocol {
         case enter = 0x11, enterAck = 0x12, leave = 0x13, state = 0x14, exit = 0x15, resume = 0x16, enterCenter = 0x17
         case availability = 0x18, selection = 0x19
         case requestControl = 0x1A, releaseAck = 0x1B
-        case enterDirect = 0x1C, pointer = 0x1D, pointerAck = 0x1E
         case clipGrab = 0x20, clipGet = 0x21, clipData = 0x22, clipState = 0x23
         case nack = 0x7F
     }
@@ -129,7 +128,6 @@ struct CompanionHello: Codable {
     var availabilityEpoch: UInt32?
     var takeover: Bool?
     var requestControl: Bool?
-    var directPointer: Int?
 }
 
 struct PCMonitor: Codable, Identifiable, Equatable {

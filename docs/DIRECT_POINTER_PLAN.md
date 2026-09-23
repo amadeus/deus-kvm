@@ -1,5 +1,10 @@
 # Direct-pointer prototype — 2026-09-22
 
+> **Withdrawn — 2026-09-22:** The user reports the pointer experiments do not
+> work well and requests their removal. Both the speed slider and direct-pointer
+> mode are removed. The material below is historical; its builds and test
+> instructions are superseded by AUTOMATIC_MAC_CHECKPOINT.md.
+
 Approved: try option 2 from POINTER_FEEL_RESEARCH.md. Preserve the existing HID
 mode and all global Windows mouse settings. macOS packages remain arm64-only.
 

@@ -34,9 +34,7 @@ internal sealed class DesktopProcess : IDisposable
     {
         if (!process.IsClosed)
         {
-            // The host closes the pipe first. Allow the reader to release injected
-            // buttons before terminating a stuck worker or granting a new owner.
-            if (!HasExited && WaitForSingleObject(process, 1000) != 0) TerminateProcess(process, 0);
+            if (!HasExited) TerminateProcess(process, 0);
             process.Dispose();
         }
         thread.Dispose();

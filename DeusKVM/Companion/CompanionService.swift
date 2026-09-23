@@ -10,7 +10,6 @@ final class CompanionService: ObservableObject {
     @Published private(set) var monitors: [UUID: [PCMonitor]] = [:]
     @Published private(set) var blind: [UUID: UInt8] = [:]
     private(set) var lastSeen: [UUID: TimeInterval] = [:]
-    var onPointerAck: ((UUID, Data) -> Void)?
     var onLeave: ((UUID, UInt8, UInt8, UInt16) -> Void)?
     var clipboardTarget: (() -> UUID?)?
     var onClipboard: ((UUID, CompanionProtocol.Message, Data) throws -> Void)?
@@ -40,7 +39,6 @@ final class CompanionService: ObservableObject {
         var controlDecoder = CompanionProtocol.Decoder()
         var bulkDecoder = CompanionProtocol.Decoder()
         var helloSent = false
-        var supportsDirectPointer = false
         var supportsResume = false
         var supportsCenter = false
         var supportsClipboard = false
@@ -182,9 +180,6 @@ final class CompanionService: ObservableObject {
 
     private func handleControl(_ type: CompanionProtocol.Message, payload: Data, from id: UUID) throws {
         switch type {
-        case .pointerAck:
-            guard payload.count == 3 else { throw CompanionProtocol.Failure.malformed }
-            onPointerAck?(id, payload)
         case .selection:
             try receiveSelection(payload, from: id)
         case .screens:
@@ -234,7 +229,6 @@ final class CompanionService: ObservableObject {
         let hello = try JSONDecoder().decode(CompanionHello.self, from: data)
         guard hello.v == 1, hello.role == "pc", hello.chunk >= 20,
               clients[id]?.helloSent == true else { throw CompanionProtocol.Failure.malformed }
-        clients[id]?.supportsDirectPointer = hello.directPointer == 1
         clients[id]?.supportsResume = hello.resume == true
         clients[id]?.supportsCenter = hello.center == true
         clients[id]?.supportsClipboard = hello.clipboard == 1
@@ -258,10 +252,6 @@ final class CompanionService: ObservableObject {
               Set(screens.map(\.id)).count == screens.count else { throw CompanionProtocol.Failure.malformed }
         monitors[id] = screens
         onReady?(id)
-    }
-
-    func supportsDirectPointer(_ id: UUID) -> Bool {
-        ready.contains(id) && clients[id]?.supportsDirectPointer == true && blind[id] == 0
     }
 
     func supportsResume(_ id: UUID) -> Bool {

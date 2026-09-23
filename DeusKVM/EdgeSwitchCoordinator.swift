@@ -28,7 +28,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private var restoringPreferences = true
     private var switchID: UInt8 = 0
     private var companionCapture = false
-    private var directPointer: DirectPointerSession?
     @Published private(set) var pcMonitors: [PCMonitor] = []
     @Published private(set) var companionStatus = "Waiting for Windows companion"
     @Published var pcMonitorID = "" {
@@ -96,9 +95,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
-        lowEnergy.companion.onPointerAck = { [weak self] target, payload in
-            self?.directPointer?.receive(target: target, payload: payload)
-        }
         lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion() }
         lowEnergy.companion.onSelection = { [weak self] in self?._refresh() }
         lowEnergy.companion.onDisableRequested = { [weak self] current, acknowledge in
@@ -191,8 +187,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
         if isRemote, let target = captureTarget {
             lowEnergy.companion.send(.exit, payload: Data([switchID]), to: target)
         }
-        directPointer?.stop()
-        directPointer = nil
         companionCapture = false
         tap.forceLocal()
         cursor.restore(at: point)
@@ -321,19 +315,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
         if monitors != pcMonitors { pcMonitors = monitors; _configureCompanion() }
         let ready = currentTarget.map { companion.ready.contains($0) } ?? false
         let blind = currentTarget.flatMap { companion.blind[$0] } ?? 4
-        if isRemote, directPointer != nil, blind != 0 {
-            returnLocal(reason: "direct pointer desktop unavailable")
-            lastError = "Direct pointer unavailable. Turn it off in Settings to use HID input."
-        }
-        var status = captureBlocker ?? (ready && fresh ? (blind == 0 ? "Windows edge return ready" :
+        let status = captureBlocker ?? (ready && fresh ? (blind == 0 ? "Windows edge return ready" :
                 "Windows edge return unavailable — use the hotkey") : "Waiting for Windows companion")
-        if isRemote {
-            if directPointer != nil { status = "Direct Windows pointer active" } else if
-                UserDefaults.standard.bool(forKey: AppSettings.directPointerKey)
-            {
-                status = "HID pointer active — direct mode unavailable"
-            }
-        }
         if companionStatus != status { companionStatus = status }
         if isRemote, companionCapture, !ready || !fresh {
             returnLocal(reason: ready ? "companion heartbeat expired" : "companion disconnected")
@@ -341,7 +324,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
     }
 
     private func _configureCompanion() {
-        if directPointer != nil { returnLocal(reason: "direct pointer display configuration changed") }
         guard let target = currentTarget, lowEnergy.companion.allowsControl(target) else { return }
         let companion = lowEnergy.companion
         let monitors = companion.monitors[target] ?? []
@@ -376,7 +358,34 @@ final class EdgeSwitchCoordinator: ObservableObject {
             tapReady = success
             if !success { lastError = L10n.DirectInput.captureFailedString }
         case let .begin(generation, origin, fromEdge):
-            beginRemote(generation: generation, origin: origin, fromEdge: fromEdge)
+            let startedAt = ProcessInfo.processInfo.systemUptime
+            guard tap.isCurrent(generation) else { return }
+            guard canSwitch, !IsSecureEventInputEnabled(),
+                  let geometry else { returnLocal(); return }
+            guard cursor.hide(at: geometry.parkingPoint, returningTo: origin) else {
+                lastError = L10n.Layout.cursorFailedString
+                returnLocal()
+                return
+            }
+            lastError = nil
+            captureTarget = currentTarget
+            directInput.start(HIDInput.make(lowEnergy: lowEnergy, central: central))
+            isRemote = true
+            refreshClipboard()
+            let setupMs = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
+            diagnostics.transition("remote capture began setupMs=\(setupMs)")
+            switchID &+= 1
+            companionCapture = currentTarget.map { lowEnergy.companion.ready.contains($0) } ?? false
+            if let target = currentTarget {
+                let fraction = geometry.fraction(at: origin)
+                let entry = CompanionEntry.packet(
+                    id: switchID, edge: edge.opposite.wireValue, fraction: fraction,
+                    fromEdge: fromEdge, supportsCenter: lowEnergy.companion.supportsCenter(target)
+                )
+                lowEnergy.companion.send(
+                    CompanionProtocol.Message(rawValue: entry.type)!, payload: entry.payload, to: target
+                )
+            }
         case let .input(generation, input, capturedAt):
             guard tap.isCurrent(generation), isRemote else { return }
             diagnostics.input(capturedAt: capturedAt)
@@ -399,59 +408,5 @@ final class EdgeSwitchCoordinator: ObservableObject {
         )
         if canSwitch != state.canSwitch { canSwitch = state.canSwitch }
         if captureBlocker != state.blocker { captureBlocker = state.blocker }
-    }
-}
-
-private extension EdgeSwitchCoordinator {
-    func beginRemote(generation: Int, origin: CGPoint, fromEdge: Bool) {
-        let startedAt = ProcessInfo.processInfo.systemUptime
-        guard tap.isCurrent(generation) else { return }
-        guard canSwitch, !IsSecureEventInputEnabled(),
-              let geometry else { returnLocal(); return }
-        guard cursor.hide(at: geometry.parkingPoint, returningTo: origin) else {
-            lastError = L10n.Layout.cursorFailedString
-            returnLocal()
-            return
-        }
-        lastError = nil
-        captureTarget = currentTarget
-        isRemote = true
-        refreshClipboard()
-        let setupMs = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
-        diagnostics.transition("remote capture began setupMs=\(setupMs)")
-        switchID &+= 1
-        let companion = lowEnergy.companion
-        if let target = currentTarget, UserDefaults.standard.bool(forKey: AppSettings.directPointerKey),
-           companion.supportsDirectPointer(target)
-        {
-            directPointer = DirectPointerSession(target: target, id: switchID, send: { payload in
-                companion.send(.pointer, payload: payload, to: target)
-            }) { [weak self] in
-                self?.returnLocal(reason: "direct pointer acknowledgement failed")
-                self?.lastError = "Direct pointer interrupted. Turn it off in Settings to use HID input."
-            }
-        }
-        let pointer = directPointer
-        directInput.start(HIDInput.make(lowEnergy: lowEnergy, central: central), directMouse: pointer.map { session in
-            { dx, dy, report in session.send(dx: dx, dy: dy, report: report) }
-        })
-        companionCapture = currentTarget.map { lowEnergy.companion.ready.contains($0) } ?? false
-        if let target = currentTarget {
-            let fraction = geometry.fraction(at: origin)
-            if directPointer != nil {
-                companion.send(.enterDirect, payload: Data([
-                    switchID, edge.opposite.wireValue, UInt8(truncatingIfNeeded: fraction), UInt8(fraction >> 8),
-                    fromEdge ? 0 : 1
-                ]), to: target)
-                return
-            }
-            let entry = CompanionEntry.packet(
-                id: switchID, edge: edge.opposite.wireValue, fraction: fraction,
-                fromEdge: fromEdge, supportsCenter: lowEnergy.companion.supportsCenter(target)
-            )
-            lowEnergy.companion.send(
-                CompanionProtocol.Message(rawValue: entry.type)!, payload: entry.payload, to: target
-            )
-        }
     }
 }

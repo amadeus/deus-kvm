@@ -48,10 +48,6 @@ BLE. No LAN connection is required.
   directions, up to **64 KiB of UTF-8** per copy. Clipboard sharing pauses while
   locked or signed out and skips recognized private clipboard markers. See
   [clipboard behavior and limits](docs/CLIPBOARD.md).
-- **Settings → Windows pointer speed** adjusts only movement forwarded from
-  this Mac (0.25×–2×, default 1×), with a Reset button. Each Mac saves its own
-  value. Windows pointer settings and directly attached mice are unaffected.
-  This adjusts speed; it does not reproduce macOS's acceleration curve.
 - Vertical and horizontal scrolling can be inverted independently in Settings.
 - **Disable DeusKVM** in Settings or the menu bar restores local input and
   stops advertising, input capture, and clipboard exchange. Enabling reuses
@@ -145,12 +141,3 @@ We built a new Mac-to-Windows KVM app on top of its Bluetooth HID foundation,
 adding screen-edge switching, a Windows companion service, login-screen control,
 and shared text clipboard support. Thanks to the original author and contributors
 for making that foundation available as open source.
-
-### Experimental direct Windows pointer
-
-Settings → **Direct Windows pointer (experimental)** uses the updated Windows
-companion to position the pointer absolutely, bypassing Windows relative mouse
-acceleration without changing other mice's settings. It is off by default;
-turn it off for the original HID path, elevated apps or sign-in. Both platforms
-need the latest builds. See [the checkpoint](docs/AUTOMATIC_MAC_CHECKPOINT.md)
-and [tracked plan](docs/DIRECT_POINTER_PLAN.md). Hardware feel is pending testing.

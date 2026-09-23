@@ -328,3 +328,34 @@ not close the lag or two-Mac checkpoints.
 User confirms the speed slider works but does not fix acceleration feel, and
 approves the optional direct-position prototype. Phases, boundaries, validation
 and pending hardware results are tracked in [DIRECT_POINTER_PLAN.md](DIRECT_POINTER_PLAN.md).
+
+
+## Restore original HID pointer — 2026-09-22
+
+User requests removal of the speed slider and direct-pointer experiment because
+it does not work well. Restore the source behavior from `b8e981f`, retaining all
+ownership/takeover, display selection and input recovery polling fixes.
+
+- [x] Remove speed preference/UI/scaling and the direct-pointer option, protocol,
+  buffering, injection, watchdog and experimental tests.
+- [x] Restore the original HID mouse reports and original desktop-worker behavior.
+  Old experimental preferences are unused; preserve all other saved settings.
+- [x] Supersede experiment docs and update current installation instructions.
+- [x] Run Mac and Windows tests, lint and release builds; commit the rollback.
+- [x] Verify and publish ARM-only Mac and Windows x64 HID-restore ZIPs; keep only
+  these two current packages in the visible releases directory.
+- [ ] User hardware check after installation: original pointer behavior on both
+  Macs, clicks/drag/scroll, edge/hotkey return, ownership/takeover and prior lag.
+
+The experiments were rejected by user feedback. Earlier hardware checks remain
+pending; reverting code and passing automated tests do not establish their success.
+
+
+Rollback validation: 77 Mac tests and 108 .NET tests passed; strict SwiftLint and
+both release builds passed. App/test source, build manifest and READMEs match
+`b8e981f` exactly. ZIP CRCs pass; the extracted Mac signature passes deep/strict
+verification and its executable is arm64 only. Windows PE is x64. Only the two
+HID-restore ZIPs remain in releases. Hardware confirmation is pending.
+
+- `DeusKVM-mac-arm64-hid-restore-2026-09-22.zip` — 942,457 bytes; SHA-256 `dc1d2c5efb98cff3468363c3b65de5d16c1fdb3bac644bfff822714257b0ba97`.
+- `DeusKVM-Companion-win-x64-hid-restore-2026-09-22.zip` — 52,395,012 bytes; SHA-256 `6d06e2cea870450fbf3aae75dc87eaf3842090304b7af709d7e4882d66e137eb`.
