@@ -74,6 +74,7 @@ targets:
       - DeusKVM/CaptureReadiness.swift
       - DeusKVM/Companion/CompanionProtocol.swift
       - DeusKVM/Companion/CompanionSelection.swift
+      - DeusKVM/Clipboard/ClipboardFile.swift
       - DeusKVM/Clipboard/ClipboardTransfer.swift
       - DeusKVM/Clipboard/ClipboardRevision.swift
       - DeusKVM/Clipboard/ClipboardPasteboard.swift

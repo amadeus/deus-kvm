@@ -44,10 +44,12 @@ BLE. No LAN connection is required.
 - **Switch to PC**, including the hotkey, centers the pointer on the selected
   Windows display. The default toggle is **Fn + Escape**; record your own in
   **Layout**. The Mac hotkey remains the way back if Windows cannot return.
-- **Settings → Share text clipboard with Windows** shares plain text in both
+- **Settings → Share clipboard with Windows** shares plain text in both
   directions, up to **64 KiB of UTF-8** per copy. Clipboard sharing pauses while
   locked or signed out and skips recognized private clipboard markers. See
-  [clipboard behavior and limits](docs/CLIPBOARD.md).
+  [clipboard behavior and limits](docs/CLIPBOARD.md). The current prototype also
+  supports [on-demand Mac file paste into Windows Explorer](docs/FILE_PASTE_CHECKPOINT.md)
+  for one regular file up to 10 MiB.
 - Vertical and horizontal scrolling can be inverted independently in Settings.
 - **Disable DeusKVM** in Settings or the menu bar restores local input and
   stops advertising, input capture, and clipboard exchange. Enabling reuses

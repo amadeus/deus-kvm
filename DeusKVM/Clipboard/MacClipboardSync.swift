@@ -15,6 +15,7 @@ final class MacClipboardSync {
     private var available = true
     private var remote = false
     private var revision = 0
+    private var fileOffer: Data?
     private var observers: [NSObjectProtocol] = []
     private lazy var pasteboard = ClipboardPasteboard(snapshot: { [weak self] snapshot in
         DispatchQueue.main.async { [weak self] in self?.observe(snapshot) }
@@ -26,6 +27,16 @@ final class MacClipboardSync {
         guard enabled, snapshot.epoch == epoch, snapshot.generation == generation else { return }
         revision = snapshot.revision
         transfer.observe(snapshot.text, announce: snapshot.announce)
+        fileOffer = snapshot.file.flatMap {
+            try? JSONEncoder().encode(ClipboardFileOffer(
+                epoch: epoch,
+                clipboardSequence: transfer.sequence,
+                sequence: UInt32(truncatingIfNeeded: revision),
+                name: $0.url.lastPathComponent,
+                size: $0.size
+            ))
+        }
+        if snapshot.announce { offerFile() }
         if !primed {
             primed = true
             if let target { acknowledge(target, enabled: true) }
@@ -35,6 +46,13 @@ final class MacClipboardSync {
     private func yield(_ epoch: UInt32, generation: UInt64) {
         guard enabled, self.epoch == epoch, self.generation == generation else { return }
         transfer.yield()
+        offerFile()
+    }
+
+    private func offerFile() {
+        if let target, enabled, service.supportsFiles(target), let fileOffer {
+            service.sendClipboard(.fileOffer, payload: fileOffer, to: target)
+        }
     }
 
     init(service: CompanionService) {
@@ -91,7 +109,10 @@ final class MacClipboardSync {
     private func reconcile() {
         let wanted = target != nil && preference && available && awake && peerAvailable
         guard wanted != enabled else { return }
-        enabled = wanted; primed = false; transfer.reset(epoch); generation = pasteboard.configure(epoch: epoch, enabled: wanted)
+        enabled = wanted; primed = false; fileOffer = nil; transfer.reset(epoch); generation = pasteboard.configure(
+            epoch: epoch,
+            enabled: wanted
+        )
         if !wanted, let target { acknowledge(target, enabled: false) }
         if wanted, remote { pasteboard.yield() }
     }
@@ -111,6 +132,18 @@ final class MacClipboardSync {
             transfer.reset(epoch); generation = pasteboard.configure(epoch: epoch, enabled: false)
             reconcile()
             if !enabled { acknowledge(id, enabled: false) }
+        } else if enabled, primed, type == .fileGet, service.supportsFiles(id) {
+            guard data.count == 12 else { throw CompanionProtocol.Failure.malformed }
+            let scope = CompanionProtocol.read32(data, 0), sequence = CompanionProtocol.read32(data, 4)
+            let offset = CompanionProtocol.read32(data, 8), token = generation
+            guard scope == epoch else { return }
+            pasteboard.readFile(epoch: scope, sequence: sequence, offset: offset) { [weak self] bytes in
+                Task { @MainActor in
+                    guard let self, self.enabled, self.target == id, self.epoch == scope, self.generation == token else { return }
+                    let header = ClipboardTransfer.header(scope, sequence, bytes == nil ? UInt32.max : offset)
+                    self.service.sendClipboard(.fileData, payload: header + (bytes ?? Data()), to: id)
+                }
+            }
         } else if enabled, primed {
             try transfer.receive(type, payload: data, now: ProcessInfo.processInfo.systemUptime)
         }

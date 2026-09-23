@@ -5,6 +5,9 @@ namespace DeusKVM.Companion;
 internal sealed partial class BluetoothControl
 {
     private ClipboardTransfer? clipboardTransfer;
+    private bool filesPeer;
+    private uint? peerClipboardSequence, peerClipboardRevision, deliveredFileSequence;
+    private byte[]? pendingFileOffer;
     private ClipboardTransfer Clipboard => clipboardTransfer ??= new ClipboardTransfer(SendClipboard, ApplyClipboard);
     private bool clipboardDefaultDesktop, clipboardPeer, clipboardDesktopAvailable, clipboardOffered, clipboardEnabled, clipboardPrimed;
     private uint clipboardEpoch = (uint)Random.Shared.Next(1, int.MaxValue), clipboardRevision;
@@ -16,7 +19,7 @@ internal sealed partial class BluetoothControl
         var wanted = active && ready && clipboardPeer && clipboardDefaultDesktop && clipboardDesktopAvailable && desktop?.Connected == true;
         if (!reset && clipboardOffered == wanted) return;
         clipboardEpoch++; clipboardOffered = wanted; clipboardEnabled = clipboardPrimed = false;
-        pendingClipboardOffer = null; Clipboard.Reset(clipboardEpoch);
+        pendingClipboardOffer = null; pendingFileOffer = null; peerClipboardSequence = peerClipboardRevision = deliveredFileSequence = null; Clipboard.Reset(clipboardEpoch);
         desktop?.Send(new DesktopMessage("clipboard-start", Epoch: clipboardEpoch, Ok: false));
         AdvertiseClipboard();
     }
@@ -45,6 +48,14 @@ internal sealed partial class BluetoothControl
         }
         else if (clipboardEnabled)
         {
+            if (type == Protocol.Message.ClipGrab && payload.Length == 12 && ClipboardTransfer.Read(payload, 0) == clipboardEpoch &&
+                peerClipboardSequence != ClipboardTransfer.Read(payload, 4))
+            {
+                peerClipboardSequence = ClipboardTransfer.Read(payload, 4);
+                peerClipboardRevision = clipboardPrimed ? clipboardRevision : null;
+                deliveredFileSequence = null;
+                desktop?.Send(new DesktopMessage("clipboard-file-clear", Epoch: clipboardEpoch));
+            }
             if (!clipboardPrimed)
             {
                 if (type == Protocol.Message.ClipGrab && payload.Length == 12) pendingClipboardOffer = payload;
@@ -64,6 +75,7 @@ internal sealed partial class BluetoothControl
         if (!clipboardEnabled || message.Epoch != clipboardEpoch) return;
         if (message.Kind == "clipboard-copy")
         {
+            if (!clipboardPrimed && peerClipboardSequence is not null) peerClipboardRevision = message.Revision;
             clipboardRevision = message.Revision;
             Clipboard.Observe(message.Clipboard, message.Ok);
             clipboardPrimed = true;
@@ -73,9 +85,31 @@ internal sealed partial class BluetoothControl
                 try { Clipboard.Receive(Protocol.Message.ClipGrab, offer, ClipboardNow); }
                 catch (InvalidDataException) { Fail("Invalid clipboard offer"); }
             }
+            if (pendingFileOffer is { } file) { pendingFileOffer = null; ReceiveFile(Protocol.Message.FileOffer, file); }
         }
+        else if (message.Kind == "clipboard-file-get" && filesPeer && message.Clipboard is { Length: 12 } request &&
+                 ClipboardTransfer.Read(request, 0) == clipboardEpoch) Send(Protocol.Message.FileGet, request);
         else if (message.Kind == "clipboard-yield" && clipboardPrimed) Clipboard.Yield();
     }
+    private void ReceiveFile(Protocol.Message type, byte[] payload)
+    {
+        if (!clipboardEnabled) return;
+        if (type == Protocol.Message.FileOffer)
+        {
+            FileClipboardOffer offer;
+            try { offer = FileClipboardOffer.Parse(payload); }
+            catch (InvalidDataException) { return; } // Unsupported names/sizes must not disconnect input.
+            if (offer.Epoch != clipboardEpoch || offer.ClipboardSequence != peerClipboardSequence) return;
+            if (!clipboardPrimed) { pendingFileOffer = payload; return; }
+            if (deliveredFileSequence == offer.Sequence) return;
+            deliveredFileSequence = offer.Sequence;
+            desktop?.Send(new DesktopMessage("clipboard-file-offer", Epoch: clipboardEpoch,
+                Revision: peerClipboardRevision ?? clipboardRevision, Clipboard: payload));
+        }
+        else if (payload.Length is >= 12 and <= 1036 && ClipboardTransfer.Read(payload, 0) == clipboardEpoch)
+            desktop?.Send(new DesktopMessage("clipboard-file-data", Epoch: clipboardEpoch, Clipboard: payload));
+    }
+
     private void ClipboardSwitch(bool windowsActive)
     {
         Clipboard.SetActive(windowsActive, ClipboardNow);

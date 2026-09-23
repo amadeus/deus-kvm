@@ -455,3 +455,12 @@ is unchanged. Only the current Windows and Mac ZIPs remain in releases.
 `DeusKVM-Companion-win-x64-standard-2026-09-22.zip` — 52,395,296 bytes; SHA-256 `cb454dab4358863dd0712ee7c68a071fa9d84665fc193b2d62a6512f6c58d832`.
 
 Await user installation and normal return/re-entry confirmation.
+
+
+## On-demand file paste prototype — 2026-09-22
+
+Current feature work and hardware checks are tracked in
+[FILE_PASTE_PLAN.md](FILE_PASTE_PLAN.md). It adds deferred Mac-to-Windows file
+paste while preserving the low-latency HID change and Windows performance
+rollback. Earlier ownership, laptop and transient handoff hardware checks remain
+outstanding; file-paste unit tests do not close them.

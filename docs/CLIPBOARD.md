@@ -1,17 +1,14 @@
-# Plain-text clipboard sharing
+# Clipboard sharing
 
-Clipboard sharing is enabled by default in **Mac Settings → Share text clipboard
-with Windows**. The toggle controls both directions. Both machines need this
+Clipboard sharing is enabled by default in **Mac Settings → Share clipboard with Windows**. The toggle controls both directions. Both machines need this
 build; the Windows service and signed-in desktop worker handle sharing even
 when the tray window is closed. Keep the existing Bluetooth pairing.
 
-## Morning test
+## Text clipboard test
 
-1. Extract `.build/windows/DeusKVM-Companion-win-x64.zip` on Windows and open
-   `DeusKVM.Companion.exe`. Its existing update flow replaces the service and
-   desktop worker and preserves settings. No separate stop/start script is needed.
-2. Quit the running Mac app and reopen
-   `.build/DerivedData/Build/Products/Debug/DeusKVM.app` from this checkout.
+1. Install the current Windows ZIP from the visible `releases/` folder; its
+   update flow replaces the service and desktop worker while preserving settings.
+2. Quit the Mac app and launch the app from the current arm64 ZIP in `releases/`.
 3. Copy a sentence on the Mac, cross to Windows and paste into Notepad. Copy a
    different sentence in Notepad, return to the Mac and paste into a text editor.
 4. Repeat with emoji, accented characters, multiple lines and approximately
@@ -24,7 +21,7 @@ when the tray window is closed. Keep the existing Bluetooth pairing.
    again. Test reconnect and lock/unlock with new text. The clipboard must not
    synchronize on the login/security screen.
 7. Using disposable test text, check a password manager that marks its clipboard
-   private. Confirm that private text, images/files and text over 64 KiB do not
+   private. Confirm that private text, images and text over 64 KiB do not
    replace the other machine's clipboard.
 
 Neither app was launched/restarted during the overnight implementation, and no
@@ -34,10 +31,10 @@ unit tests do not establish live integration behavior.
 
 ## Behavior and limits
 
-- Only plain Unicode text crosses, up to **65,536 UTF-8 bytes after newline
+- Plain Unicode text crosses in both directions, up to **65,536 UTF-8 bytes after newline
   normalization**. Rich copies may supply their plain-text representation;
-  formatting, files and images are not transferred. File-list clipboards are
-  excluded even if they also contain a text representation.
+  formatting and images are not transferred. File-list clipboards are excluded
+  from text sharing, even if they also contain a text representation.
 - New copies are offered to the other machine. The destination fetches them
   when it is active, or at the next handoff. The initial clipboard snapshot is
   offered only when leaving that machine, preventing connection alone from
@@ -107,3 +104,23 @@ Privacy conventions: [NSPasteboard community types](https://nspasteboard.org/),
 [Windows clipboard formats](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats).
 Native memory ownership follows
 [SetClipboardData](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata).
+
+## On-demand file paste prototype
+
+The same sharing toggle also enables **one regular Mac file up to 10 MiB** to
+be pasted in Windows Explorer. Copy sends metadata, not file contents. The OLE
+virtual-file stream requests 1 KiB blocks only during asynchronous extraction.
+Clipboard inspection without an extraction operation cannot start a download.
+No temporary pre-download is created. Files are never cut or deleted at source.
+See [the current file paste checkpoint](FILE_PASTE_CHECKPOINT.md) for builds,
+limits and outstanding native integration checks. Reverse file paste, folders,
+and multi-selection are deferred.
+
+HELLO capability `files: 1` enables FILE_OFFER (0x24, bulk JSON metadata), FILE_GET
+(0x25, control: epoch/clipboard revision/offset, three little-endian u32 values),
+and FILE_DATA (0x26, bulk: same header plus at most 1024 bytes). An offset of
+UInt32.max in FILE_DATA reports a stale/changed/unreadable source. Offers also
+carry the text clipboard offer sequence so delayed metadata cannot supersede a
+newer clipboard offer. All file traffic shares the existing ownership, desktop,
+sharing-preference and clipboard epoch gates. Contents remain off input loops;
+file blocks use the existing bulk priority beneath HID/control traffic.

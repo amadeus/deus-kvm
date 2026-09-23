@@ -7,6 +7,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
         let generation: UInt64
         let revision: Int
         let text: Data?
+        let file: ClipboardFile?
         let announce: Bool
     }
 
@@ -34,6 +35,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
     }
 
     private var pending: Pending?
+    private var file: ClipboardFile?
     private let snapshot: @Sendable (Snapshot) -> Void
     private let yielded: @Sendable (UInt32, UInt64) -> Void
 
@@ -50,7 +52,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
         queue.async { [self] in
             generation = next
             self.epoch = epoch; self.enabled = enabled
-            versions = ClipboardRevision(); pending = nil; priming = true; pendingYield = false
+            versions = ClipboardRevision(); pending = nil; file = nil; priming = true; pendingYield = false
             if !enabled { timer?.cancel(); timer = nil; return }
             if timer == nil {
                 let source = DispatchSource.makeTimerSource(queue: queue)
@@ -74,6 +76,17 @@ final class ClipboardPasteboard: @unchecked Sendable {
         }
     }
 
+    func readFile(epoch: UInt32, sequence: UInt32, offset: UInt32, reply: @escaping @Sendable (Data?) -> Void) {
+        queue.async { [self] in
+            guard enabled, canAccess, self.epoch == epoch,
+                  UInt32(truncatingIfNeeded: NSPasteboard.general.changeCount) == sequence,
+                  let file else { reply(nil); return }
+            let data = file.read(offset: offset)
+            guard canAccess, UInt32(truncatingIfNeeded: NSPasteboard.general.changeCount) == sequence else { reply(nil); return }
+            reply(data)
+        }
+    }
+
     private var canAccess: Bool {
         gate.withLock { permitted && permittedGeneration == generation }
     }
@@ -86,6 +99,11 @@ final class ClipboardPasteboard: @unchecked Sendable {
             pending = nil
             let types = Set((board.types ?? []).map(\.rawValue))
             var bytes: Data?
+            file = nil
+            let privateTypes = Self.excludedTypes.subtracting(["public.file-url"])
+            if types.contains("public.file-url"), types.isDisjoint(with: privateTypes),
+               let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+               urls.count == 1 { file = ClipboardFile(urls[0]) }
             if types.isDisjoint(with: Self.excludedTypes),
                let data = board.data(forType: .string), data.count <= ClipboardTransfer.maximumBytes * 2
             {
@@ -93,7 +111,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
             }
             guard canAccess, board.changeCount == revision else { return }
             versions.capture(revision)
-            snapshot(Snapshot(epoch: epoch, generation: generation, revision: revision, text: bytes, announce: !priming))
+            snapshot(Snapshot(epoch: epoch, generation: generation, revision: revision, text: bytes, file: file, announce: !priming))
             priming = false
         }
         if pendingYield { pendingYield = false; yielded(epoch, generation) }

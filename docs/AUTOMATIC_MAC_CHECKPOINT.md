@@ -3,10 +3,21 @@
 Update **Windows and both Macs**. Keep Bluetooth enabled and retain both pairings.
 The earlier Windows-only build does not implement this flow.
 
-## Windows performance trial removed — latest checkpoint
+## Current build: on-demand file paste prototype
 
-Update **Windows only** if you already installed the Mac low-latency build. Keep
-that Mac app; no toggle, reset or Bluetooth re-pairing is needed.
+Update Windows and the Mac you are testing using the current ZIPs below. Copy
+one small ordinary file in Finder, switch to Windows, and paste into an Explorer
+folder once. File contents should transfer only during that paste. This prototype
+supports one file up to 10 MiB, Mac to Windows only; start with a 1–10 KB file.
+Keep Settings → Share clipboard with Windows enabled. See
+[the file paste checkpoint](FILE_PASTE_CHECKPOINT.md) for limits and follow-up
+checks. Native Explorer integration and Bluetooth performance await user testing.
+The existing low-latency Mac HID behavior and Windows rollback remain in place.
+
+## Previous Windows performance trial removed
+
+The prior rollback required only a Windows update. The current file-paste
+prototype requires both builds; no reset or Bluetooth re-pairing is needed.
 
 The Windows-side performance request has been removed after the user reported no
 noticeable smoothness improvement and temporary trouble returning from/re-entering
@@ -29,11 +40,11 @@ ownership/takeover, the display-selection fix and bounded recovery polling remai
 
 ## Update
 
-1. On Windows, extract `DeusKVM-Companion-win-x64-standard-2026-09-22.zip`
+1. On Windows, extract `DeusKVM-Companion-win-x64-file-paste-2026-09-22.zip`
    and open `DeusKVM.Companion.exe`. Approve the update prompt; it closes the old
    companion automatically. No scripts or .NET installation are needed.
 2. On **each Mac**, quit DeusKVM, unzip
-   `DeusKVM-mac-arm64-low-latency-2026-09-22.zip`, and replace the app in its usual
+   `DeusKVM-mac-arm64-file-paste-2026-09-22.zip`, and replace the app in its usual
    location with the new `DeusKVM.app`. Open that copy. This build is for Apple Silicon only. Keep each Mac's existing permissions and layout.
 3. If a Mac cannot switch, read **Layout → Windows**. The status now distinguishes
    waiting for Windows control from missing permissions or unavailable capture.

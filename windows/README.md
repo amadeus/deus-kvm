@@ -137,7 +137,7 @@ report that status; do not remove the pairing as a first troubleshooting step.
 ## Text clipboard checkpoint
 
 1. Open the EXE from the new ZIP to update Windows. Quit and reopen the newly
-   built Mac app. Keep **Settings → Share text clipboard with Windows** enabled.
+   built Mac app. Keep **Settings → Share clipboard with Windows** enabled.
 2. Copy text on the Mac, cross to Windows and paste. Copy different text on
    Windows, return to the Mac and paste. Repeat a few times with Unicode,
    multiple lines and a 20 KB block. Large BLE transfers can take longer.
@@ -229,3 +229,10 @@ command first; there is no migration from the old application/service identities
 Updates from an existing DeusKVM build preserve pairings, service running/stopped
 state and startup preferences. Its former selected Mac becomes an initial
 preference, without restricting automatic discovery of your other paired Macs.
+
+## On-demand file paste prototype
+
+The current build accepts one Mac file up to 10 MiB through native Explorer
+paste. Contents transfer over Bluetooth only when the asynchronous file stream
+is read. See `CHECKPOINT.md` in the current test ZIP or
+[the file paste checkpoint](../docs/FILE_PASTE_CHECKPOINT.md).

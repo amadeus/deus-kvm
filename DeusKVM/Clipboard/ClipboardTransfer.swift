@@ -7,7 +7,7 @@ final class ClipboardTransfer {
     var send: (CompanionProtocol.Message, Data) -> Void = { _, _ in }
     var apply: (Data) -> Void = { _ in }
     private var epoch: UInt32 = 0
-    private var sequence: UInt32 = 0
+    private(set) var sequence: UInt32 = 0
     private var local: Data?
     private var seenOffer: UInt32?
     private var offer: (sequence: UInt32, size: Int)?

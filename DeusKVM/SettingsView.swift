@@ -39,11 +39,12 @@ struct SettingsView: View {
                     .isEnabled ? "DeusKVM is enabled." : "Disabled. Advertising, input forwarding and clipboard sharing are paused.")
             }
             Section {
-                Toggle("Share text clipboard with Windows", isOn: $clipboardEnabled)
+                Toggle("Share clipboard with Windows", isOn: $clipboardEnabled)
                     .toggleStyle(.switch)
             } footer: {
                 Text(
-                    "Shares plain text up to 64 KiB. Skips marked private items and pauses while locked or signed out."
+                    "Shares text up to 64 KiB and one Mac file up to 10 MiB on Windows paste. "
+                        + "Skips marked private items and pauses while locked."
                 )
             }
             Section("Windows scrolling") {

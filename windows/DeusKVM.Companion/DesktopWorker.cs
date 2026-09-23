@@ -47,12 +47,14 @@ internal sealed class DesktopWorker : ApplicationContext
             if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid) || pid != parent)
                 throw new InvalidDataException("Unexpected desktop pipe server");
             var context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            clipboard = new DesktopClipboard(Send);
             var connection = Task.Run(async () =>
             {
                 try
                 {
                     await DesktopPipe.Pump(pipe, output.Reader,
-                        message => context.Post(_ => Handle(message), null), shutdown.Token).ConfigureAwait(false);
+                        message => { if (message.Kind.StartsWith("clipboard-", StringComparison.Ordinal)) clipboard?.Post(message);
+                            else context.Post(_ => Handle(message), null); }, shutdown.Token).ConfigureAwait(false);
                 }
                 finally { Environment.Exit(0); }
             });
@@ -60,7 +62,6 @@ internal sealed class DesktopWorker : ApplicationContext
                 new() { Page = 1, Usage = 2, Flags = 0x2100, Target = window.Handle }
             ], 1, (uint)Marshal.SizeOf<DesktopNative.RawDevice>()))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
-            clipboard = new DesktopClipboard(Send);
             Refresh();
             timer.Start();
             // Pipe EOF must terminate this process independently of the desktop

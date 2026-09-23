@@ -42,6 +42,7 @@ final class CompanionService: ObservableObject {
         var supportsResume = false
         var supportsCenter = false
         var supportsClipboard = false
+        var supportsFiles = false
         var supportsSelection = false
         var supportsTakeover = false
     }
@@ -117,7 +118,7 @@ final class CompanionService: ObservableObject {
         if !subscribedHosts.contains(central.identifier) { subscribedHosts.insert(central.identifier) }
         if sendHello {
             sendJSON(CompanionHello(
-                v: 1, role: "mac", name: "DeusKVM", chunk: 20, clipboard: 1,
+                v: 1, role: "mac", name: "DeusKVM", chunk: 20, clipboard: 1, files: 1,
                 selection: 1, available: selection.available(to: central.identifier), availabilityEpoch: selection.epoch,
                 takeover: true, requestControl: wantsControl
             ), type: .hello, to: central.identifier)
@@ -171,7 +172,7 @@ final class CompanionService: ObservableObject {
         }
         guard ready.contains(id) else { throw CompanionProtocol.Failure.malformed }
         lastSeen[id] = ProcessInfo.processInfo.systemUptime
-        if [.clipGrab, .clipGet, .clipData, .clipState].contains(type) {
+        if [.clipGrab, .clipGet, .clipData, .clipState, .fileOffer, .fileGet, .fileData].contains(type) {
             try receiveClipboard(packet, type: type, from: id)
             return
         }
@@ -219,7 +220,7 @@ final class CompanionService: ObservableObject {
 
     private func receiveClipboard(_ packet: CompanionProtocol.Packet, type: CompanionProtocol.Message, from id: UUID) throws {
         guard clipboardTarget?() == id, allowsControl(id) else { return }
-        guard supportsClipboard(id), packet.stream == (type == .clipData ? 1 : 0) else {
+        guard supportsClipboard(id), packet.stream == ([.clipData, .fileOffer, .fileData].contains(type) ? 1 : 0) else {
             throw CompanionProtocol.Failure.malformed
         }
         try onClipboard?(id, type, packet.payload)
@@ -232,6 +233,7 @@ final class CompanionService: ObservableObject {
         clients[id]?.supportsResume = hello.resume == true
         clients[id]?.supportsCenter = hello.center == true
         clients[id]?.supportsClipboard = hello.clipboard == 1
+        clients[id]?.supportsFiles = hello.files == 1
         clients[id]?.supportsSelection = hello.selection == 1
         clients[id]?.supportsTakeover = hello.takeover == true
         selection.disconnect(id)
@@ -266,6 +268,10 @@ final class CompanionService: ObservableObject {
         ready.contains(id) && clients[id]?.supportsClipboard == true
     }
 
+    func supportsFiles(_ id: UUID) -> Bool {
+        supportsClipboard(id) && clients[id]?.supportsFiles == true
+    }
+
     func allowsControl(_ id: UUID, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         guard selection.available(to: id), ready.contains(id), let seen = lastSeen[id], now - seen < 10 else { return false }
         return clients[id]?.supportsSelection != true || selection.granted(to: id)
@@ -278,7 +284,7 @@ final class CompanionService: ObservableObject {
     func sendClipboard(_ type: CompanionProtocol.Message, payload: Data, to id: UUID) {
         guard clipboardTarget?() == id, allowsControl(id), supportsClipboard(id),
               payload.count <= ClipboardTransfer.blockBytes + 12 else { return }
-        if type == .clipData {
+        if [.clipData, .fileOffer, .fileData].contains(type) {
             enqueue(type, stream: 1, payload: payload, to: id)
         } else {
             send(type, payload: payload, to: id)

@@ -179,8 +179,9 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
                 if (hello.RootElement.TryGetProperty("requestControl", out var request) && request.ValueKind == JsonValueKind.True) RequestOwnership();
                 clipboardPeer = hello.RootElement.TryGetProperty("clipboard", out var capability) &&
                     capability.TryGetInt32(out var clipboardVersion) && clipboardVersion == 1;
+                filesPeer = hello.RootElement.TryGetProperty("files", out var files) && files.TryGetInt32(out var filesVersion) && filesVersion == 1;
                 SendJson(Protocol.Message.Hello, new { v = 1, role = "pc", name = "DeusKVM Companion",
-                    computerName = Environment.MachineName, chunk = 20, resume = true, center = true, clipboard = 1, selection = 1, takeover = true });
+                    computerName = Environment.MachineName, chunk = 20, resume = true, center = true, clipboard = 1, files = 1, selection = 1, takeover = true });
                 UpdateClipboardSession(true);
                 if (active && monitors.Length > 0) SendScreens();
                 SetDetail("Companion connected; waiting for desktop status");
@@ -188,7 +189,12 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
             else
             {
                 if (!ready) throw new InvalidDataException("Expected HELLO");
-                if (type is Protocol.Message.ClipGrab or Protocol.Message.ClipGet or Protocol.Message.ClipData or Protocol.Message.ClipState)
+                if (type is Protocol.Message.FileOffer or Protocol.Message.FileData)
+                {
+                    if (packet.Stream != 1 || !filesPeer) throw new InvalidDataException("Invalid file message");
+                    ReceiveFile(type, packet.Payload);
+                }
+                else if (type is Protocol.Message.ClipGrab or Protocol.Message.ClipGet or Protocol.Message.ClipData or Protocol.Message.ClipState)
                 {
                     if (packet.Stream != (type == Protocol.Message.ClipData ? 1 : 0)) throw new InvalidDataException("Wrong clipboard stream");
                     ReceiveClipboard(type, packet.Payload);
