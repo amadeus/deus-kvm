@@ -4,6 +4,12 @@ User requested a much smaller Windows app, ideally 1–2 MB total, while asleep.
 Preserve the tested input/clipboard implementation and current extract/open/update
 experience. Do not disguise a runtime prerequisite as a total size reduction.
 
+**Follow-up recommendation:** try an isolated .NET Framework 4.8 port before a
+native rewrite. Windows already supplies that runtime on the app's minimum
+Windows 10 2004 / Windows 11 target. The dependency probe below measures 0.54 MB
+zipped, making a 1–2 MB release plausible, but a complete port is not yet built
+or tested. This supersedes the first pass's native-prototype-first recommendation.
+
 ## Completed investigation
 
 - [x] Inventory the self-contained publish and separate application code from dependencies.
@@ -74,7 +80,7 @@ Sources checked 2026-09-23:
 - https://learn.microsoft.com/en-us/dotnet/core/deploying/trimming/incompatibilities
 - https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/cross-compile
 
-## Route to a genuinely small standalone app (not implemented)
+## Native alternatives (not implemented)
 
 A 1–2 MB total target is unproven with all current functionality. Achieving it
 requires a different dependency architecture, not another ZIP setting.
@@ -94,6 +100,101 @@ An alternative is a trim/AOT-compatible C# redesign: replace Windows Forms, use
 source-generated JSON/COM interop and validate WinRT AOT support. That retains
 more policy code but its final size must be measured; it is not a promised 1–2 MB
 solution. No speculative native rewrite was merged into the tested companion.
+
+## Follow-up: use the runtime Windows already supplies
+
+The first investigation considered framework-dependent **modern .NET**, but
+missed **.NET Framework 4.8**. These are different runtimes. Windows 10 2004+
+includes Framework 4.8; Windows 11 includes 4.8 or its compatible 4.8.1 update.
+This route would use the OS runtime, rather than ask the user to install .NET 10.
+Microsoft documents calling WinRT from Framework through
+`Microsoft.Windows.SDK.Contracts`. This avoids shipping both the modern runtime
+and `Microsoft.Windows.SDK.NET.dll` while retaining C#, WinForms and built-in COM.
+
+### Measured feasibility checkpoint
+
+Reproducible source: `windows/tests/SmallPackageProbe/` (separate from the app).
+Release build with .NET SDK 10.0.401, net48, x64:
+
+| Contents | Bytes |
+| --- | ---: |
+| Probe EXE + binding-redirect config | 11,614 |
+| JSON, Channels and all transitive runtime DLLs | 1,395,656 |
+| Total unpacked runtime files | 1,407,270 |
+| ZIP, Deflate level 9 | 542,323 |
+
+The probe compiles actual calls to paired-device enumeration,
+`BluetoothLEDevice`, `GattSession.MaintainConnection`, uncached GATT discovery,
+WinForms and JSON/Channels. It also references `ServiceBase`; it does not run a
+service. No WinMDs, modern runtime or Windows SDK managed projection are emitted
+as runtime dependencies. Measurement excludes only compiler symbols and XML API
+documentation, includes all emitted DLLs/config, and checks ZIP CRCs.
+
+**This is a dependency budget, not the full companion's size.** The original app's
+own code is small enough that a couple-MB ZIP is now a reasonable target. Final
+size, runtime compatibility, CPU usage and performance remain unproven.
+
+### Port scope and tradeoffs
+
+An isolated compile of the existing source against net48 immediately identifies
+missing `AesGcm`, `TimeProvider`, `IReadOnlySet<T>` and a COM `STATSTG` ambiguity.
+That build deliberately fails; its first errors are not a complete migration
+inventory. Source inspection also identifies these work areas:
+
+- Replace newer runtime helpers (process path, timeout waits, exact stream reads,
+  memory-based I/O, random/hash/hex helpers, range APIs, pipe ACL creation).
+  Preserve cancellation, timeouts, bounded queues and existing event-driven work.
+- Keep AES-256-GCM and the current HKDF/framing protocol. Use Windows CNG for
+  authenticated encryption and a tested HMAC-SHA256 HKDF adapter; do not implement
+  AES or weaken authentication. Verify byte-for-byte vectors against the existing
+  implementation, including rejected tags, truncation and nonce sequencing.
+- Keep the WinForms/service/OLE architecture, with Framework startup/DPI setup,
+  record compatibility and explicit COM types. Verify WinRT cancellation and
+  disposal semantics on Windows instead of assuming the two projections match.
+- The installer currently stages and hashes one EXE. The small build has DLLs and
+  an EXE config. Stage, validate and roll back the entire versioned application
+  directory with the same protected ACLs; preserve settings/service identity and
+  test removal. Do not ship an EXE-only update that silently omits dependencies.
+
+Framework is an older, Windows-only runtime. Microsoft continues servicing it
+but recommends modern .NET for new development. We would accept some compatibility
+code and an older runtime to remove the download overhead. It is **not** a CPU
+optimization; latency, allocations and idle behavior need separate measurement.
+Native C++/WinRT stays the fallback if critical Framework runtime paths fail.
+
+### Tracked phases
+
+- [x] **1 — Dependency feasibility:** verify OS inclusion/API route, compile the
+  representative dependency probe, measure all output and record compatibility
+  gaps. Probe builds with zero compiler warnings/errors; ZIP integrity passes.
+- [ ] **2 — Isolated core port:** retain the working release; introduce narrowly
+  scoped compatibility adapters, preserve protocol/policy behavior, and run core
+  tests on both the current runtime and Framework on Windows. Prove encrypted
+  file interoperability with the current Mac before any replacement release.
+- [ ] **3 — Windows integration:** prove BLE ownership/reconnect, all worker modes,
+  service startup before/after login, Raw Input, tray, hotkey/edge return, text and
+  OLE on-demand file clipboard. This requires actual Windows execution/hardware.
+- [ ] **4 — Packaging and update:** migrate EXE-only install/update/rollback/removal
+  to the complete protected payload; test upgrade from the current installed app
+  on a disposable Windows machine. Measure full ZIP and installed footprint.
+  Target <= 2,000,000 ZIP bytes; report actual results even if the target is missed.
+- [ ] **5 — User checkpoint:** prepare a clearly named Windows test ZIP in visible
+  `releases/`, retain a recoverable known-good build, then wait for the user to
+  set up and test both Macs. Check file transfers up to 2 GB, ownership stealing,
+  idle CPU and pointer responsiveness. No user hardware tests have passed yet.
+- [ ] **6 — Adopt:** only after those checks, switch normal publish/CI/docs and
+  prune superseded release artifacts. Commit each verified implementation phase.
+
+No production source, running app, service or release was changed by this follow-up.
+The probe is research tooling, not a build for the user to install.
+
+Sources checked 2026-09-23:
+- https://learn.microsoft.com/en-us/dotnet/framework/install/versions-and-dependencies
+- https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/winrt-apis-desktop-apps
+- https://learn.microsoft.com/en-us/windows/win32/seccng/cng-algorithm-identifiers
+- https://www.nuget.org/packages/Microsoft.Windows.SDK.Contracts/10.0.19041.1
+- https://www.nuget.org/packages/System.Text.Json/10.0.12
+- https://www.nuget.org/packages/System.Threading.Channels/10.0.11
 
 ## Reproduction
 
