@@ -11,8 +11,8 @@ companion/update flow, waits for handoff, and removes temporary files. The actua
 installed app retains its dependency DLLs/config under Program Files. The
 launcher is not the service or a persistent background process.
 
-No companion runtime source or Mac code changes are part of this step. User
-confirmation applies to the preceding Framework app, not yet to the new launcher.
+No companion runtime source or Mac code changes are part of this step. The user
+confirmed both the preceding Framework app and this single-EXE build work on their setup.
 
 ## Phases
 
@@ -32,7 +32,8 @@ confirmation applies to the preceding Framework app, not yet to the new launcher
   the existing installation, reopen it, decline a UAC update, and check temp cleanup.
 - [ ] Windows CI: exercise fresh install/update/reopen/removal using the launcher,
   verifying the installed payload and ACLs against separate expected build output.
-- [ ] User checkpoint: launch the single EXE, then verify normal switching/paste.
+- [x] User checkpoint: user reports the single-EXE build works well on their
+  Windows setup. Individual switching/paste and lifecycle cases were not enumerated.
 
 ## Design details
 
@@ -87,6 +88,8 @@ current source revision metadata. The working Framework ZIP is retained in
 `releases/Previous/DeusKVM-Companion-win-x64-framework-2026-09-23.zip` with its
 original SHA-256 verified. No running app or service was installed/restarted.
 
-Next user action: open the EXE on Windows and approve its usual update prompt,
-then check reopening, edge/hotkey switching and paste. Keep the current Mac app.
-Wait for user setup/testing before calling the new launcher Windows-validated.
+User confirmation (2026-09-23): "sick! seems to work great" after delivery of the
+single EXE. Record this as a successful basic Windows user checkpoint. UAC refusal,
+explicit temporary cleanup inspection, CI lifecycle and the detailed hardware
+cases remain separate outstanding checks; the report does not establish each of
+those individually. No new build or runtime change is needed for this confirmation.
