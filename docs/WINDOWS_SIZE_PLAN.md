@@ -292,3 +292,12 @@ Implementation references:
 - https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/ns-bcrypt-bcrypt_authenticated_cipher_mode_info
 - https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptgeneratesymmetrickey
 - https://www.rfc-editor.org/rfc/rfc5869
+
+
+## User confirmation and single-EXE packaging
+
+The user reported that the smaller build worked on 2026-09-23. This confirms
+basic functionality on their setup; it does not enumerate every stress, login,
+2 GB transfer or lifecycle case above. The next authorized step is a single
+small downloadable EXE. See `WINDOWS_SINGLE_EXE_PLAN.md`; the companion runtime
+source is unchanged, and the confirmed Framework ZIP is retained as fallback.

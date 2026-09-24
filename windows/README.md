@@ -17,8 +17,9 @@ acknowledged takeover protocol still require an update.
 
 1. Keep both existing Mac pairings. Leave DeusKVM enabled on the Mac you want
    to use first; **Enable control** for this PC on each Mac.
-2. Extract the entire ZIP into a new folder, keeping the EXE, DLLs, config and
-   `package.json` together, and open **DeusKVM.Companion.exe**. Approve the Windows
+2. Download and open the single **DeusKVM Companion EXE**. It unpacks and
+   launches setup automatically; no ZIP extraction or adjacent files are needed.
+   Approve the Windows
    administrator prompt to install or update. No scripts or .NET installation
    are needed. Existing service startup/running preferences are preserved.
 3. Already-paired Macs are discovered automatically; there is no selection step.
@@ -44,7 +45,7 @@ does not provide the historical connection order through this initial enumeratio
 are ordered as observed by the companion.
 
 See [the two-Mac checkpoint](../docs/AUTOMATIC_MAC_CHECKPOINT.md) for the manual
-validation sequence (this small build includes `START_HERE.md` in its ZIP). Automatic
+validation sequence (the current setup steps are in the Framework checkpoint). Automatic
 selection and reconnection require
 validation on Windows; successful cross-builds do not prove that behavior.
 
@@ -66,12 +67,15 @@ third-party servers are used at runtime.
 The Windows x64 package uses .NET Framework 4.8, already included with Windows
 10 2004+ and Windows 11. It ships application code and small dependency DLLs,
 without bundling the modern .NET runtime or the large managed Windows SDK.
-Keep all extracted runtime files together. Installation copies and verifies the
+The download is one EXE with the compressed package embedded. It extracts into
+a private temporary directory, runs the existing setup flow, then cleans up.
+Installed dependencies stay under Program Files. Installation verifies the
 complete payload and rolls back replaced files if the update fails.
 
-See `START_HERE.md` in the ZIP for this build's test sequence. The migration and
-measured sizes are recorded in [the size plan](../docs/WINDOWS_SIZE_PLAN.md).
-Framework/Windows hardware validation remains pending for this new build.
+The user confirmed the small Framework app works. The new single-EXE launcher
+still needs its Windows setup/handoff check; see
+[the launcher plan](../docs/WINDOWS_SINGLE_EXE_PLAN.md). Earlier size measurements
+are recorded in [the size plan](../docs/WINDOWS_SIZE_PLAN.md).
 
 ## Window and tray controls
 
@@ -97,7 +101,7 @@ Windows service configuration, not a separate app preference.
 
 ## Signed-in edge checkpoint
 
-Keep the existing pairing and open the EXE from the new ZIP to update. The
+Keep the existing pairing and open the downloaded EXE to update. The
 update closes the old companion automatically. Leave the service running and test:
 
 - Cross at roughly the top, middle and bottom of the Mac edge. Placement on the
@@ -149,7 +153,7 @@ report that status; do not remove the pairing as a first troubleshooting step.
 
 ## Text clipboard checkpoint
 
-1. Open the EXE from the new ZIP to update Windows. Quit and reopen the newly
+1. Open the downloaded EXE to update Windows. Quit and reopen the newly
    built Mac app. Keep **Settings → Share clipboard with Windows** enabled.
 2. Copy text on the Mac, cross to Windows and paste. Copy different text on
    Windows, return to the Mac and paste. Repeat a few times with Unicode,
@@ -210,7 +214,8 @@ dotnet test windows/DeusKVM.Companion.Tests -c Release -f net10.0
 ```
 
 This Framework build currently targets `win-x64`. `DEUSKVM_DOTNET` can point at an isolated
-SDK. On Windows, run the same test command with `-f net48` as well. ZIPs are written to the visible `releases/` folder at the repository root.
+SDK. On Windows, run the same test command with `-f net48` as well. The single
+EXE is written to the visible `releases/` folder at the repository root.
 Core tests run on macOS; service,
 WinRT, desktop workers, Raw Input and tray execution must be verified on Windows.
 
@@ -251,5 +256,4 @@ both directions, over networking only. Mac → Windows retains native Explorer
 paste. Windows → Mac uses Finder Cmd+V with DeusKVM progress/cancel UI. File
 metadata and authentication use Bluetooth; contents transfer only on paste.
 Windows connects out in both directions, so no inbound Windows firewall rule is
-needed. See `START_HERE.md` in the ZIP or
-[the file paste checkpoint](../docs/FILE_PASTE_CHECKPOINT.md).
+needed. See [the file paste checkpoint](../docs/FILE_PASTE_CHECKPOINT.md).

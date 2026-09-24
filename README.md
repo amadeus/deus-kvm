@@ -128,7 +128,7 @@ dotnet test windows/DeusKVM.Companion.Tests -c Release -f net10.0
 ```
 
 The small Framework build targets Windows x64 and uses the OS-provided .NET
-Framework 4.8 runtime. On Windows, also run tests with `-f net48`. The ZIP is
+Framework 4.8 runtime. On Windows, also run tests with `-f net48`. A single EXE is
 written to the visible `releases/` folder at the repository root. Intermediate build files remain in `.build/`.
 The companion targets Windows 10 version 2004 or later. Native Windows
 installation and desktop behavior are checked separately from the portable

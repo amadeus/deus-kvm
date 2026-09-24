@@ -1,9 +1,17 @@
 #Requires -Version 5.1
 #Requires -RunAsAdministrator
 # Run only on a disposable Windows CI machine: exercises real SCM and EXE updates.
-param([Parameter(Mandatory = $true)][string] $Executable)
+param([Parameter(Mandatory = $true)][string] $Executable, [string] $PayloadDirectory)
 $ErrorActionPreference = 'Stop'
 $source = (Resolve-Path -LiteralPath $Executable).Path
+if (-not $PayloadDirectory) { $PayloadDirectory = Split-Path $source }
+$payload = (Resolve-Path -LiteralPath $PayloadDirectory).Path
+$payloadExe = Join-Path $payload 'DeusKVM.Companion.exe'
+$bundleBefore = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'DeusKVM-Bundle-*' | ForEach-Object { $_.FullName })
+function Get-NewBundleDirectories {
+    @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'DeusKVM-Bundle-*' |
+        Where-Object { $_.FullName -notin $bundleBefore })
+}
 $install = Join-Path $env:ProgramFiles 'DeusKVM Companion'
 $binary = Join-Path $install 'DeusKVM.Companion.exe'
 $data = Join-Path $env:ProgramData 'DeusKVM'
@@ -60,7 +68,7 @@ function Invoke-Companion {
     } finally { $process.Dispose() }
 }
 function Assert-PackagePayload {
-    $manifest = Get-Content -LiteralPath (Join-Path (Split-Path $source) 'package.json') -Raw | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath (Join-Path $payload 'package.json') -Raw | ConvertFrom-Json
     foreach ($entry in $manifest.PSObject.Properties) {
         $path = Join-Path $install $entry.Name
         if (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path).Hash -ne $entry.Value) {
@@ -160,7 +168,7 @@ try {
     if (-not (Test-Path -LiteralPath $shortcut)) { throw 'Update removed the Start menu shortcut.' }
     if ($null -ne (Get-TrayStartupCommand)) { throw 'Update re-enabled tray startup.' }
     if ((Get-FileHash -LiteralPath $settings).Hash -ne $before) { throw 'Update changed the selected Mac.' }
-    if ((Get-FileHash -LiteralPath $binary).Hash -ne (Get-FileHash -LiteralPath $source).Hash) { throw 'Wrong installed EXE.' }
+    if ((Get-FileHash -LiteralPath $binary).Hash -ne (Get-FileHash -LiteralPath $payloadExe).Hash) { throw 'Wrong installed EXE.' }
     Remove-Item -LiteralPath $settings
     Invoke-Companion $binary @('--start')
     Invoke-Companion $source @('--install')
@@ -207,7 +215,8 @@ try {
     if ((Test-Path -LiteralPath $shortcut)) { throw 'Removal left the shortcut.' }
     if ($null -ne (Get-TrayStartupCommand)) { throw 'Removal left tray startup enabled.' }
     if (Test-Path -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\DeusKVMCompanion') { throw 'Removal left its event-source registration.' }
-    Write-Host 'EXE installation, update, startup, reopening and removal passed.'
+    if ((Get-NewBundleDirectories).Count -ne 0) { throw 'Launcher left its temporary package behind.' }
+    Write-Host 'EXE installation, update, startup, reopening, temporary cleanup and removal passed.'
 } catch {
     $failure = $_
     Write-Host "Lifecycle test failed before cleanup: $($_ | Out-String)"
@@ -230,7 +239,8 @@ try {
     } catch { $cleanupErrors.Add($_.ToString()) }
     foreach ($process in @(Get-Process -Name 'DeusKVM.Companion' -ErrorAction SilentlyContinue)) {
         try {
-            if ($process.Path -eq $binary -or $process.Path -eq $source) { Stop-CompanionProcess $process }
+            $temporaryChild = @(Get-NewBundleDirectories | Where-Object { (Join-Path $_.FullName 'DeusKVM.Companion.exe') -eq $process.Path }).Count -ne 0
+            if ($process.Path -eq $binary -or $process.Path -eq $source -or $temporaryChild) { Stop-CompanionProcess $process }
         } catch { $cleanupErrors.Add($_.ToString()) }
         finally { $process.Dispose() }
     }

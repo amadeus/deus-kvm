@@ -4,7 +4,11 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Include="PolySharp" Version="1.15.0" PrivateAssets="all" />
   </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Reference Include="System.IO.Compression" />
+  </ItemGroup>
   <ItemGroup>
+    <Compile Include="../DeusKVM.Bootstrap/BundlePayload.cs" Link="BundlePayload.cs" />
     <None Include="../../protocol/fixtures.json" Link="fixtures.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../protocol/file-network-fixtures.json" Link="file-network-fixtures.json" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../DeusKVM.Companion.Core/DeusKVM.Companion.Core.csproj" />

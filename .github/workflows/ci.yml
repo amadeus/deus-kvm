@@ -40,4 +40,4 @@ jobs:
         run: ./windows/tests/Test-TrayHandoffWait.ps1
       - name: Test EXE installation and update lifecycle
         shell: powershell
-        run: ./windows/tests/Test-ExecutableInstall.ps1 -Executable .build/windows/win-x64/DeusKVM.Companion.exe
+        run: ./windows/tests/Test-ExecutableInstall.ps1 -Executable .build/windows/win-x64-launcher/DeusKVM.exe -PayloadDirectory .build/windows/win-x64

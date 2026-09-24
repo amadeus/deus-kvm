@@ -8,15 +8,16 @@ when pasted; there is no pre-download.
 
 ## Install
 
-1. Extract **the entire ZIP into a new folder**. Keep the EXE, DLLs, config and
-   `package.json` together. Do not open the EXE from inside the ZIP or copy just
-   the EXE into the old folder.
-2. You can quit the old tray, then open **DeusKVM.Companion.exe** from the new
-   folder and approve the normal administrator update prompt. The updater stops
-   the service/workers, installs the whole payload, and preserves settings and
-   the previous service running/stopped and startup preferences.
-3. After installation, use the normal DeusKVM Start menu shortcut. No Mac update,
-   re-pairing or additional runtime download is intended for supported Windows.
+1. Download and open the **single DeusKVM Companion EXE**. No manual extraction
+   or other files alongside it are needed.
+2. Approve the normal administrator update prompt if an update is needed. The
+   launcher stages its embedded package privately; the existing updater preserves
+   settings and the previous service running/stopped and startup preferences.
+3. The launcher cleans up after handing off. Reopen the same downloaded EXE or use
+   the normal DeusKVM Start menu shortcut. Keep your current Mac app and pairings.
+
+The earlier Framework ZIP remains a fallback in `releases/Previous/`; if using
+that ZIP, extract all files together and launch its `DeusKVM.Companion.exe`.
 
 ## Test, in order
 
@@ -36,14 +37,15 @@ If startup or file paste fails, keep the error text and `C:\ProgramData\DeusKVM\
 / `status.json`; file diagnostics are at `%LOCALAPPDATA%\DeusKVM\file-paste.log`.
 Use the Mac's toggle hotkey to return locally if needed.
 
-The complete app and both test targets compile on macOS. Local .NET 10 regression
-checks run here; Framework execution, Windows CNG, real service lifecycle,
-Bluetooth, tray and OLE clipboard validation remain pending Windows testing.
-These are not reported as passed by a successful cross-build.
+The user confirmed the preceding small Framework build works. The new launcher
+has local extraction/build checks; its Windows UAC, process handoff and temporary
+cleanup remain pending. Detailed lifecycle and full hardware cases above remain
+tracked separately from the user's general confirmation.
 
 ## Fallback
 
-The previous large Windows ZIP is retained in `releases/Previous/` in the project.
+The confirmed small Framework ZIP and previous large Windows ZIP are retained in
+`releases/Previous/` in the project. Prefer the confirmed small ZIP as fallback.
 Extract that ZIP to a separate folder and launch its EXE to reinstall the previous
 working build. Do not uninstall first; that would remove saved app settings.
 The old updater replaces the main EXE; leftover small-build DLLs do not get loaded
