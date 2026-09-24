@@ -11,7 +11,7 @@ public sealed record FileClipboardOffer(uint Epoch, uint Sequence, string Name, 
         if (data.Length > 4096) throw new InvalidDataException("Oversized file offer");
         var offer = JsonSerializer.Deserialize<FileClipboardOffer>(data, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (offer is null || offer.Size is < 0 or > MaximumBytes || string.IsNullOrEmpty(offer.Name) || offer.Name.Length > 240 ||
-            offer.Name is "." or ".." || offer.Name.EndsWith('.') || offer.Name.EndsWith(' ') ||
+            offer.Name is "." or ".." || offer.Name.EndsWith(".", StringComparison.Ordinal) || offer.Name.EndsWith(" ", StringComparison.Ordinal) ||
             offer.Name.Any(c => c < 32 || "<>:\"/\\|?*".Contains(c)) ||
             new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
                 "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" }.Contains(offer.Name.Split('.')[0].ToUpperInvariant()))

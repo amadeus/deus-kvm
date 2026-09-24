@@ -45,7 +45,7 @@ public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? 
             {
                 await next.ConnectAsync(IPAddress.Parse(host), endpoint.Port, attempt.Token).ConfigureAwait(false);
                 var wire = next.GetStream();
-                var clientNonce = RandomNumberGenerator.GetBytes(32); var serverNonce = new byte[32];
+                var clientNonce = RuntimeCompat.RandomBytes(32); var serverNonce = new byte[32];
                 await wire.WriteAsync(clientNonce, attempt.Token).ConfigureAwait(false);
                 await wire.ReadExactlyAsync(serverNonce, attempt.Token).ConfigureAwait(false);
                 var secret = Convert.FromBase64String(endpoint.Key);
@@ -54,7 +54,7 @@ public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? 
                     send = new(secret, clientNonce, serverNonce, "client");
                     receive = new(secret, clientNonce, serverNonce, "server");
                 }
-                finally { CryptographicOperations.ZeroMemory(secret); }
+                finally { RuntimeCompat.ZeroMemory(secret); }
                 outgoing = send; incoming = receive; stream = wire;
                 return;
             }
@@ -78,18 +78,18 @@ public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? 
         var encrypted = outgoing!.Seal(plain);
         var header = new byte[4]; BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)encrypted.Length);
         await stream!.WriteAsync(header.Concat(encrypted).ToArray(), request.Token).ConfigureAwait(false);
-        await stream.ReadExactlyAsync(header, request.Token).ConfigureAwait(false);
+        await stream!.ReadExactlyAsync(header, request.Token).ConfigureAwait(false);
         var size = BinaryPrimitives.ReadUInt32LittleEndian(header);
         if (size is < 17 or > FileNetworkCrypto.MaximumBlock + 17) throw new InvalidDataException("Invalid network response size");
         var ciphertext = new byte[(int)size];
-        await stream.ReadExactlyAsync(ciphertext, request.Token).ConfigureAwait(false);
+        await stream!.ReadExactlyAsync(ciphertext, request.Token).ConfigureAwait(false);
         var response = incoming!.Open(ciphertext);
         // Authentication succeeded: source errors must not silently downgrade.
         delivered = true;
         if (response[0] != 0 || response.Length != count + 1) throw new IOException("Mac file changed or became unavailable");
-        var now = Environment.TickCount64;
+        var now = RuntimeCompat.TickCount64;
         if (offset == 0 || offset + count == offer.Size || now - lastProgress >= 1000)
         { lastProgress = now; diagnostic?.Invoke($"network-block offset={offset} count={count} size={offer.Size}"); }
-        return response[1..];
+        return response.AsSpan(1).ToArray();
     }
 }

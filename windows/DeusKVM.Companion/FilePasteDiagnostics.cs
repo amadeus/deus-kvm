@@ -13,7 +13,7 @@ internal static class FilePasteDiagnostics
                 var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeusKVM");
                 Directory.CreateDirectory(directory);
                 var path = Path.Combine(directory, "file-paste.log");
-                if (File.Exists(path) && new FileInfo(path).Length > 32768) File.Move(path, path + ".previous", true);
+                if (File.Exists(path) && new FileInfo(path).Length > 32768) RuntimeCompat.MoveReplace(path, path + ".previous");
                 File.AppendAllText(path, $"{DateTime.UtcNow:O} {value}{Environment.NewLine}");
             }
         }

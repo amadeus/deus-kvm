@@ -83,11 +83,11 @@ internal sealed class Removal(Action<string> progress, bool showResult) : IRemov
         using var reader = new StreamReader(source);
         var paths = CachePaths().Append(Paths.DataDirectory).Append(Paths.InstallDirectory).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var encodedPaths = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(paths));
-        var script = $"$showResult = {(showResult ? "$true" : "$false")}\n$removingProcess = {Environment.ProcessId}\n$encodedPaths = '{encodedPaths}'\n" + reader.ReadToEnd();
+        var script = $"$showResult = {(showResult ? "$true" : "$false")}\n$removingProcess = {RuntimeCompat.ProcessId}\n$encodedPaths = '{encodedPaths}'\n" + reader.ReadToEnd();
         var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"))
         { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Environment.SystemDirectory };
-        foreach (var argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand",
-            Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) }) start.ArgumentList.Add(argument);
+        start.SetArguments(new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand",
+            Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) });
         using var helper = Process.Start(start) ?? throw new IOException("Could not start final file cleanup. Retry removal.");
         return Task.CompletedTask;
     }
@@ -101,7 +101,7 @@ internal sealed class Removal(Action<string> progress, bool showResult) : IRemov
         foreach (var name in profiles.GetSubKeyNames())
         {
             using var profile = profiles.OpenSubKey(name);
-            if (profile?.GetValue("ProfileImagePath") is string root && Path.IsPathFullyQualified(root))
+            if (profile?.GetValue("ProfileImagePath") is string root && RuntimeCompat.IsFullyQualifiedWindowsPath(root))
                 yield return Path.Combine(root, "AppData", "Local", "Temp", ".net", executable);
         }
     }

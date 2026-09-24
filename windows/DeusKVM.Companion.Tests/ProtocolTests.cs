@@ -15,10 +15,10 @@ public sealed class ProtocolTests
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
         foreach (var vector in vectors)
         {
-            var payload = Convert.FromHexString(vector.Payload);
+            var payload = TestBytes.FromHex(vector.Payload);
             var encoder = new Protocol.Encoder { Sequence = vector.Sequence };
             var frames = encoder.Encode(new(vector.Stream, vector.Type, payload));
-            Assert.Equal(vector.Frames, frames.Select(frame => Convert.ToHexString(frame).ToLowerInvariant()));
+            Assert.Equal(vector.Frames, frames.Select(frame => RuntimeCompat.Hex(frame).ToLowerInvariant()));
             var decoder = new Protocol.Decoder();
             Protocol.Packet? result = null;
             foreach (var frame in frames) result = decoder.Receive(frame);
@@ -34,7 +34,7 @@ public sealed class ProtocolTests
         var frames = Frames(); var decoder = new Protocol.Decoder();
         decoder.Receive(frames[0]); Assert.Throws<InvalidDataException>(() => decoder.Receive(frames[2]));
         frames = Frames(); decoder = new(); frames[^1][^1] ^= 1;
-        foreach (var frame in frames.SkipLast(1)) decoder.Receive(frame);
+        foreach (var frame in frames.Take(frames.Count - 1)) decoder.Receive(frame);
         Assert.Throws<InvalidDataException>(() => decoder.Receive(frames[^1]));
         Assert.Throws<InvalidDataException>(() => new Protocol.Decoder().Receive([0, 0x13, 4, 1, 0, 1, 0]));
         Assert.Throws<InvalidDataException>(() => new Protocol.Decoder().Receive([0, 0x17, 4, 0, 0, 0, 0]));

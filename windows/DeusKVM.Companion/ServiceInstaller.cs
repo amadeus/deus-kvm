@@ -10,16 +10,14 @@ namespace DeusKVM.Companion;
 
 internal static class ServiceInstaller
 {
-    public static bool IsInstalledLocation => string.Equals(Environment.ProcessPath, Paths.InstalledExe, StringComparison.OrdinalIgnoreCase);
+    public static bool IsInstalledLocation => string.Equals(RuntimeCompat.ProcessPath, Paths.InstalledExe, StringComparison.OrdinalIgnoreCase);
 
     public static bool NeedsInstall()
     {
         using var service = FindService();
         if (service is null || !File.Exists(Paths.InstalledExe)) return true;
         if (IsInstalledLocation) return false;
-        using var source = File.OpenRead(Environment.ProcessPath!);
-        using var installed = File.OpenRead(Paths.InstalledExe);
-        return !SHA256.HashData(source).AsSpan().SequenceEqual(SHA256.HashData(installed));
+        return !PackagePayload.Matches(AppContext.BaseDirectory, Paths.InstallDirectory);
     }
 
     internal static ServiceController? FindService()
@@ -48,50 +46,34 @@ internal static class ServiceInstaller
     private static void InstallCore()
     {
         if (File.Exists(Paths.RemovalMarker)) throw new InvalidOperationException("Finish the pending removal before reinstalling DeusKVM.");
-        if (!IsInstalledLocation && File.Exists(Path.ChangeExtension(Environment.ProcessPath!, ".dll")))
-            throw new InvalidOperationException("Install using the published, self-contained DeusKVM.Companion.exe.");
         ProtectDirectory(Paths.InstallDirectory);
         ProtectDirectory(Paths.DataDirectory);
         using var existing = FindService();
         var startAfterInstall = existing is null || existing.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending;
-        string? staged = null;
-        string? backup = null;
-        var replaced = false;
+        PackagePayload? payload = null;
+        var activating = false;
+        var createdService = false;
         try
         {
-            // Prepare the replacement before interrupting the working installation.
-            if (!IsInstalledLocation)
-            {
-                staged = Path.Combine(Paths.InstallDirectory, $"update-{Guid.NewGuid():N}.exe");
-                // A new stream inherits the protected destination ACL; copying file
-                // metadata from a Downloads folder must not grant write access here.
-                using var source = File.OpenRead(Environment.ProcessPath!);
-                using var destination = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-                source.CopyTo(destination);
-                destination.Flush(true);
-            }
+            // Verify every replacement file before interrupting the working installation.
+            if (!IsInstalledLocation) payload = new PackagePayload(AppContext.BaseDirectory, Paths.InstallDirectory);
             if (existing is not null && existing.Status != ServiceControllerStatus.Stopped)
             {
                 if (existing.Status != ServiceControllerStatus.StopPending) existing.Stop();
                 existing.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
             }
-            if (staged is not null)
+            if (payload is not null)
             {
-                // Older tray versions have no update IPC. Only close processes executing
-                // our exact installed binary, after its service has stopped its workers.
                 CloseInstalledProcesses();
-                if (File.Exists(Paths.InstalledExe))
-                {
-                    backup = Path.Combine(Paths.InstallDirectory, $"previous-{Guid.NewGuid():N}.exe");
-                    File.Move(Paths.InstalledExe, backup);
-                }
-                File.Move(staged, Paths.InstalledExe);
-                staged = null;
-                replaced = true;
+                activating = true;
+                payload.Activate();
             }
             var imagePath = $"\"{Paths.InstalledExe}\" --service";
             if (existing is null)
+            {
                 ServiceCommands.RunSc("create", Paths.ServiceName, "binPath=", imagePath, "start=", "auto", "obj=", "LocalSystem", "DisplayName=", "DeusKVM Companion");
+                createdService = true;
+            }
             else
                 ServiceCommands.RunSc("config", Paths.ServiceName, "binPath=", imagePath, "obj=", "LocalSystem", "DisplayName=", "DeusKVM Companion");
             ServiceCommands.RunSc("description", Paths.ServiceName, "Automatically selects the first connected paired DeusKVM Mac independently of user login.");
@@ -107,19 +89,19 @@ internal static class ServiceInstaller
         }
         catch
         {
-            // Keep the previous binary and service usable if replacing/configuring fails.
-            if (backup is not null && File.Exists(backup))
+            // Restore the entire previous payload, including a legacy single-file installation.
+            if (activating)
             {
                 using var service = FindService();
                 if (service is not null && service.Status != ServiceControllerStatus.Stopped)
                 {
-                    service.Stop();
+                    if (service.Status != ServiceControllerStatus.StopPending) service.Stop();
                     service.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
                 }
-                if (replaced) File.Delete(Paths.InstalledExe);
-                File.Move(backup, Paths.InstalledExe);
-                backup = null;
+                CloseInstalledProcesses();
+                payload!.RollBack();
             }
+            if (createdService) ServiceCommands.RunSc("delete", Paths.ServiceName);
             if (existing is not null && startAfterInstall)
             {
                 existing.Refresh();
@@ -127,12 +109,8 @@ internal static class ServiceInstaller
             }
             throw;
         }
-        finally
-        {
-            if (staged is not null) File.Delete(staged);
-            // A backup on a failed rollback is deliberately retained for recovery.
-        }
-        if (backup is not null) File.Delete(backup);
+        finally { payload?.Dispose(); }
+        payload?.Complete();
         // Only register --tray after the new executable has successfully installed.
         // A rollback may restore an older build that does not understand that flag.
         TrayStartup.InstallDefault();
@@ -146,7 +124,7 @@ internal static class ServiceInstaller
             {
                 try
                 {
-                    if (process.Id == Environment.ProcessId || process.HasExited ||
+                    if (process.Id == RuntimeCompat.ProcessId || process.HasExited ||
                         !string.Equals(process.MainModule?.FileName, Paths.InstalledExe, StringComparison.OrdinalIgnoreCase)) continue;
                     process.Kill();
                     if (!process.WaitForExit(10000)) throw new IOException("The previous companion did not close during the update.");
@@ -217,7 +195,7 @@ internal sealed class SetupForm : Form
         Controls.Add(status);
         Shown += async (_, _) =>
         {
-            try { await ServiceCommands.ElevateExecutableAsync(Environment.ProcessPath!, "--install"); Installed = true; }
+            try { await ServiceCommands.ElevateExecutableAsync(RuntimeCompat.ProcessPath!, "--install"); Installed = true; }
             catch (Win32Exception error) when (error.NativeErrorCode == 1223) { }
             catch (Exception error) { TrayContext.ShowError(error); }
             finally { Close(); }

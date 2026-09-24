@@ -77,7 +77,7 @@ internal sealed class CompanionService : ServiceBase
     {
         using var process = new Process
         {
-            StartInfo = new ProcessStartInfo(Environment.ProcessPath!)
+            StartInfo = new ProcessStartInfo(RuntimeCompat.ProcessPath!)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -86,16 +86,16 @@ internal sealed class CompanionService : ServiceBase
                 WorkingDirectory = AppContext.BaseDirectory
             }
         };
-        process.StartInfo.ArgumentList.Add("--ble-worker");
+        process.StartInfo.SetArguments(["--ble-worker"]);
         worker = new("Starting", "Watching paired Macs under the service account.", DateTimeOffset.UtcNow);
         using var job = new WorkerJob(allowBreakaway: true);
         process.Start();
         job.Add(process);
         Log($"Bluetooth worker started: PID {process.Id}");
         var watchdog = new WorkerWatchdog();
-        using var readerStop = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        // Killing the job closes redirected pipes, releasing both asynchronous readers.
         var output = ReadOutputAsync();
-        var errors = process.StandardError.ReadToEndAsync(readerStop.Token);
+        var errors = process.StandardError.ReadToEndAsync();
         try
         {
             while (!stop.IsCancellationRequested && !process.HasExited)
@@ -111,9 +111,8 @@ internal sealed class CompanionService : ServiceBase
         }
         finally
         {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            if (!process.HasExited) job.Terminate();
             await process.WaitForExitAsync(CancellationToken.None);
-            readerStop.Cancel();
             try { await output; } catch (OperationCanceledException) { }
             try
             {
@@ -127,7 +126,7 @@ internal sealed class CompanionService : ServiceBase
         async Task ReadOutputAsync()
         {
             string? previous = null;
-            while (await process.StandardOutput.ReadLineAsync(readerStop.Token) is { } line)
+            while (await process.StandardOutput.ReadLineAsync() is { } line)
             {
                 if (line.Length > 16384) throw new InvalidDataException("Worker response is too large.");
                 var next = JsonSerializer.Deserialize<WorkerStatus>(line)
@@ -144,7 +143,7 @@ internal sealed class CompanionService : ServiceBase
     private void SaveStatus()
     {
         var console = ConsoleSession.Read();
-        JsonFiles.Write(Paths.Status, new ServiceSnapshot(Environment.ProcessId,
+        JsonFiles.Write(Paths.Status, new ServiceSnapshot(RuntimeCompat.ProcessId,
             WindowsIdentity.GetCurrent().Name, Process.GetCurrentProcess().SessionId,
             console.Id, console.State, worker, DateTimeOffset.UtcNow));
     }
@@ -155,7 +154,7 @@ internal sealed class CompanionService : ServiceBase
         {
             Directory.CreateDirectory(Paths.DataDirectory);
             if (File.Exists(Paths.Log) && new FileInfo(Paths.Log).Length > 2 * 1024 * 1024)
-                File.Move(Paths.Log, Paths.Log + ".1", overwrite: true);
+                RuntimeCompat.MoveReplace(Paths.Log, Paths.Log + ".1");
             File.AppendAllText(Paths.Log, $"{DateTimeOffset.Now:O} {text}{Environment.NewLine}");
         }
     }

@@ -60,7 +60,7 @@ internal static class ServiceCommands
     public static async Task ElevateExecutableAsync(string executable, params string[] args)
     {
         var start = new ProcessStartInfo(executable) { UseShellExecute = true, Verb = "runas" };
-        foreach (var argument in args) start.ArgumentList.Add(argument);
+        start.SetArguments(args);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start service operation.");
         await process.WaitForExitAsync();
         if (process.ExitCode != 0) throw new InvalidOperationException("The service operation did not complete.");
@@ -78,7 +78,7 @@ internal static class ServiceCommands
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
-        foreach (var argument in args) start.ArgumentList.Add(argument);
+        start.SetArguments(args);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not open Service Control Manager.");
         var output = process.StandardOutput.ReadToEnd();
         var errors = process.StandardError.ReadToEnd();

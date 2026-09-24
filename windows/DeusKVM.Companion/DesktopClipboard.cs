@@ -96,10 +96,10 @@ internal sealed class DesktopClipboard : IDisposable
                         }
                     }
                     if (message.Kind == "clipboard-file-clear") ClearFile();
-                    if (message.Kind == "clipboard-file-offer") { ClearFile(); pendingFile = message; applyDeadline = Environment.TickCount64 + 2000; }
+                    if (message.Kind == "clipboard-file-offer") { ClearFile(); pendingFile = message; applyDeadline = RuntimeCompat.TickCount64 + 2000; }
                     if (message.Kind == "clipboard-yield") yield = true;
                     if (message.Kind == "clipboard-apply" && message.Clipboard is { Length: <= ClipboardTransfer.MaximumBytes })
-                    { ClearFile(); pending = message; applyDeadline = Environment.TickCount64 + 2000; }
+                    { ClearFile(); pending = message; applyDeadline = RuntimeCompat.TickCount64 + 2000; }
                 }
             }
             if (!enabled || !accessible || !CanAccess()) return;
@@ -127,7 +127,7 @@ internal sealed class DesktopClipboard : IDisposable
             }
             if (pendingFile is { } fileUpdate)
             {
-                if (!versions.CanApply(fileUpdate.Revision, revision) || Environment.TickCount64 > applyDeadline) { pendingFile = null; return; }
+                if (!versions.CanApply(fileUpdate.Revision, revision) || RuntimeCompat.TickCount64 > applyDeadline) { pendingFile = null; return; }
                 var offer = FileClipboardOffer.Parse(fileUpdate.Clipboard!);
                 sending?.Cancel(); source = null; sourceOffer = null;
                 var fileEpoch = epoch;
@@ -140,7 +140,7 @@ internal sealed class DesktopClipboard : IDisposable
                 return;
             }
             if (pending is not { } update) return;
-            if (!versions.CanApply(update.Revision, revision) || Environment.TickCount64 > applyDeadline) { pending = null; return; }
+            if (!versions.CanApply(update.Revision, revision) || RuntimeCompat.TickCount64 > applyDeadline) { pending = null; return; }
             if (!CanAccess()) return;
             if (ClipboardNative.Write(window.Handle, update.Clipboard!, revision, CanAccess, out var written))
             { sending?.Cancel(); source = null; sourceOffer = null; versions.Imported(written); pending = null; }

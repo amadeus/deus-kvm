@@ -4,11 +4,12 @@ User requested a much smaller Windows app, ideally 1–2 MB total, while asleep.
 Preserve the tested input/clipboard implementation and current extract/open/update
 experience. Do not disguise a runtime prerequisite as a total size reduction.
 
-**Follow-up recommendation:** try an isolated .NET Framework 4.8 port before a
-native rewrite. Windows already supplies that runtime on the app's minimum
-Windows 10 2004 / Windows 11 target. The dependency probe below measures 0.54 MB
-zipped, making a 1–2 MB release plausible, but a complete port is not yet built
-or tested. This supersedes the first pass's native-prototype-first recommendation.
+**Current checkpoint:** the complete .NET Framework 4.8 port is built and
+packaged for Windows x64. It uses Windows' runtime and compiles the existing
+Bluetooth, service, tray and clipboard implementation. Local regression tests
+pass; actual Framework/Windows hardware execution remains pending. See the
+implementation checkpoint at the end and `WINDOWS_FRAMEWORK_CHECKPOINT.md`.
+The investigation below preserves the earlier measurements and decision history.
 
 ## Completed investigation
 
@@ -162,31 +163,43 @@ code and an older runtime to remove the download overhead. It is **not** a CPU
 optimization; latency, allocations and idle behavior need separate measurement.
 Native C++/WinRT stays the fallback if critical Framework runtime paths fail.
 
-### Tracked phases
+### Tracked phases (implementation checkpoint)
 
 - [x] **1 — Dependency feasibility:** verify OS inclusion/API route, compile the
   representative dependency probe, measure all output and record compatibility
   gaps. Probe builds with zero compiler warnings/errors; ZIP integrity passes.
-- [ ] **2 — Isolated core port:** retain the working release; introduce narrowly
-  scoped compatibility adapters, preserve protocol/policy behavior, and run core
-  tests on both the current runtime and Framework on Windows. Prove encrypted
-  file interoperability with the current Mac before any replacement release.
-- [ ] **3 — Windows integration:** prove BLE ownership/reconnect, all worker modes,
-  service startup before/after login, Raw Input, tray, hotkey/edge return, text and
-  OLE on-demand file clipboard. This requires actual Windows execution/hardware.
-- [ ] **4 — Packaging and update:** migrate EXE-only install/update/rollback/removal
-  to the complete protected payload; test upgrade from the current installed app
-  on a disposable Windows machine. Measure full ZIP and installed footprint.
-  Target <= 2,000,000 ZIP bytes; report actual results even if the target is missed.
-- [ ] **5 — User checkpoint:** prepare a clearly named Windows test ZIP in visible
-  `releases/`, retain a recoverable known-good build, then wait for the user to
-  set up and test both Macs. Check file transfers up to 2 GB, ownership stealing,
-  idle CPU and pointer responsiveness. No user hardware tests have passed yet.
-- [ ] **6 — Adopt:** only after those checks, switch normal publish/CI/docs and
-  prune superseded release artifacts. Commit each verified implementation phase.
+- [x] **2 — Core port implementation:** retain net10.0 as a regression target,
+  add net48, compatibility adapters and Windows CNG AES-GCM. Shared protocol
+  vectors and the HKDF RFC vector pass locally using the reference AES backend.
+  Both test targets compile; Framework execution and native CNG tests remain open.
+- [x] **3 — Windows integration implementation:** the complete app compiles with
+  WinRT contracts, Framework services/WinForms, per-monitor DPI configuration,
+  COM/OLE objects, worker jobs and secure named pipes. Core control policies and
+  event-driven behavior are retained.
+- [ ] **3 — Windows runtime validation:** BLE ownership/reconnect, all worker
+  modes, service startup before/after login, Raw Input, tray, hotkey/edge return,
+  text and OLE on-demand file clipboard. Requires Windows/hardware execution.
+- [x] **4 — Packaging/update implementation:** stage and SHA-256-check every
+  payload file before stopping the service, preserve destination ACL inheritance,
+  and restore replaced files on failure. Local tests cover legacy single-EXE
+  rollback, full-package update, obsolete DLL removal, partial activation failure,
+  damaged downloads and unsafe manifest names. Publish verifies ZIP/hash contents.
+- [ ] **4 — Windows installer validation:** existing lifecycle CI now verifies
+  every installed dependency and its ACL. Actual install/update/removal and
+  downgrade still need execution on Windows. Multi-file replacement rolls back
+  caught errors; it is not an atomic transaction across an OS/power crash. Backup
+  directories are retained if rollback itself fails.
+- [x] **5 — User build ready:** create the small ZIP in visible `releases/`, retain
+  the previous Windows ZIP in `releases/Previous/`, and include `START_HERE.md`.
+- [ ] **5 — User hardware checkpoint:** wait for setup/testing of both Macs;
+  verify 2 GB file behavior, ownership, edge return, CPU and pointer responsiveness.
+- [x] **6 — Build pipeline:** normal publish, README and Windows CI target the new
+  Framework build. The old release stays available as a fallback during testing.
+- [ ] **6 — Accept as validated replacement:** await Windows tests before removing
+  the fallback or describing the migration as hardware-verified.
 
-No production source, running app, service or release was changed by this follow-up.
-The probe is research tooling, not a build for the user to install.
+The implementation follows the user's subsequent request to produce a usable
+new build. No running Mac app or Windows service was changed from this machine.
 
 Sources checked 2026-09-23:
 - https://learn.microsoft.com/en-us/dotnet/framework/install/versions-and-dependencies
@@ -196,7 +209,10 @@ Sources checked 2026-09-23:
 - https://www.nuget.org/packages/System.Text.Json/10.0.12
 - https://www.nuget.org/packages/System.Threading.Channels/10.0.11
 
-## Reproduction
+## Historical .NET 10 experiment reproduction
+
+These commands apply to the pre-port source at `98d7fe6`. For the current build,
+use `windows/publish.sh win-x64` and the Framework checkpoint instructions.
 
 Use the repo-local dotnet with `DOTNET_CLI_HOME=.build/dotnet-home` and
 `NUGET_PACKAGES=.build/nuget`. Sequentially run `dotnet publish` on
@@ -213,7 +229,7 @@ Use the repo-local dotnet with `DOTNET_CLI_HOME=.build/dotnet-home` and
 ZIP each EXE with Python `zipfile.ZIP_DEFLATED, compresslevel=9`. Experimental
 outputs remain under ignored `.build/`; only the supported release is delivered.
 
-## Delivered checkpoint
+## Historical first delivered checkpoint
 
 `DeusKVM-Companion-win-x64-smaller-2026-09-23.zip`: 49,873,502 bytes (49.87 MB decimal),
 SHA-256 `2e8805ca145d54bbe12a32ce368cc3a7b91021c3818a4707aa53a39d93522072`. Previous full release ZIP: 52,416,716 bytes;
@@ -233,5 +249,46 @@ restart, edge/hotkey return, ownership switching, text and on-demand files in bo
 directions. The only intended visible change is English fallback for framework
 messages on non-English Windows installations. Hardware validation stays open.
 
-The 1–2 MB total goal is **not achieved** by this packaging change. The measurements
-and dependency migration options above explain the remaining work.
+The first resource-only packaging change did **not** achieve the 1–2 MB goal.
+The subsequent Framework implementation below does meet the size target; runtime
+validation remains separate.
+
+
+## Full Framework test build — 2026-09-23
+
+Delivered `releases/DeusKVM-Companion-win-x64-framework-2026-09-23.zip`:
+
+- ZIP: **830,660 bytes (0.83 MB)**, versus the prior 49,873,502-byte ZIP (98.33% smaller).
+- Runtime payload: **1,871,605 bytes (1.87 MB)** in 14 EXE/DLL/config files.
+- Entire extracted archive, including manifest and instructions: **1,891,301 bytes**.
+- Main EXE: **323,072 bytes**; Windows x64 PE, Framework 4.8 target.
+- SHA-256: `808d66c35ca657663fe2a645a79172f5a754e94e3cc894c1187cac80d4e5f273`.
+
+All 158 portable regression tests pass; two native Windows CNG tests are explicitly
+skipped on macOS. The complete solution, including net48 and net10.0 tests, builds
+with zero warnings/errors. ZIP CRC, each manifest hash, packaged/published file
+identity, PE architecture, shell/Python packaging syntax and diff whitespace
+checks pass. The new HKDF adapter matches both the RFC 5869 test vector and the
+existing shared Swift/Windows encrypted protocol vectors with the .NET 10 AES
+backend. Actual Windows CNG execution remains pending; net48 tests run that backend.
+
+The production migration includes no protocol changes or Mac changes. Crypto
+uses Windows CNG with 32-byte keys, 12-byte sequence nonces and 16-byte tags, using
+the same HKDF context and record framing. Stream cancellation closes an outstanding
+Framework socket/pipe operation to preserve deadlines without polling. Service
+shutdown terminates its owned job and drains redirected output; Framework process
+exit waits use events. The installer verifies the full staged payload before
+interrupting the old app, and rolls back replaced files if activation/configuration
+fails. Existing app settings and service identity stay in their previous locations.
+
+The previous large Windows ZIP is retained at
+`releases/Previous/DeusKVM-Companion-win-x64-smaller-2026-09-23.zip`, with its original
+SHA-256 verified. The current arm64 Mac ZIP is unchanged. This build is ready for
+the user checkpoint, not hardware-validated: Windows CI/lifecycle, Framework runtime,
+BLE, clipboard, login and downgrade checks have not been executed on this Mac.
+Do not delete the fallback until the user confirms the new build.
+
+Implementation references:
+- https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/ns-bcrypt-bcrypt_authenticated_cipher_mode_info
+- https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptgeneratesymmetrickey
+- https://www.rfc-editor.org/rfc/rfc5869

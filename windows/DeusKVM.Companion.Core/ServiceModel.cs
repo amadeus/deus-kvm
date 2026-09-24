@@ -53,6 +53,6 @@ public static class JsonFiles
     {
         var temporary = path + ".new";
         File.WriteAllText(temporary, JsonSerializer.Serialize(value, Options));
-        File.Move(temporary, path, overwrite: true);
+        RuntimeCompat.MoveReplace(temporary, path);
     }
 }

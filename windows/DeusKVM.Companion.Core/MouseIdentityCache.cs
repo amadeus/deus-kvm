@@ -11,7 +11,7 @@ public sealed class MouseIdentityCache
         if (!matches.TryGetValue(handle, out var result)) matches[handle] = result = probe(handle);
         return result;
     }
-    public void Refresh(IReadOnlySet<IntPtr> present, Func<IntPtr, bool> probe)
+    public void Refresh(ISet<IntPtr> present, Func<IntPtr, bool> probe)
     {
         foreach (var stale in matches.Keys.Where(key => !present.Contains(key)).ToArray()) matches.Remove(stale);
         var retryMisses = !HasMatch;

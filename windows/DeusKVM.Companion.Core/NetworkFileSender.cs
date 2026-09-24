@@ -20,12 +20,12 @@ public static class NetworkFileSender
             NetworkStream wire;
             try { await socket.ConnectAsync(IPAddress.Parse(host), endpoint.Port, setup.Token); wire = socket.GetStream(); }
             catch (Exception e) when (!stop.IsCancellationRequested && e is SocketException or OperationCanceledException) { continue; }
-            var client = RandomNumberGenerator.GetBytes(32); var server = new byte[32];
+            var client = RuntimeCompat.RandomBytes(32); var server = new byte[32];
             await wire.WriteAsync(client, setup.Token); await wire.ReadExactlyAsync(server, setup.Token);
             var key = Convert.FromBase64String(endpoint.Key);
             using var incoming = new FileNetworkCrypto(key, client, server, "server");
             using var outgoing = new FileNetworkCrypto(key, client, server, "client");
-            CryptographicOperations.ZeroMemory(key);
+            RuntimeCompat.ZeroMemory(key);
             var header = new byte[4];
             while (true)
             {

@@ -11,9 +11,9 @@ public sealed record MacCandidate(string Id, string Name, string? Address, bool 
 public static class MacCandidates
 {
     public static MacCandidate[] Visible(IEnumerable<MacCandidate> candidates, bool showAll = false,
-        IReadOnlySet<string>? knownDeviceIds = null) => candidates
+        ISet<string>? knownDeviceIds = null) => candidates
         .Where(item => !string.IsNullOrWhiteSpace(item.Name))
-        .GroupBy(item => string.IsNullOrWhiteSpace(item.Address) ? item.Id : item.Address.Replace(":", "").Replace("-", ""),
+        .GroupBy(item => string.IsNullOrWhiteSpace(item.Address) ? item.Id : item.Address!.Replace(":", "").Replace("-", ""),
             StringComparer.OrdinalIgnoreCase)
         // Class information may exist only on the Classic endpoint of a dual-mode
         // computer. Filter the physical device before picking its preferred endpoint.

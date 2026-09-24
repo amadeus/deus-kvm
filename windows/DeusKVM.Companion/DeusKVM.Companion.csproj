@@ -6,22 +6,26 @@
     <Product>DeusKVM Companion</Product>
     <Title>DeusKVM Companion</Title>
     <Description>DeusKVM Windows companion service and settings</Description>
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
-    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <UseWindowsForms>true</UseWindowsForms>
-    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>AppIcon.ico</ApplicationIcon>
     <PublishTrimmed>false</PublishTrimmed>
     <!-- The companion UI is English. Keep framework fallback resources, not every translated satellite. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="FinishRemoval.ps1" />
     <EmbeddedResource Include="AppIcon.ico" />
     <ProjectReference Include="../DeusKVM.Companion.Core/DeusKVM.Companion.Core.csproj" />
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.19041.1" />
+    <PackageReference Include="PolySharp" Version="1.15.0" PrivateAssets="all" />
+    <Reference Include="System.ServiceProcess" />
+    <Reference Include="Microsoft.CSharp" />
   </ItemGroup>
 </Project>

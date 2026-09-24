@@ -72,7 +72,7 @@ public static class Protocol
                 var declared = BinaryPrimitives.ReadUInt32LittleEndian(frame.AsSpan(3));
                 if (declared > MaximumPayload) throw new InvalidDataException("Oversized payload");
                 length = (int)declared;
-                var payload = frame[7..];
+                var payload = frame.AsSpan(7).ToArray();
                 if (last)
                 {
                     if (payload.Length != length) throw new InvalidDataException("Invalid length");
@@ -82,7 +82,7 @@ public static class Protocol
                 partial = new Packet(stream, frame[2], payload); return null;
             }
             if (partial is null || partial.Stream != stream || (last && frame.Length < 6)) throw new InvalidDataException("Missing first frame");
-            var combined = partial.Payload.Concat(frame[2..(frame.Length - (last ? 4 : 0))]).ToArray();
+            var combined = partial.Payload.Concat(frame.AsSpan(2, frame.Length - 2 - (last ? 4 : 0)).ToArray()).ToArray();
             if (combined.Length > length) { partial = null; throw new InvalidDataException("Invalid length"); }
             var packet = partial with { Payload = combined };
             if (last)

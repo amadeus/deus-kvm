@@ -12,8 +12,8 @@ public sealed record FileNetworkOffer(string[] Hosts, int Port, string Key)
     private bool ValidKey()
     {
         if (Key is not { Length: 44 }) return false;
-        Span<byte> key = stackalloc byte[32];
-        return Convert.TryFromBase64String(Key, key, out var count) && count == 32;
+        try { return Convert.FromBase64String(Key).Length == 32; }
+        catch (FormatException) { return false; }
     }
     public static bool LocalAddress(string host)
     {
@@ -26,16 +26,27 @@ public sealed record FileNetworkOffer(string[] Hosts, int Port, string Key)
 public sealed class FileNetworkCrypto : IDisposable
 {
     public const int MaximumBlock = 256 * 1024;
+#if NETFRAMEWORK
+    private readonly WindowsGcm aes;
+#else
     private readonly AesGcm aes;
+#endif
     private ulong counter;
     public FileNetworkCrypto(byte[] secret, byte[] client, byte[] server, string direction)
     {
         if (secret.Length != 32 || client.Length != 32 || server.Length != 32 || direction is not ("client" or "server"))
             throw new InvalidDataException("Invalid network key context");
-        var key = HKDF.DeriveKey(HashAlgorithmName.SHA256, secret, 32, client.Concat(server).ToArray(),
+        var key = RuntimeCompat.DeriveFileKey(secret, client.Concat(server).ToArray(),
             Encoding.UTF8.GetBytes("DeusKVM file v1 " + direction));
-        try { aes = new AesGcm(key, 16); }
-        finally { CryptographicOperations.ZeroMemory(key); }
+        try
+        {
+#if NETFRAMEWORK
+            aes = new WindowsGcm(key);
+#else
+            aes = new AesGcm(key, 16);
+#endif
+        }
+        finally { RuntimeCompat.ZeroMemory(key); }
     }
     private byte[] Nonce()
     {

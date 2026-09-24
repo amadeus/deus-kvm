@@ -37,9 +37,9 @@ public sealed class FileClipboardTests
     public async Task CancellationUnblocksAnOutstandingRead()
     {
         using var stop = new CancellationTokenSource();
-        var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requested = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var session = new FileClipboardSession(new(1, 2, "file", 4), new TestFileReader(_ => {
-            requested.SetResult(); stop.Token.WaitHandle.WaitOne(); throw new IOException("Canceled");
+            requested.SetResult(true); stop.Token.WaitHandle.WaitOne(); throw new IOException("Canceled");
         }, stop.Cancel));
         var read = Task.Run(() => Assert.Throws<IOException>(() => session.Read(0)));
         await requested.Task.WaitAsync(TimeSpan.FromSeconds(2)); session.Dispose(); await read.WaitAsync(TimeSpan.FromSeconds(2));

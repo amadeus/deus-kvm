@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using STATSTG = System.Runtime.InteropServices.ComTypes.STATSTG;
 
 namespace DeusKVM.Companion.Core;
 
@@ -11,7 +12,7 @@ public sealed class RemoteFileStream(FileClipboardSession session, Action check,
     private long blockOffset = -1, lastReadLog = -1;
     public void Read(byte[] buffer, int count, IntPtr read)
     {
-        var began = Environment.TickCount64;
+        var began = RuntimeCompat.TickCount64;
         var logRead = diagnostic is not null && (lastReadLog < 0 || began - lastReadLog >= 1000);
         if (logRead) { lastReadLog = began; diagnostic?.Invoke($"consumer-read offset={position} requested={count}"); }
         var total = 0;
@@ -28,11 +29,11 @@ public sealed class RemoteFileStream(FileClipboardSession session, Action check,
                 Array.Copy(block, index, buffer, total, n); total += n; position += n;
             }
             if (read != IntPtr.Zero) Marshal.WriteInt32(read, total);
-            if (logRead) diagnostic?.Invoke($"consumer-read-complete returned={total} elapsedMs={Environment.TickCount64 - began}");
+            if (logRead) diagnostic?.Invoke($"consumer-read-complete returned={total} elapsedMs={RuntimeCompat.TickCount64 - began}");
         }
         catch (Exception error)
         {
-            diagnostic?.Invoke($"consumer-read-failed hr=0x{error.HResult:X8} copied={total} elapsedMs={Environment.TickCount64 - began}");
+            diagnostic?.Invoke($"consumer-read-failed hr=0x{error.HResult:X8} copied={total} elapsedMs={RuntimeCompat.TickCount64 - began}");
             throw;
         }
     }

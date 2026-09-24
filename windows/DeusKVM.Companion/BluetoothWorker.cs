@@ -28,7 +28,7 @@ internal sealed class BluetoothWorker : ApplicationContext
     {
         public MacSession Link { get; } = link;
         public Task Work { get; set; } = work;
-        public long Started { get; set; } = Environment.TickCount64;
+        public long Started { get; set; } = RuntimeCompat.TickCount64;
         public long RetryAt { get; set; }
         public int Failures { get; set; }
         public bool Attaching { get; set; }
@@ -79,7 +79,7 @@ internal sealed class BluetoothWorker : ApplicationContext
                 Retire(pair.Value); attempts.Remove(pair.Key); failures.Remove(pair.Key);
             }
             retired.RemoveAll(item => item.Work.IsCompleted);
-            if (priority.Active is null && retired.Any(item => Environment.TickCount64 - item.RetiredAt > 60000))
+            if (priority.Active is null && retired.Any(item => RuntimeCompat.TickCount64 - item.RetiredAt > 60000))
                 throw new TimeoutException("A disconnected device's Bluetooth operation stalled; recycling the worker.");
             foreach (var attempt in attempts.Values.ToArray()) AdvanceAttempt(attempt);
 
@@ -90,9 +90,9 @@ internal sealed class BluetoothWorker : ApplicationContext
                 var candidate = priority.DiscoveryCandidates.FirstOrDefault(mac => !attempts.ContainsKey(mac.Connection));
                 if (candidate is not null) Open(candidate);
             }
-            if (Environment.TickCount64 - lastTick >= 3000)
+            if (RuntimeCompat.TickCount64 - lastTick >= 3000)
             {
-                lastTick = Environment.TickCount64;
+                lastTick = RuntimeCompat.TickCount64;
                 recovery.Refresh(saved.Macs);
                 foreach (var attempt in attempts.Values.Where(item => item.Work.IsCompleted && item.Attaching && item.RetryAt == 0))
                     attempt.Link.Tick();
@@ -116,7 +116,7 @@ internal sealed class BluetoothWorker : ApplicationContext
         var link = attempt.Link;
         if (!attempt.Work.IsCompleted)
         {
-            if (Environment.TickCount64 - attempt.Started > 45000)
+            if (RuntimeCompat.TickCount64 - attempt.Started > 45000)
             {
                 if (priority.Active?.Connection == link.Mac.Connection)
                     throw new TimeoutException($"Bluetooth operation stalled for {link.Mac.Name}; recycling the worker.");
@@ -131,7 +131,7 @@ internal sealed class BluetoothWorker : ApplicationContext
         attempt.Work.GetAwaiter().GetResult();
         if (attempt.RetryAt != 0)
         {
-            if (Environment.TickCount64 < attempt.RetryAt) return;
+            if (RuntimeCompat.TickCount64 < attempt.RetryAt) return;
             priority.Reconsider(link.Mac);
             Retire(attempt); attempts.Remove(link.Mac.Connection);
             // Defer opening to the normal serialized discovery pass.
@@ -139,7 +139,7 @@ internal sealed class BluetoothWorker : ApplicationContext
         }
         if (link.Error is not null || link.NeedsReconnect)
         {
-            attempt.RetryAt = Environment.TickCount64 + (long)ServicePolicy.RetryDelay(++attempt.Failures).TotalMilliseconds;
+            attempt.RetryAt = RuntimeCompat.TickCount64 + (long)ServicePolicy.RetryDelay(++attempt.Failures).TotalMilliseconds;
             failures[link.Mac.Connection] = attempt.Failures;
             priority.SetAvailable(link.Mac, false);
             if (priority.Active?.Connection != link.Mac.Connection) priority.Reject(link.Mac);
@@ -151,7 +151,7 @@ internal sealed class BluetoothWorker : ApplicationContext
         {
             if (priority.Active?.Connection == link.Mac.Connection)
             {
-                attempt.RetryAt = Environment.TickCount64 + 5000;
+                attempt.RetryAt = RuntimeCompat.TickCount64 + 5000;
                 link.Dispose();
             }
             else priority.Reject(link.Mac);
@@ -166,7 +166,7 @@ internal sealed class BluetoothWorker : ApplicationContext
         }
         if (!attempt.Attaching)
         {
-            attempt.Attaching = true; attempt.Started = Environment.TickCount64; attempt.Work = link.Attach();
+            attempt.Attaching = true; attempt.Started = RuntimeCompat.TickCount64; attempt.Work = link.Attach();
         }
     }
 
@@ -275,7 +275,7 @@ internal sealed class BluetoothWorker : ApplicationContext
     private void Retire(Attempt attempt)
     {
         attempt.Link.Dispose();
-        if (!attempt.Work.IsCompleted) retired.Add((attempt.Work, Environment.TickCount64));
+        if (!attempt.Work.IsCompleted) retired.Add((attempt.Work, RuntimeCompat.TickCount64));
     }
 
     private void Emit(WorkerStatus next)

@@ -15,14 +15,14 @@ public sealed class FileNetworkTests
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
         foreach (var v in vectors)
         {
-            using var sender = new FileNetworkCrypto(Convert.FromHexString(v.Secret), Convert.FromHexString(v.Client), Convert.FromHexString(v.Server), v.Direction);
-            using var receiver = new FileNetworkCrypto(Convert.FromHexString(v.Secret), Convert.FromHexString(v.Client), Convert.FromHexString(v.Server), v.Direction);
+            using var sender = new FileNetworkCrypto(TestBytes.FromHex(v.Secret), TestBytes.FromHex(v.Client), TestBytes.FromHex(v.Server), v.Direction);
+            using var receiver = new FileNetworkCrypto(TestBytes.FromHex(v.Secret), TestBytes.FromHex(v.Client), TestBytes.FromHex(v.Server), v.Direction);
             for (var i = 0; i < v.Plain.Length; i++)
             {
-                Assert.Equal(Convert.FromHexString(v.Sealed[i]), sender.Seal(Convert.FromHexString(v.Plain[i])));
-                Assert.Equal(Convert.FromHexString(v.Plain[i]), receiver.Open(Convert.FromHexString(v.Sealed[i])));
+                Assert.Equal(TestBytes.FromHex(v.Sealed[i]), sender.Seal(TestBytes.FromHex(v.Plain[i])));
+                Assert.Equal(TestBytes.FromHex(v.Plain[i]), receiver.Open(TestBytes.FromHex(v.Sealed[i])));
             }
-            Assert.ThrowsAny<CryptographicException>(() => receiver.Open(Convert.FromHexString(v.Sealed[0])));
+            Assert.ThrowsAny<CryptographicException>(() => receiver.Open(TestBytes.FromHex(v.Sealed[0])));
         }
     }
     [Fact]

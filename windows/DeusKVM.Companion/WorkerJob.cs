@@ -29,10 +29,18 @@ internal sealed class WorkerJob : IDisposable
         if (!AssignProcessToJobObject(handle, process.Handle))
         {
             var error = Marshal.GetLastWin32Error();
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            if (!process.HasExited) process.Kill();
             throw new Win32Exception(error);
         }
     }
+
+    public void Terminate()
+    {
+        if (!TerminateJobObject(handle, 1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TerminateJobObject(SafeFileHandle job, uint exitCode);
 
     public void Dispose() => handle.Dispose();
 

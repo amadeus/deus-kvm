@@ -10,14 +10,14 @@ public sealed record MonitorInfo(string Id, int X, int Y, int W, int H, int Dpi,
         var alongY = Y + (int)Math.Round(fraction / 65535d * (H - 1));
         return edge switch
         {
-            0 => (X + 2, Math.Clamp(alongY, Y + 2, Y + H - 3)),
-            1 => (X + W - 3, Math.Clamp(alongY, Y + 2, Y + H - 3)),
-            2 => (Math.Clamp(alongX, X + 2, X + W - 3), Y + 2),
-            3 => (Math.Clamp(alongX, X + 2, X + W - 3), Y + H - 3),
+            0 => (X + 2, RuntimeCompat.Clamp(alongY, Y + 2, Y + H - 3)),
+            1 => (X + W - 3, RuntimeCompat.Clamp(alongY, Y + 2, Y + H - 3)),
+            2 => (RuntimeCompat.Clamp(alongX, X + 2, X + W - 3), Y + 2),
+            3 => (RuntimeCompat.Clamp(alongX, X + 2, X + W - 3), Y + H - 3),
             _ => throw new ArgumentOutOfRangeException(nameof(edge))
         };
     }
-    public ushort Fraction(byte edge, int x, int y) => (ushort)Math.Round(65535 * Math.Clamp(
+    public ushort Fraction(byte edge, int x, int y) => (ushort)Math.Round(65535 * RuntimeCompat.Clamp(
         edge < 2 ? (y - Y) / (double)(H - 1) : (x - X) / (double)(W - 1), 0, 1));
 }
 

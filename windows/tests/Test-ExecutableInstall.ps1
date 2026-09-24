@@ -59,6 +59,22 @@ function Invoke-Companion {
         Write-Host "Completed companion: $Command"
     } finally { $process.Dispose() }
 }
+function Assert-PackagePayload {
+    $manifest = Get-Content -LiteralPath (Join-Path (Split-Path $source) 'package.json') -Raw | ConvertFrom-Json
+    foreach ($entry in $manifest.PSObject.Properties) {
+        $path = Join-Path $install $entry.Name
+        if (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path).Hash -ne $entry.Value) {
+            throw "Missing or incorrect installed package file: $($entry.Name)"
+        }
+        $acl = Get-Acl -LiteralPath $path
+        foreach ($rule in $acl.Access) {
+            if ($rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-11' -and
+                ($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write)) {
+                throw "Ordinary users can modify package file: $path"
+            }
+        }
+    }
+}
 function Assert-Service {
     param([string] $State, [string] $Startup)
     $service = Get-Service DeusKVMCompanion
@@ -108,6 +124,7 @@ $cleanupErrors = [Collections.Generic.List[string]]::new()
 try {
     Invoke-Companion $source @('--install')
     Assert-Service 'Running' 'Automatic'
+    Assert-PackagePayload
     if (-not (Test-Path -LiteralPath $shortcut)) { throw 'Missing Start menu shortcut.' }
     if ((Get-TrayStartupCommand) -ne ('"' + $binary + '" --tray')) { throw 'Missing tray startup registration.' }
     Invoke-Companion $binary @('--tray-startup', 'off')
@@ -139,6 +156,7 @@ try {
         if (-not $tray.WaitForExit(10000)) { throw 'Update did not close the previous tray.' }
     } finally { $tray.Dispose() }
     Assert-Service 'Stopped' 'Manual'
+    Assert-PackagePayload
     if (-not (Test-Path -LiteralPath $shortcut)) { throw 'Update removed the Start menu shortcut.' }
     if ($null -ne (Get-TrayStartupCommand)) { throw 'Update re-enabled tray startup.' }
     if ((Get-FileHash -LiteralPath $settings).Hash -ne $before) { throw 'Update changed the selected Mac.' }

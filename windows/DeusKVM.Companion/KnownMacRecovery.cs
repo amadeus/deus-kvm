@@ -19,7 +19,7 @@ internal sealed class KnownMacRecovery(Action<string> log) : IDisposable
         {
             if (connections.TryGetValue(mac.DeviceId, out var existing))
             {
-                if (!existing.Finished || existing.Session is not null || Environment.TickCount64 < existing.RetryAt) continue;
+                if (!existing.Finished || existing.Session is not null || RuntimeCompat.TickCount64 < existing.RetryAt) continue;
                 existing.Dispose();
             }
             var connection = new Connection(mac, log);
@@ -63,7 +63,7 @@ internal sealed class KnownMacRecovery(Action<string> log) : IDisposable
             {
                 if (!disposed) log($"Reconnect request for {mac.DeviceName}: {error.Message}");
             }
-            finally { Finished = true; RetryAt = Environment.TickCount64 + 30000; }
+            finally { Finished = true; RetryAt = RuntimeCompat.TickCount64 + 30000; }
         }
 
         public void Dispose()

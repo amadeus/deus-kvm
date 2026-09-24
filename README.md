@@ -123,12 +123,13 @@ on macOS:
 
 ```sh
 dotnet build windows/DeusKVM.Companion.sln -c Release
-dotnet test windows/DeusKVM.Companion.Tests -c Release
+dotnet test windows/DeusKVM.Companion.Tests -c Release -f net10.0
 ./windows/publish.sh win-x64
 ```
 
-Use `win-arm64` for Windows on ARM. The ZIP is written to the visible `releases/`
-folder at the repository root. Intermediate build files remain in `.build/`.
+The small Framework build targets Windows x64 and uses the OS-provided .NET
+Framework 4.8 runtime. On Windows, also run tests with `-f net48`. The ZIP is
+written to the visible `releases/` folder at the repository root. Intermediate build files remain in `.build/`.
 The companion targets Windows 10 version 2004 or later. Native Windows
 installation and desktop behavior are checked separately from the portable
 policy tests. [PLAN.md](PLAN.md) records implementation scope and validation.

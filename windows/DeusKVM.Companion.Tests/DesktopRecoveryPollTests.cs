@@ -15,7 +15,7 @@ public sealed class DesktopRecoveryPollTests
             if (poll.ShouldRefresh(true, true, now)) refreshes.Add(now);
         Assert.Equal(20, refreshes.Count);
         Assert.Equal(0, refreshes[0]);
-        Assert.All(refreshes.Zip(refreshes.Skip(1)), pair => Assert.True(pair.Second - pair.First >= 250));
+        Assert.All(refreshes.Zip(refreshes.Skip(1), (first, second) => (First: first, Second: second)), pair => Assert.True(pair.Second - pair.First >= 250));
     }
 
     [Fact]

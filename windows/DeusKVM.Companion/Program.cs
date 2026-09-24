@@ -9,7 +9,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         var quiet = args.LastOrDefault() == "--quiet";
-        if (quiet) args = args[..^1];
+        if (quiet) args = args.Take(args.Length - 1).ToArray();
         if (args is ["--service"])
         {
             ServiceBase.Run(new CompanionService());
@@ -18,7 +18,8 @@ internal static class Program
 
         // a dedicated STA with a message loop satisfies WinRT's UI-thread contract.
         // it runs under the service identity/session, with no interactive windows.
-        ApplicationConfiguration.Initialize();
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
         if (args is ["--ble-worker"])
         {
             using var worker = new BluetoothWorker();
@@ -49,7 +50,7 @@ internal static class Program
             {
                 if (MessageBox.Show("A previous removal did not finish. Retry removing DeusKVM? Windows Bluetooth pairings are kept.",
                     "Finish removing DeusKVM", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK)
-                    ServiceCommands.ElevateExecutableAsync(Environment.ProcessPath!, "--remove").GetAwaiter().GetResult();
+                    ServiceCommands.ElevateExecutableAsync(RuntimeCompat.ProcessPath!, "--remove").GetAwaiter().GetResult();
                 return 0;
             }
             if (ServiceInstaller.NeedsInstall())

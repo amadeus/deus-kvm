@@ -50,7 +50,7 @@ internal static class ClipboardNative
     {
         if (!IsClipboardFormatAvailable(format)) return false;
         var value = ReadFormat(format, 16);
-        return ClipboardPrivacy.BlocksSharing(value is null || value.Length < 4 ? null : BitConverter.ToUInt32(value));
+        return ClipboardPrivacy.BlocksSharing(value is null || value.Length < 4 ? null : BitConverter.ToUInt32(value, 0));
     }
     private static byte[]? ReadFormat(uint format, int limit)
     {

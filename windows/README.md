@@ -10,14 +10,15 @@ on that Mac requests takeover: Windows asks the previous Mac to disable and
 release held input, waits for its acknowledgement, then grants the new Mac.
 Bluetooth and pairings stay intact. Each active Mac supplies its own layout;
 clipboard sharing follows it and pauses while Windows is locked or signed out.
-Update **both Mac apps and Windows**. Older Macs cannot participate in this
-acknowledged takeover protocol.
+Keep the current Mac apps for the small Windows build. Macs from before the
+acknowledged takeover protocol still require an update.
 
 ## Install and configure
 
 1. Keep both existing Mac pairings. Leave DeusKVM enabled on the Mac you want
    to use first; **Enable control** for this PC on each Mac.
-2. Extract the ZIP and open **DeusKVM.Companion.exe**. Approve the Windows
+2. Extract the entire ZIP into a new folder, keeping the EXE, DLLs, config and
+   `package.json` together, and open **DeusKVM.Companion.exe**. Approve the Windows
    administrator prompt to install or update. No scripts or .NET installation
    are needed. Existing service startup/running preferences are preserved.
 3. Already-paired Macs are discovered automatically; there is no selection step.
@@ -43,7 +44,7 @@ does not provide the historical connection order through this initial enumeratio
 are ordered as observed by the companion.
 
 See [the two-Mac checkpoint](../docs/AUTOMATIC_MAC_CHECKPOINT.md) for the manual
-validation sequence (`CHECKPOINT.md` is also included in the ZIP). Automatic
+validation sequence (this small build includes `START_HERE.md` in its ZIP). Automatic
 selection and reconnection require
 validation on Windows; successful cross-builds do not prove that behavior.
 
@@ -62,15 +63,15 @@ third-party servers are used at runtime.
 
 ## Package size
 
-The single EXE includes .NET 10 and Windows Forms so no runtime download or
-installation is needed. English framework resources are retained; framework
-messages fall back to English on other Windows display languages. The app's
-English UI, Bluetooth, service and clipboard features are unchanged.
+The Windows x64 package uses .NET Framework 4.8, already included with Windows
+10 2004+ and Windows 11. It ships application code and small dependency DLLs,
+without bundling the modern .NET runtime or the large managed Windows SDK.
+Keep all extracted runtime files together. Installation copies and verifies the
+complete payload and rolls back replaced files if the update fails.
 
-Measured alternatives and the path to a substantially smaller native build are
-recorded in [the size investigation](../docs/WINDOWS_SIZE_PLAN.md). A tiny
-framework-dependent download would require a separate Desktop Runtime install;
-that is not the release shipped here.
+See `START_HERE.md` in the ZIP for this build's test sequence. The migration and
+measured sizes are recorded in [the size plan](../docs/WINDOWS_SIZE_PLAN.md).
+Framework/Windows hardware validation remains pending for this new build.
 
 ## Window and tray controls
 
@@ -170,7 +171,7 @@ Basic two-way text sharing is user-confirmed; the stress and privacy checks abov
 ## Open or update
 
 Use **DeusKVM Companion** in the Start menu, or open the downloaded EXE again.
-If the tray is already running, its window reopens. An identical EXE opens the
+If the tray is already running, its window reopens. An identical package opens the
 installed app without reinstalling. A different build updates the installation,
 automatically closes the previous companion, then opens the new window.
 Existing startup settings, paired Macs and running/stopped state are
@@ -204,12 +205,12 @@ Use .NET 10 SDK. Cross-build from macOS:
 
 ```sh
 dotnet build windows/DeusKVM.Companion.sln -c Release
-dotnet test windows/DeusKVM.Companion.Tests -c Release
+dotnet test windows/DeusKVM.Companion.Tests -c Release -f net10.0
 ./windows/publish.sh win-x64
 ```
 
-Use `win-arm64` for an ARM Windows PC. `DEUSKVM_DOTNET` can point at an isolated
-SDK. ZIPs are written to the visible `releases/` folder at the repository root.
+This Framework build currently targets `win-x64`. `DEUSKVM_DOTNET` can point at an isolated
+SDK. On Windows, run the same test command with `-f net48` as well. ZIPs are written to the visible `releases/` folder at the repository root.
 Core tests run on macOS; service,
 WinRT, desktop workers, Raw Input and tray execution must be verified on Windows.
 
@@ -250,5 +251,5 @@ both directions, over networking only. Mac → Windows retains native Explorer
 paste. Windows → Mac uses Finder Cmd+V with DeusKVM progress/cancel UI. File
 metadata and authentication use Bluetooth; contents transfer only on paste.
 Windows connects out in both directions, so no inbound Windows firewall rule is
-needed. See `FILE_PASTE_CHECKPOINT.md` in the ZIP or
+needed. See `START_HERE.md` in the ZIP or
 [the file paste checkpoint](../docs/FILE_PASTE_CHECKPOINT.md).

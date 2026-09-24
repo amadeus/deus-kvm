@@ -11,9 +11,9 @@ internal sealed partial class BluetoothControl
     private byte[]? pendingFileOffer;
     private ClipboardTransfer Clipboard => clipboardTransfer ??= new ClipboardTransfer(SendClipboard, ApplyClipboard);
     private bool clipboardDefaultDesktop, clipboardPeer, clipboardDesktopAvailable, clipboardOffered, clipboardEnabled, clipboardPrimed;
-    private uint clipboardEpoch = (uint)Random.Shared.Next(1, int.MaxValue), clipboardRevision;
+    private uint clipboardEpoch = (BitConverter.ToUInt32(RuntimeCompat.RandomBytes(4), 0) % (int.MaxValue - 1)) + 1, clipboardRevision;
     private byte[]? pendingClipboardOffer;
-    private static double ClipboardNow => Environment.TickCount64 / 1000d;
+    private static double ClipboardNow => RuntimeCompat.TickCount64 / 1000d;
 
     private void UpdateClipboardSession(bool reset = false)
     {

@@ -69,7 +69,7 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
         controlRead.ValueChanged += Notification;
         bulkRead.ValueChanged += Notification;
         subscribing = true;
-        connectedAt = Environment.TickCount64;
+        connectedAt = RuntimeCompat.TickCount64;
         foreach (var characteristic in new[] { controlRead, bulkRead })
         {
             var outcome = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
@@ -98,13 +98,13 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
         if (clipboardEnabled) Clipboard.Tick(ClipboardNow);
         if (active && desktop?.Connected == false) SetDetail(desktop.Detail);
         if (!Attached) return;
-        if ((!ready && Environment.TickCount64 - connectedAt > 10000) ||
-            (ready && Environment.TickCount64 - lastSeen > 10000))
+        if ((!ready && RuntimeCompat.TickCount64 - connectedAt > 10000) ||
+            (ready && RuntimeCompat.TickCount64 - lastSeen > 10000))
         { Fail("Companion heartbeat expired; reconnecting"); return; }
         if (ready)
         {
             var payload = new byte[4];
-            BinaryPrimitives.WriteUInt32LittleEndian(payload, unchecked((uint)Environment.TickCount64));
+            BinaryPrimitives.WriteUInt32LittleEndian(payload, unchecked((uint)RuntimeCompat.TickCount64));
             Send(Protocol.Message.Ping, payload);
             AdvertiseClipboard();
             if (active && desktop?.Connected != true) { blind = 4; Send(Protocol.Message.State, [4, 2, 0]); SetDetail(desktop?.Detail ?? "Waiting for desktop"); }
@@ -202,7 +202,7 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
                 }
                 else Handle(type, packet.Payload);
             }
-            lastSeen = Environment.TickCount64;
+            lastSeen = RuntimeCompat.TickCount64;
         }
         catch (Exception error) when (error is InvalidDataException or JsonException or InvalidOperationException or KeyNotFoundException)
         { Fail("Invalid companion message: " + error.Message); }
@@ -296,8 +296,8 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
                 break;
             case "ack" when handoff.Accept(message.SwitchId):
                 var ack = new byte[7]; ack[0] = message.SwitchId; ack[1] = message.Ok ? (byte)1 : (byte)0;
-                BinaryPrimitives.WriteInt16LittleEndian(ack.AsSpan(2), (short)Math.Clamp(message.X, short.MinValue, short.MaxValue));
-                BinaryPrimitives.WriteInt16LittleEndian(ack.AsSpan(4), (short)Math.Clamp(message.Y, short.MinValue, short.MaxValue));
+                BinaryPrimitives.WriteInt16LittleEndian(ack.AsSpan(2), (short)RuntimeCompat.Clamp(message.X, short.MinValue, short.MaxValue));
+                BinaryPrimitives.WriteInt16LittleEndian(ack.AsSpan(4), (short)RuntimeCompat.Clamp(message.Y, short.MinValue, short.MaxValue));
                 ack[6] = message.Blind;
                 Send(Protocol.Message.EnterAck, ack);
                 break;

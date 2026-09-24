@@ -30,12 +30,9 @@ jobs:
         run: dotnet build windows/DeusKVM.Companion.sln -c Release
       - name: Test companion policies
         run: dotnet test windows/DeusKVM.Companion.Tests -c Release --no-build
-      - name: Publish self-contained companion
-        run: >-
-          dotnet publish windows/DeusKVM.Companion/DeusKVM.Companion.csproj
-          -c Release -r win-x64 --self-contained true
-          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
-          -p:DebugType=None -o .build/windows/win-x64
+      - name: Publish small Framework companion
+        shell: bash
+        run: ./windows/publish.sh win-x64
       - name: Test cleanup on disposable files
         run: python windows/tests/test_removal_files.py --powershell powershell
       - name: Test tray handoff polling

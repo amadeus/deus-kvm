@@ -179,7 +179,7 @@ internal sealed class DesktopWorker : ApplicationContext
     {
         // Probe immediately on first movement, but do not enumerate devices and
         // send Bluetooth status on every mouse packet while recovery is pending.
-        if (recoveryPoll.ShouldRefresh(blind != 0, handoff.Active is not null, Environment.TickCount64)) Refresh();
+        if (recoveryPoll.ShouldRefresh(blind != 0, handoff.Active is not null, RuntimeCompat.TickCount64)) Refresh();
         if (!cursor.Hidden && (!handoff.CanReturn || config is null)) return;
         var headerSize = (uint)(8 + IntPtr.Size * 2);
         uint size = 0;
@@ -227,7 +227,7 @@ internal sealed class DesktopWorker : ApplicationContext
 
     private void ReportEdgeHealth()
     {
-        var now = Environment.TickCount64;
+        var now = RuntimeCompat.TickCount64;
         if (now - lastEdgeReport < 5000) return;
         lastEdgeReport = now;
         if (handoff.Active is not null || selectedMotion + otherMotion != 0)

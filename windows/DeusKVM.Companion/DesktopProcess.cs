@@ -42,8 +42,8 @@ internal sealed class DesktopProcess : IDisposable
 
     public static DesktopProcess Launch(SafeAccessTokenHandle token, string pipeName, string address)
     {
-        var exe = Environment.ProcessPath!;
-        var command = new StringBuilder($"\"{exe}\" --desktop-worker {pipeName} {Environment.ProcessId} {address}");
+        var exe = RuntimeCompat.ProcessPath!;
+        var command = new StringBuilder($"\"{exe}\" --desktop-worker {pipeName} {RuntimeCompat.ProcessId} {address}");
         var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Desktop = @"winsta0\default" };
         if (!CreateEnvironmentBlock(out var environment, token, false)) throw NativeError("CreateEnvironmentBlock");
         try

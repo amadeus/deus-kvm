@@ -58,7 +58,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive) : IDisposable
             using var identity = new WindowsIdentity(token.DangerousGetHandle());
             var sid = identity.User ?? throw new InvalidOperationException("Console token has no user SID");
             if (process is not null && !process.HasExited && sessionId == console.Id && userSid == sid.Value &&
-                Environment.TickCount64 - lastMessage < 15000) return;
+                RuntimeCompat.TickCount64 - lastMessage < 15000) return;
             Stop();
             sessionId = console.Id;
             userSid = sid.Value;
@@ -71,7 +71,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive) : IDisposable
             security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
                 PipeAccessRights.FullControl, AccessControlType.Allow));
             security.AddAccessRule(new PipeAccessRule(sid, PipeAccessRights.ReadWrite, AccessControlType.Allow));
-            pipe = NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+            pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
                 PipeOptions.Asynchronous, 16384, 16384, security);
             try
             {
@@ -79,7 +79,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive) : IDisposable
                 process = DesktopProcess.Launch(token, name, address);
                 lifetime = new CancellationTokenSource();
                 outgoing = Channel.CreateBounded<DesktopMessage>(32);
-                lastMessage = Environment.TickCount64;
+                lastMessage = RuntimeCompat.TickCount64;
                 Detail = "Connecting console desktop worker";
                 _ = RunAsync(pipe, process.Id, outgoing, lifetime.Token);
                 launchStep = "resuming console process";
@@ -110,7 +110,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive) : IDisposable
                 while (!stop.IsCancellationRequested)
                 {
                     var message = await DesktopPipe.Read(connection, stop);
-                    lastMessage = Environment.TickCount64;
+                    lastMessage = RuntimeCompat.TickCount64;
                     if (message.Detail is not null) Detail = message.Detail;
                     receive(message);
                 }
