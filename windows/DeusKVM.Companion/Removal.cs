@@ -113,9 +113,14 @@ internal sealed class RemovalForm : Form
     public bool Succeeded { get; private set; }
     public RemovalForm(bool showResult = true)
     {
-        Text = "Removing DeusKVM"; ClientSize = new Size(480, 140); ControlBox = false;
+        SuspendLayout();
+        Text = "Removing DeusKVM";
+        Font = SystemFonts.MessageBoxFont;
+        AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi; StartPosition = FormStartPosition.CenterScreen;
+        ClientSize = new Size(480, 140); ControlBox = false;
         Controls.Add(status);
+        ResumeLayout(true);
         Shown += async (_, _) =>
         {
             using var installation = new Mutex(false, "Global\\DeusKVMCompanionInstall");

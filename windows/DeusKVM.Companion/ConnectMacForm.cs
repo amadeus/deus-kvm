@@ -18,8 +18,12 @@ internal sealed class ConnectMacForm : Form
     private bool busy, closing;
     public ConnectMacForm()
     {
+        SuspendLayout();
         Icon = AppIcon.Image;
-        Text = "Add Mac"; AutoScaleMode = AutoScaleMode.Dpi;
+        Text = "Add Mac";
+        Font = SystemFonts.MessageBoxFont;
+        AutoScaleDimensions = new SizeF(96, 96);
+        AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(540, 440); MinimumSize = new Size(480, 400); StartPosition = FormStartPosition.CenterParent;
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), ColumnCount = 1, RowCount = 5 };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -32,6 +36,7 @@ internal sealed class ConnectMacForm : Form
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         buttons.Controls.Add(connect); buttons.Controls.Add(rescan); buttons.Controls.Add(cancel); layout.Controls.Add(buttons);
         Controls.Add(layout); AcceptButton = connect; CancelButton = cancel;
+        ResumeLayout(true);
         devices.SelectedIndexChanged += (_, _) => connect.Enabled = !busy && devices.SelectedItem is MacCandidate;
         showAll.CheckedChanged += (_, _) => Render();
         connect.Click += async (_, _) => await ConnectAsync();

@@ -185,7 +185,10 @@ internal sealed class SetupForm : Form
 
     public SetupForm()
     {
+        SuspendLayout();
         Text = "DeusKVM Companion";
+        Font = SystemFonts.MessageBoxFont;
+        AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(440, 110);
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -193,6 +196,7 @@ internal sealed class SetupForm : Form
         ControlBox = false;
         status.Text = "Installing or updating DeusKVM Companion…\nApprove the Windows administrator prompt to continue.";
         Controls.Add(status);
+        ResumeLayout(true);
         Shown += async (_, _) =>
         {
             try { await ServiceCommands.ElevateExecutableAsync(RuntimeCompat.ProcessPath!, "--install"); Installed = true; }
