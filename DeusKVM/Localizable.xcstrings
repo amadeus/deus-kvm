@@ -1,6 +1,28 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "settings_organization.expanded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expanded"
+          }
+        }
+      }
+    },
+    "settings_organization.collapsed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapsed"
+          }
+        }
+      }
+    },
     "settings_organization.permissions": {
       "extractionState": "manual",
       "localizations": {

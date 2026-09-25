@@ -14,11 +14,26 @@ struct PermissionsSection: View {
 
     var body: some View {
         Section {
-            DisclosureGroup(isExpanded: $isExpanded) {
+            Button {
+                withAnimation { isExpanded.toggle() }
+            } label: {
+                HStack {
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    Text(L10n.SettingsOrganization.permissions)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(Text(isExpanded ? L10n.SettingsOrganization.expanded : L10n.SettingsOrganization.collapsed))
+            if isExpanded {
                 permissionRows
                 permissionHelp
-            } label: {
-                Text(L10n.SettingsOrganization.permissions)
             }
         }
         .onAppear(perform: refreshPermissions)

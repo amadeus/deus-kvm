@@ -10,6 +10,14 @@ extension L10n {
             "settings_organization.permissions"
         }
 
+        static var expanded: LocalizedStringKey {
+            "settings_organization.expanded"
+        }
+
+        static var collapsed: LocalizedStringKey {
+            "settings_organization.collapsed"
+        }
+
         static var devices: LocalizedStringKey {
             "settings_organization.devices"
         }
