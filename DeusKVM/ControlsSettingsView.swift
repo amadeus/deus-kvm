@@ -1,17 +1,21 @@
 import AppKit
 import SwiftUI
 
-struct LayoutSettingsView: View {
+struct ControlsSettingsView: View {
     @EnvironmentObject private var coordinator: EdgeSwitchCoordinator
     @State private var recording = false
+    @AppStorage(AppSettings.invertVerticalScrollKey) private var invertVerticalScroll = false
+    @AppStorage(AppSettings.invertHorizontalScrollKey) private var invertHorizontalScroll = false
+    @AppStorage(AppSettings.clipboardEnabledKey) private var clipboardEnabled = true
 
     var body: some View {
         Form {
-            Section {
+            Section(L10n.SettingsOrganization.currentControl) {
                 Label(coordinator.isRemote ? L10n.Layout.remote : L10n.Layout.local, systemImage: "computermouse")
                 Text(L10n.Layout.targetHint).font(.caption).foregroundStyle(.secondary)
-                if !coordinator
-                    .isEnabled { Text("DeusKVM is disabled. Enable it in Settings or the menu bar.").foregroundStyle(.secondary) }
+                if !coordinator.isEnabled {
+                    Text(L10n.SettingsOrganization.disabled).foregroundStyle(.secondary)
+                }
                 if coordinator.isEnabled, !coordinator.targetAvailable { Text(L10n.Layout.noTarget).foregroundStyle(.orange) }
                 if coordinator.isEnabled, !coordinator.permissionGranted || !coordinator.keyboardMonitoringReady {
                     Text("Finish granting permissions in Setup to enable complete keyboard and mouse control.")
@@ -19,6 +23,11 @@ struct LayoutSettingsView: View {
                 }
                 if coordinator.secureInput { Text(L10n.Layout.secureInput).foregroundStyle(.orange) }
                 if let error = coordinator.lastError { Text(verbatim: error).foregroundStyle(.red) }
+                Button(coordinator.isRemote ? L10n.Layout.returnToMac : L10n.Layout.switchToPC) { coordinator.toggle() }
+                    .disabled(!coordinator.isRemote && !coordinator.canSwitch)
+                Button(coordinator.isEnabled ? "Disable DeusKVM" : "Enable DeusKVM") {
+                    coordinator.setEnabled(!coordinator.isEnabled)
+                }
             }
             Section(L10n.Layout.edgeSection) {
                 Toggle(L10n.Layout.enable, isOn: $coordinator.edgeEnabled)
@@ -35,9 +44,8 @@ struct LayoutSettingsView: View {
                 }
                 Toggle(L10n.Layout.lock, isOn: $coordinator.locked)
             }
-            Section("Windows") {
-                Text(verbatim: coordinator.companionStatus).foregroundStyle(.secondary)
-                if !coordinator.pcMonitors.isEmpty {
+            if !coordinator.pcMonitors.isEmpty {
+                Section(L10n.SettingsOrganization.windowsDisplay) {
                     Picker("Display", selection: $coordinator.pcMonitorID) {
                         Text("Primary display").tag("")
                         ForEach(coordinator.pcMonitors) { monitor in
@@ -64,8 +72,23 @@ struct LayoutSettingsView: View {
                 }
                 Text(L10n.Layout.releaseHint).font(.caption).foregroundStyle(.secondary)
             }
-            Button(coordinator.isRemote ? L10n.Layout.returnToMac : L10n.Layout.switchToPC) { coordinator.toggle() }
-                .disabled(!coordinator.isRemote && !coordinator.canSwitch)
+            Section {
+                Toggle("Share clipboard with Windows", isOn: $clipboardEnabled)
+                    .toggleStyle(.switch)
+            } header: {
+                Text(L10n.SettingsOrganization.sharing)
+            } footer: {
+                Text(
+                    "Shares text up to 64 KiB over Bluetooth and one file up to 2 GB over the local network. "
+                        + "Skips marked private items and pauses while locked."
+                )
+            }
+            Section("Windows scrolling") {
+                Toggle("Invert vertical scrolling", isOn: $invertVerticalScroll)
+                    .toggleStyle(.switch)
+                Toggle("Invert horizontal scrolling", isOn: $invertHorizontalScroll)
+                    .toggleStyle(.switch)
+            }
         }
         .settingsFormStyle()
         .onChange(of: recording) { coordinator.recordingShortcut = $0 }

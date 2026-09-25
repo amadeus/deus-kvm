@@ -27,8 +27,8 @@ BLE. No LAN connection is required.
    **Show all devices**. Windows Bluetooth Settings is not needed for this flow.
 4. In the Mac's **Setup** tab, turn on **Enable control** for your PC. Advertising
    stops when an allowed PC is ready and resumes when none is available.
-5. In **Layout**, choose the Mac display and exit edge, enable edge switching,
-   and select the Windows display. Wait for **Windows edge return ready**.
+5. In **Controls**, choose the Mac display and exit edge, enable edge switching,
+   and select the Windows display. **Setup → Devices** shows **Windows edge return ready**.
    Return through the opposite edge on Windows.
 
 ## Everyday use
@@ -43,19 +43,19 @@ BLE. No LAN connection is required.
   display. Release held keys and mouse buttons before switching.
 - **Switch to PC**, including the hotkey, centers the pointer on the selected
   Windows display. The default toggle is **Fn + Escape**; record your own in
-  **Layout**. The Mac hotkey remains the way back if Windows cannot return.
-- **Settings → Share clipboard with Windows** shares plain text in both
+  **Controls**. The Mac hotkey remains the way back if Windows cannot return.
+- **Controls → Sharing → Share clipboard with Windows** shares plain text in both
   directions, up to **64 KiB of UTF-8** per copy. Clipboard sharing pauses while
   locked or signed out and skips recognized private clipboard markers. See
   [clipboard behavior and limits](docs/CLIPBOARD.md). The current prototype also
   supports [on-demand file paste in both directions](docs/FILE_PASTE_CHECKPOINT.md)
   for one regular file up to 2 GB, using networking only. Windows → Mac uses
   Finder Cmd+V with DeusKVM progress/cancel UI. Contents transfer only when pasted.
-- Vertical and horizontal scrolling can be inverted independently in Settings.
-- **Disable DeusKVM** in Settings or the menu bar restores local input and
+- Vertical and horizontal scrolling can be inverted independently in **Controls → Windows scrolling**.
+- **Disable DeusKVM** in **Controls** or the menu bar restores local input and
   stops advertising, input capture, and clipboard exchange. Enabling reuses
   saved devices. The menu icon shows searching, connecting, ready, or disabled.
-- Mac launch-at-login is optional. On Windows, **Start automatically with
+- Mac launch-at-login is optional under **Setup → Startup**. On Windows, **Start automatically with
   Windows** controls the service; **Show tray icon at sign-in** controls the
   settings UI separately. Closing either settings window leaves control running.
 

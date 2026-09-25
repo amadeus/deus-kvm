@@ -7,6 +7,10 @@ struct SetupView: View {
     @EnvironmentObject private var central: HIDCentral
     @EnvironmentObject private var names: DeviceNameStore
     @AppStorage(AppSettings.developerModeKey) private var developerMode = false
+    @StateObject private var login = LaunchAtLoginController()
+    @State private var showReset = false
+    @AppStorage(AppSettings.useServiceChangedKey) private var forceServiceChanged = true
+    @AppStorage(AppSettings.hasSeenWelcomeKey) private var hasSeenWelcome = false
     @State private var selectedInfo: DeviceEntry?
     @EnvironmentObject private var coordinator: EdgeSwitchCoordinator
 
@@ -16,16 +20,17 @@ struct SetupView: View {
         NavigationStack {
             form
                 .settingsFormStyle()
-                .navigationTitle(L10n.App.title)
+                .navigationTitle(L10n.Tab.setup)
         }
     }
 
     private var form: some View {
         Form {
             PermissionsSection()
-            connectionSection
-            if !_connectedDevices.isEmpty { connectedDevicesSection }
-            statusSection
+            devicesSection
+            startupSection
+            advancedSection
+            if developerMode { diagnosticsSection }
             if hid.activeError != nil || (hid.isActive && coordinator.lastError != nil) {
                 Section(header: Text(L10n.Section.lastError)) {
                     if let lastError = hid.activeError {
@@ -38,50 +43,80 @@ struct SetupView: View {
             }
         }
         .sheet(item: $selectedInfo) { DeviceInfoView(entry: $0) }
-    }
-
-    private var statusSection: some View {
-        Section(header: Text(L10n.Section.status)) {
-            row(L10n.Status.bluetooth, Text(lowEnergy.state.localizedLabel))
-            row(L10n.Status.advertising, Text(lowEnergy.isAdvertising ? L10n.Value.yes : L10n.Value.no))
-            if developerMode {
-                row(L10n.Status.hidService, Text(lowEnergy.isHIDServiceAdded ? L10n.Status.hidServiceAdded : L10n.Value.none))
-                row(L10n.Status.subscribedCentrals, Text(lowEnergy.subscribedCentrals.count, format: .number))
-                row(L10n.Status.connectedPeripherals, Text(central.connected.count, format: .number))
-                row(L10n.Status.hostLEDs, Text(verbatim: lowEnergy.keyboardLEDs.localizedLabel))
+        .onAppear { login.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in login.refresh() }
+        .alert("Could not change login startup", isPresented: Binding(
+            get: { login.error != nil }, set: { if !$0 { login.error = nil } }
+        )) {
+            Button("OK") { login.error = nil }
+        } message: { Text(login.error ?? "") }
+        .confirmationDialog(L10n.Settings.resetConfirm, isPresented: $showReset, titleVisibility: .visible) {
+            Button(L10n.Settings.reset, role: .destructive) {
+                Task { if await login.setEnabled(false) { _resetAll() } }
             }
         }
     }
 
-    private var connectionSection: some View {
-        Section(
-            header: Text(L10n.Section.connection),
-            footer: Text("Advertising stops when an allowed device is ready and resumes when none is available.")
-        ) {
+    private var devicesSection: some View {
+        Section {
             if lowEnergy.state != .poweredOn {
+                row(L10n.Status.bluetooth, Text(lowEnergy.state.localizedLabel))
                 Button("Open Bluetooth Settings", action: _openBluetoothSettings)
-            } else {
-                Text(lowEnergy.hostPolicy.target == nil ? "Waiting for an allowed device" : "Connected to an allowed device")
             }
-            Text(
-                "Pair through the Windows companion, then turn on Enable control. To replace a PC, turn off its control first."
-            )
-            .font(.caption).foregroundColor(.secondary)
+            if _connectedDevices.isEmpty {
+                Text(L10n.SettingsOrganization.noDevices).foregroundStyle(.secondary)
+            }
+            ForEach(_connectedDevices) { connectedDeviceRow($0) }
+        } header: {
+            Text(L10n.SettingsOrganization.devices)
+        } footer: {
+            if _connectedDevices.isEmpty {
+                Text("Pair through the Windows companion, then turn on Enable control. To replace a PC, turn off its control first.")
+            } else {
+                Text("Saved per device. When several enabled devices are ready, choose Use device to select the PC to control.")
+            }
         }
         .onAppear(perform: _seedAliasesFromScan)
         .onChange(of: lowEnergy.connectedCentrals) { _ in _seedAliasesFromScan() }
         .onChange(of: central.discovered) { _ in _seedAliasesFromScan() }
     }
 
-    private var connectedDevicesSection: some View {
-        Section {
-            ForEach(_connectedDevices) { connectedDeviceRow($0) }
-        } header: {
-            Text("Devices")
-        } footer: {
-            Text(
-                "Saved per device. When several enabled devices are ready, choose Use device to select the PC to control."
-            )
+    private var startupSection: some View {
+        Section(L10n.SettingsOrganization.startup) {
+            Toggle("Launch DeusKVM at login", isOn: Binding(
+                get: { login.enabled }, set: { value in Task { await login.setEnabled(value) } }
+            ))
+            .disabled(login.busy)
+            if login.needsApproval {
+                Button("Allow in Login Items…") { login.openSettings() }
+            }
+        }
+    }
+
+    private var advancedSection: some View {
+        Section(header: Text(L10n.Settings.advanced)) {
+            Toggle(L10n.Settings.developerMode, isOn: $developerMode)
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(L10n.Settings.forceServiceChanged, isOn: $forceServiceChanged)
+                    .onChange(of: forceServiceChanged) {
+                        if $0 { lowEnergy.scheduleServiceChanged() }
+                    }
+                Text(L10n.Settings.forceServiceChangedHint).font(.caption).foregroundStyle(.secondary)
+            }
+            Button(role: .destructive) { showReset = true } label: {
+                Label(L10n.Settings.reset, systemImage: "trash")
+            }
+        }
+    }
+
+    private var diagnosticsSection: some View {
+        Section(L10n.SettingsOrganization.diagnostics) {
+            row(L10n.Status.bluetooth, Text(lowEnergy.state.localizedLabel))
+            row(L10n.Status.advertising, Text(lowEnergy.isAdvertising ? L10n.Value.yes : L10n.Value.no))
+            row(L10n.Status.hidService, Text(lowEnergy.isHIDServiceAdded ? L10n.Status.hidServiceAdded : L10n.Value.none))
+            row(L10n.Status.subscribedCentrals, Text(lowEnergy.subscribedCentrals.count, format: .number))
+            row(L10n.Status.connectedPeripherals, Text(central.connected.count, format: .number))
+            row(L10n.Status.hostLEDs, Text(verbatim: lowEnergy.keyboardLEDs.localizedLabel))
         }
     }
 
@@ -128,6 +163,9 @@ struct SetupView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: entry.displayName).lineLimit(1)
                     Text(_deviceStatus(entry)).font(.caption).foregroundColor(.secondary)
+                    if entry.isActive {
+                        Text(verbatim: coordinator.companionStatus).font(.caption).foregroundStyle(.secondary)
+                    }
                     if developerMode {
                         Text(verbatim: entry.id.uuidString)
                             .font(.caption2).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
@@ -164,6 +202,16 @@ struct SetupView: View {
             Spacer()
             value.foregroundColor(.secondary)
         }
+    }
+
+    private func _resetAll() {
+        lowEnergy.clearAllowedHosts()
+        names.clear()
+        if let bundleID = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: bundleID)
+        }
+        hasSeenWelcome = false
+        coordinator.setEnabled(true)
     }
 }
 

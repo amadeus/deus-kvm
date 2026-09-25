@@ -3,6 +3,9 @@
 Current follow-up: [automatic Mac selection on Windows](docs/AUTOMATIC_MAC_PLAN.md)
 tracks the 2026-09-21 implementation and user hardware checkpoints.
 
+The [macOS settings organization plan](docs/MAC_SETTINGS_PLAN.md) tracks the
+Setup/Controls reorganization and its pending user review.
+
 Goal: keep the Mac as a Bluetooth LE HID keyboard/mouse for the Windows PC, but
 make it behave like Across / Deskflow / Universal Control: push the Mac cursor
 past a chosen display edge to control the PC, push the PC cursor against a

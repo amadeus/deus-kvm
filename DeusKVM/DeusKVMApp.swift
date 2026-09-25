@@ -33,9 +33,8 @@ struct DeusKVMApp: App {
         .defaultSize(width: 480, height: 600)
         .windowResizability(.contentSize)
         Settings {
-            SettingsView()
+            ContentView()
                 .modifier(AppEnvironment(lowEnergy: lowEnergy, central: central, names: deviceNames, coordinator: coordinator))
-                .frame(minWidth: 420, idealWidth: 480, maxWidth: 640, minHeight: 480, idealHeight: 600)
         }
         .defaultSize(width: 480, height: 600)
         .windowResizability(.contentSize)
