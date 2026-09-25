@@ -151,22 +151,22 @@ struct SetupView: View {
 
     private func connectedDeviceRow(_ entry: DeviceEntry) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
                     Text(verbatim: entry.displayName).lineLimit(1)
-                    Text(_deviceStatus(entry)).font(.caption).foregroundColor(.secondary)
-                    if entry.isActive {
-                        Text(verbatim: coordinator.companionStatus).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if developerMode {
-                        Text(verbatim: entry.id.uuidString)
-                            .font(.caption2).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
-                    }
+                    Spacer()
+                    Button { selectedInfo = entry } label: { Image(systemName: "info.circle") }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(L10n.DeviceInfo.info)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Button { selectedInfo = entry } label: { Image(systemName: "info.circle") }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel(L10n.DeviceInfo.info)
+                Text(_deviceStatus(entry)).font(.caption).foregroundColor(.secondary)
+                if entry.isActive {
+                    Text(verbatim: coordinator.companionStatus).font(.caption).foregroundStyle(.secondary)
+                }
+                if developerMode {
+                    Text(verbatim: entry.id.uuidString)
+                        .font(.caption2).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+                }
             }
             Toggle("Enable control", isOn: Binding(
                 get: { lowEnergy.hostPolicy.allowed.contains(entry.id) },

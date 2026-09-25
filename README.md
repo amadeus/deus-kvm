@@ -27,7 +27,7 @@ BLE. No LAN connection is required.
    **Show all devices**. Windows Bluetooth Settings is not needed for this flow.
 4. In the Mac's **Setup** tab, turn on **Enable control** for your PC. Advertising
    stops when an allowed PC is ready and resumes when none is available.
-5. In **Controls**, choose the Mac display and exit edge, leave edge switching enabled,
+5. In **Configuration**, choose the Mac display and exit edge, leave edge switching enabled,
    and select the Windows display. **Setup → Devices** shows **Windows edge return ready**.
    Return through the opposite edge on Windows.
 
@@ -43,16 +43,16 @@ BLE. No LAN connection is required.
   display. Release held keys and mouse buttons before switching.
 - **Switch to PC**, including the hotkey, centers the pointer on the selected
   Windows display. The default toggle is **Fn + Escape**; record your own in
-  **Controls**. The Mac hotkey remains the way back if Windows cannot return.
-- **Controls → Input settings → Share clipboard with Windows** shares plain text in both
+  **Configuration**. The Mac hotkey remains the way back if Windows cannot return.
+- **Configuration → Input settings → Share clipboard with Windows** shares plain text in both
   directions, up to **64 KiB of UTF-8** per copy. Clipboard sharing pauses while
   locked or signed out and skips recognized private clipboard markers. See
   [clipboard behavior and limits](docs/CLIPBOARD.md). The current prototype also
   supports [on-demand file paste in both directions](docs/FILE_PASTE_CHECKPOINT.md)
   for one regular file up to 2 GB, using networking only. Windows → Mac uses
   Finder Cmd+V with DeusKVM progress/cancel UI. Contents transfer only when pasted.
-- Vertical and horizontal scrolling can be inverted independently in **Controls → Input settings**.
-- **Disable DeusKVM** in **Controls** or the menu bar restores local input and
+- Vertical and horizontal scrolling can be inverted independently in **Configuration → Input settings**.
+- **Disable DeusKVM** in **Configuration** or the menu bar restores local input and
   stops advertising, input capture, and clipboard exchange. Enabling reuses
   saved devices. The menu icon shows searching, connecting, ready, or disabled.
 - Mac launch-at-login is optional under **Setup → Startup**. On Windows, **Start automatically with

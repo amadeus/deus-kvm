@@ -1,9 +1,9 @@
 # macOS settings organization
 
-Scope: reorganize existing settings into Setup and Controls. Preserve settings
+Scope: reorganize existing settings into Setup and Configuration. Preserve settings
 keys, saved choices, actions, device selection, and Bluetooth/input behavior.
 Edge switching now defaults to enabled when no value has been saved. Do not
-add device selection to Controls or tab persistence.
+add device selection to Configuration or tab persistence.
 
 ## Organization
 
@@ -11,12 +11,12 @@ add device selection to Controls or tab persistence.
   login; advanced settings (developer mode and reset).
 - Merge Connection into Devices. Show pairing help when the list is empty,
   Bluetooth problems above the devices, and diagnostics in developer mode.
-- Controls: current Mac/PC control and enable/disable; existing screen switching
+- Configuration: current Mac/PC control and enable/disable; existing screen switching
   and Windows display settings; shortcut; clipboard sharing; scrolling.
 - Preserve the existing missing-permission, unavailable-PC, and Secure Input
-  messages in Controls.
+  messages in Configuration.
 - Use the same two tabs in the main window and the macOS Settings window:
-  Controls first, Setup second. Open on Controls when permissions are granted;
+  Configuration first, Setup second. Open on Configuration when permissions are granted;
   route to Setup when opening or focusing a settings window with missing access.
 - Permissions is collapsible, initially collapsed when all grants are allowed
   and expanded otherwise; update expansion when that permission state changes.
@@ -46,7 +46,7 @@ settings polish; the interactive checks below remain pending.
 
 ## Polish follow-up
 
-- [x] Implement permission disclosure, permission-based opening tab, Controls-first
+- [x] Implement permission disclosure, permission-based opening tab, Configuration-first
   ordering, inline control buttons, Input settings, and enabled-by-default edges.
 - [x] Verify formatting/lint and signed arm64 Release build for this follow-up.
 - [x] Commit the verified polish changes.
@@ -66,7 +66,7 @@ settings polish; the interactive checks below remain pending.
 
 - [ ] Check permissions initially collapse when allowed, expand when missing,
   remain manually expandable, and update after a permission change.
-- [ ] Confirm Controls opens by default and Setup opens when a permission is
+- [ ] Confirm Configuration opens by default and Setup opens when a permission is
   missing, including reopening the settings window.
 - [x] Confirm the right-aligned switch button and Input settings section order
   in the installed app through live screenshots.
@@ -94,7 +94,7 @@ build, and reopened it. Live inspection confirmed the right-aligned switch
 button, Input settings immediately below Current control, permissions initially
 collapsed with all grants allowed, and expansion/collapse by clicking empty
 header space. The PC reconnected and reported Windows edge return ready.
-Controls was left open. Missing-permission behavior and full hardware input
+Configuration was left open. Missing-permission behavior and full hardware input
 checks remain pending; this verification does not mark them passed.
 
 ## Permissions spacing and advanced-setting cleanup
@@ -107,3 +107,11 @@ checks remain pending; this verification does not mark them passed.
   user's staged "Controlling PC" wording change; commit only this cleanup.
 - [ ] User visual check: expanded permissions ends directly after Input Monitoring
   when all access is ready; permission/restart help still appears when needed.
+
+## Configuration label and device title alignment
+
+- [x] Rename the visible Controls tab to Configuration and update its documented paths.
+- [x] Put the device name and info button in the same title row; status remains below.
+- [x] Verify formatting/lint, signed arm64 build, and packaged wording; commit only
+  these edits while preserving the user's staged wording change.
+- [ ] User visual check: Configuration tab label and info button centered with the name.
