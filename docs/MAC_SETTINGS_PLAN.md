@@ -68,7 +68,8 @@ settings polish; the interactive checks below remain pending.
   remain manually expandable, and update after a permission change.
 - [ ] Confirm Controls opens by default and Setup opens when a permission is
   missing, including reopening the settings window.
-- [ ] Confirm the right-aligned switch button and Input settings section order.
+- [x] Confirm the right-aligned switch button and Input settings section order
+  in the installed app through live screenshots.
 - [ ] Click the Permissions text, chevron, and empty header space to expand and
   collapse; confirm permission action buttons do not toggle the section.
 - [ ] Confirm fresh settings start with edge switching enabled and a saved off
@@ -83,3 +84,15 @@ settings polish; the interactive checks below remain pending.
   settings); confirm launch-at-login state and macOS Settings entry point.
 
 A successful build or commit does not complete these visual/hardware checks.
+
+## Installed-build verification
+
+The screenshot reported after the row follow-up came from the older installed
+11:22 build; the latest signed build was from 11:30. Replaced
+`/Applications/DeusKVM.app`, verified its executable SHA-256 matched the latest
+build, and reopened it. Live inspection confirmed the right-aligned switch
+button, Input settings immediately below Current control, permissions initially
+collapsed with all grants allowed, and expansion/collapse by clicking empty
+header space. The PC reconnected and reported Windows edge return ready.
+Controls was left open. Missing-permission behavior and full hardware input
+checks remain pending; this verification does not mark them passed.
