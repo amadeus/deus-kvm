@@ -22,7 +22,7 @@ add device selection to Controls or tab persistence.
   and expanded otherwise; update expansion when that permission state changes.
   The whole Permissions header row is a button, including its empty space.
 - Right-align Switch to PC / Return to Mac beside the current-control status.
-  Keep Enable/Disable on its own row and omit the pairing byline.
+  Right-align Enable/Disable on its own row and omit the pairing byline.
 - Combine clipboard sharing and scroll inversion under Input settings directly
   below Current control, before Switch at display edge.
 

@@ -27,8 +27,11 @@ struct ControlsSettingsView: View {
                 }
                 if coordinator.secureInput { Text(L10n.Layout.secureInput).foregroundStyle(.orange) }
                 if let error = coordinator.lastError { Text(verbatim: error).foregroundStyle(.red) }
-                Button(coordinator.isEnabled ? "Disable DeusKVM" : "Enable DeusKVM") {
-                    coordinator.setEnabled(!coordinator.isEnabled)
+                HStack {
+                    Spacer()
+                    Button(coordinator.isEnabled ? "Disable DeusKVM" : "Enable DeusKVM") {
+                        coordinator.setEnabled(!coordinator.isEnabled)
+                    }
                 }
             }
             Section {
