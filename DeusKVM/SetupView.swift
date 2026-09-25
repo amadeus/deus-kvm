@@ -10,7 +10,7 @@ struct SetupView: View {
     @StateObject private var login = LaunchAtLoginController()
     @State private var showReset = false
     @AppStorage(AppSettings.hasSeenWelcomeKey) private var hasSeenWelcome = false
-    @State private var selectedInfo: DeviceEntry?
+    @State private var selectedInfoID: UUID?
     @EnvironmentObject private var coordinator: EdgeSwitchCoordinator
 
     @Environment(\.hid) private var hid
@@ -41,7 +41,6 @@ struct SetupView: View {
                 }
             }
         }
-        .sheet(item: $selectedInfo) { DeviceInfoView(entry: $0) }
         .onAppear { login.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in login.refresh() }
         .alert("Could not change login startup", isPresented: Binding(
@@ -155,9 +154,19 @@ struct SetupView: View {
                 HStack(spacing: 8) {
                     Text(verbatim: entry.displayName).lineLimit(1)
                     Spacer()
-                    Button { selectedInfo = entry } label: { Image(systemName: "info.circle") }
+                    Button { selectedInfoID = entry.id } label: { Image(systemName: "info.circle") }
                         .buttonStyle(.borderless)
                         .accessibilityLabel(L10n.DeviceInfo.info)
+                        .popover(isPresented: Binding(
+                            get: { selectedInfoID == entry.id },
+                            set: { if !$0, selectedInfoID == entry.id { selectedInfoID = nil } }
+                        ), arrowEdge: .trailing) {
+                            DeviceInfoPopover(
+                                entry: entry,
+                                status: _deviceStatus(entry),
+                                companionStatus: entry.isActive ? coordinator.companionStatus : nil
+                            )
+                        }
                 }
                 Text(_deviceStatus(entry)).font(.caption).foregroundColor(.secondary)
                 if entry.isActive {

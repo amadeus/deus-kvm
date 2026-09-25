@@ -115,3 +115,15 @@ checks remain pending; this verification does not mark them passed.
 - [x] Verify formatting/lint, signed arm64 build, and packaged wording; commit only
   these edits while preserving the user's staged wording change.
 - [ ] User visual check: Configuration tab label and info button centered with the name.
+
+## Device information popover
+
+- [x] Replace the Setup device-info sheet with a native popover anchored to its
+  info button. Show the name as its heading, live device/companion status, and
+  a selectable identifier; show manufacturer only when known.
+- [x] Rename inline through the existing DeviceNameStore using Save/Cancel.
+  Preserve the existing connected-device rename restriction. Escape cancels
+  an edit or dismisses the popover; clicking outside dismisses it.
+- [x] Verify formatting/lint, signed arm64 build, and packaged wording; commit.
+- [ ] User check: placement, size, rename Save/Cancel, identifier selection,
+  live status updates, outside-click dismissal, and Escape.
