@@ -8,7 +8,7 @@ add device selection to Controls or tab persistence.
 ## Organization
 
 - Setup: permissions; devices with connection and companion status; launch at
-  login; advanced settings (developer mode, Force Service Changed, reset).
+  login; advanced settings (developer mode and reset).
 - Merge Connection into Devices. Show pairing help when the list is empty,
   Bluetooth problems above the devices, and diagnostics in developer mode.
 - Controls: current Mac/PC control and enable/disable; existing screen switching
@@ -56,11 +56,11 @@ settings polish; the interactive checks below remain pending.
 - [x] Couple the switch button with current-control status and move Input settings.
 - [x] Replace the default disclosure with an explicit full-width Permissions button.
 - [x] Verify lint, formatting, and the signed arm64 build; commit this follow-up.
-- Force Service Changed is unchanged. Its automatic workaround waits two seconds
+- Force Service Changed is now hidden from settings. Its automatic workaround remains
+  enabled by default, preserving the existing saved preference. It waits two seconds
   after a non-companion GATT read and only cycles a temporary service when there
   are no subscribed centrals. Prior reconnect tests do not isolate whether this
-  fallback is still necessary with the Windows companion. Removing its visible
-  toggle while retaining the fallback is a possible follow-up, not implemented.
+  fallback is still necessary with the Windows companion, so the fallback is retained.
 
 ## User checkpoint (pending)
 
@@ -96,3 +96,14 @@ collapsed with all grants allowed, and expansion/collapse by clicking empty
 header space. The PC reconnected and reported Windows edge return ready.
 Controls was left open. Missing-permission behavior and full hardware input
 checks remain pending; this verification does not mark them passed.
+
+## Permissions spacing and advanced-setting cleanup
+
+- [x] Hide the Force Service Changed toggle and explanatory text without changing
+  the automatic fallback or its enabled default.
+- [x] Omit the permission-help row when it has no missing-access or restart message.
+  The empty VStack previously created a blank Form row, its separator, and padding.
+- [x] Verify formatting/lint and the signed arm64 Release build, including the
+  user's staged "Controlling PC" wording change; commit only this cleanup.
+- [ ] User visual check: expanded permissions ends directly after Input Monitoring
+  when all access is ready; permission/restart help still appears when needed.

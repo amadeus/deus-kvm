@@ -9,7 +9,6 @@ struct SetupView: View {
     @AppStorage(AppSettings.developerModeKey) private var developerMode = false
     @StateObject private var login = LaunchAtLoginController()
     @State private var showReset = false
-    @AppStorage(AppSettings.useServiceChangedKey) private var forceServiceChanged = true
     @AppStorage(AppSettings.hasSeenWelcomeKey) private var hasSeenWelcome = false
     @State private var selectedInfo: DeviceEntry?
     @EnvironmentObject private var coordinator: EdgeSwitchCoordinator
@@ -96,13 +95,6 @@ struct SetupView: View {
     private var advancedSection: some View {
         Section(header: Text(L10n.Settings.advanced)) {
             Toggle(L10n.Settings.developerMode, isOn: $developerMode)
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle(L10n.Settings.forceServiceChanged, isOn: $forceServiceChanged)
-                    .onChange(of: forceServiceChanged) {
-                        if $0 { lowEnergy.scheduleServiceChanged() }
-                    }
-                Text(L10n.Settings.forceServiceChangedHint).font(.caption).foregroundStyle(.secondary)
-            }
             Button(role: .destructive) { showReset = true } label: {
                 Label(L10n.Settings.reset, systemImage: "trash")
             }

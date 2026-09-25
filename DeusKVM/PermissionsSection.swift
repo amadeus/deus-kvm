@@ -33,7 +33,9 @@ struct PermissionsSection: View {
             .accessibilityValue(Text(isExpanded ? L10n.SettingsOrganization.expanded : L10n.SettingsOrganization.collapsed))
             if isExpanded {
                 permissionRows
-                permissionHelp
+                if !accessibilityGranted || !keyboardGranted || (coordinator.isEnabled && !coordinator.keyboardMonitoringReady) {
+                    permissionHelp
+                }
             }
         }
         .onAppear(perform: refreshPermissions)
