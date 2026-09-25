@@ -31,8 +31,9 @@ add device selection to Controls or tab persistence.
 - [x] Build and sign the Release app for arm64; verify the packaged architecture.
 - [x] Commit the verified reorganization.
 
-Release app: `releases/settings-polish/DeusKVM.app`.
-Archive: `releases/DeusKVM-mac-arm64-settings-polish-2026-09-24.zip`.
+Current test app: `releases/DeusKVM.app`. Keep only this current macOS test
+artifact in `releases/`; superseded Mac builds and duplicate ZIPs were removed.
+Windows artifacts are unchanged.
 The packaged app passes strict code-signature verification with the existing
 Apple Development identity; its executable contains only arm64.
 
