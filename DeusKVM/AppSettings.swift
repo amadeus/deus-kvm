@@ -20,6 +20,7 @@ enum AppSettings {
     static let toggleKeyCodeKey = "DeusKVM.toggleKeyCode"
     static let toggleModifiersKey = "DeusKVM.toggleModifiers"
     static let toggleHotkeyEnabledKey = "DeusKVM.toggleHotkeyEnabled"
+    static let defaultEdgeSwitchEnabled = true
     static let defaultCornerSize = 0.0
 
     static let repoURL = URL(string: "https://github.com/amadeus/darwin-bt-remote")!

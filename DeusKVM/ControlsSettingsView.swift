@@ -12,7 +12,6 @@ struct ControlsSettingsView: View {
         Form {
             Section(L10n.SettingsOrganization.currentControl) {
                 Label(coordinator.isRemote ? L10n.Layout.remote : L10n.Layout.local, systemImage: "computermouse")
-                Text(L10n.Layout.targetHint).font(.caption).foregroundStyle(.secondary)
                 if !coordinator.isEnabled {
                     Text(L10n.SettingsOrganization.disabled).foregroundStyle(.secondary)
                 }
@@ -23,10 +22,12 @@ struct ControlsSettingsView: View {
                 }
                 if coordinator.secureInput { Text(L10n.Layout.secureInput).foregroundStyle(.orange) }
                 if let error = coordinator.lastError { Text(verbatim: error).foregroundStyle(.red) }
-                Button(coordinator.isRemote ? L10n.Layout.returnToMac : L10n.Layout.switchToPC) { coordinator.toggle() }
-                    .disabled(!coordinator.isRemote && !coordinator.canSwitch)
-                Button(coordinator.isEnabled ? "Disable DeusKVM" : "Enable DeusKVM") {
-                    coordinator.setEnabled(!coordinator.isEnabled)
+                HStack {
+                    Button(coordinator.isRemote ? L10n.Layout.returnToMac : L10n.Layout.switchToPC) { coordinator.toggle() }
+                        .disabled(!coordinator.isRemote && !coordinator.canSwitch)
+                    Button(coordinator.isEnabled ? "Disable DeusKVM" : "Enable DeusKVM") {
+                        coordinator.setEnabled(!coordinator.isEnabled)
+                    }
                 }
             }
             Section(L10n.Layout.edgeSection) {
@@ -73,21 +74,21 @@ struct ControlsSettingsView: View {
                 Text(L10n.Layout.releaseHint).font(.caption).foregroundStyle(.secondary)
             }
             Section {
-                Toggle("Share clipboard with Windows", isOn: $clipboardEnabled)
-                    .toggleStyle(.switch)
-            } header: {
-                Text(L10n.SettingsOrganization.sharing)
-            } footer: {
-                Text(
-                    "Shares text up to 64 KiB over Bluetooth and one file up to 2 GB over the local network. "
-                        + "Skips marked private items and pauses while locked."
-                )
-            }
-            Section("Windows scrolling") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Share clipboard with Windows", isOn: $clipboardEnabled)
+                        .toggleStyle(.switch)
+                    Text(
+                        "Shares text up to 64 KiB over Bluetooth and one file up to 2 GB over the local network. "
+                            + "Skips marked private items and pauses while locked."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
                 Toggle("Invert vertical scrolling", isOn: $invertVerticalScroll)
                     .toggleStyle(.switch)
                 Toggle("Invert horizontal scrolling", isOn: $invertHorizontalScroll)
                     .toggleStyle(.switch)
+            } header: {
+                Text(L10n.SettingsOrganization.inputSettings)
             }
         }
         .settingsFormStyle()

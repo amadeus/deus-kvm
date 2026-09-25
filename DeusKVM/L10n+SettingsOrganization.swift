@@ -6,6 +6,10 @@ extension L10n {
             "settings_organization.controls"
         }
 
+        static var permissions: LocalizedStringKey {
+            "settings_organization.permissions"
+        }
+
         static var devices: LocalizedStringKey {
             "settings_organization.devices"
         }
@@ -26,8 +30,8 @@ extension L10n {
             "settings_organization.windowsDisplay"
         }
 
-        static var sharing: LocalizedStringKey {
-            "settings_organization.sharing"
+        static var inputSettings: LocalizedStringKey {
+            "settings_organization.inputSettings"
         }
 
         static var noDevices: LocalizedStringKey {

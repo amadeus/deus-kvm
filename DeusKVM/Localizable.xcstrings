@@ -1,6 +1,17 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "settings_organization.permissions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permissions"
+          }
+        }
+      }
+    },
     "settings_organization.controls": {
       "extractionState": "manual",
       "localizations": {
@@ -67,13 +78,13 @@
         }
       }
     },
-    "settings_organization.sharing": {
+    "settings_organization.inputSettings": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sharing"
+            "value": "Input settings"
           }
         }
       }

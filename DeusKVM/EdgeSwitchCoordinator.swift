@@ -48,7 +48,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var canSwitch = false
     @Published private(set) var captureBlocker: String?
-    @Published var edgeEnabled = false {
+    @Published var edgeEnabled = AppSettings.defaultEdgeSwitchEnabled {
         didSet { _save() }
     }
 
@@ -82,7 +82,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         let defaults = UserDefaults.standard
         isEnabled = defaults.object(forKey: AppSettings.enabledKey) as? Bool ?? true
         connectionState = isEnabled ? .unavailable : .disabled
-        edgeEnabled = defaults.bool(forKey: AppSettings.edgeSwitchEnabledKey)
+        edgeEnabled = defaults.object(forKey: AppSettings.edgeSwitchEnabledKey) as? Bool ?? AppSettings.defaultEdgeSwitchEnabled
         displayID = defaults.string(forKey: AppSettings.edgeDisplayUUIDKey) ?? ""
         edge = DisplayEdge(rawValue: defaults.string(forKey: AppSettings.edgeSideKey) ?? "") ?? .right
         cornerSize = defaults.object(forKey: AppSettings.cornerSizePxKey) as? Double ?? AppSettings.defaultCornerSize

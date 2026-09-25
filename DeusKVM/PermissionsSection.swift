@@ -7,45 +7,23 @@ struct PermissionsSection: View {
     @EnvironmentObject private var coordinator: EdgeSwitchCoordinator
     @State private var bluetoothAuthorization = CBManager.authorization
     @State private var keyboardGranted = KeyboardMonitoringPermission.isGranted
+    @State private var accessibilityGranted = AccessibilityPermission.isTrusted
+    @State private var isExpanded = !(CBManager.authorization == .allowedAlways
+        && AccessibilityPermission.isTrusted && KeyboardMonitoringPermission.isGranted)
     @State private var permissionManager: CBCentralManager?
 
     var body: some View {
         Section {
-            permissionRow(
-                "Bluetooth",
-                detail: "Connect to your Windows PC.",
-                granted: bluetoothAuthorization == .allowedAlways,
-                restricted: bluetoothAuthorization == .restricted,
-                action: requestBluetooth
-            )
-            permissionRow(
-                "Accessibility",
-                detail: "Switch screens and control the pointer.",
-                granted: coordinator.permissionGranted,
-                action: AccessibilityPermission.request
-            )
-            permissionRow(
-                "Input Monitoring",
-                detail: "Forward every mapped keyboard key.",
-                granted: keyboardGranted,
-                action: KeyboardMonitoringPermission.request
-            )
-        } header: {
-            Text("Permissions")
-        } footer: {
-            VStack(alignment: .leading, spacing: 8) {
-                if !coordinator.permissionGranted || !keyboardGranted {
-                    Text("If DeusKVM is missing from Accessibility or Input Monitoring, use + to add this app, then enable its switch.")
-                    Button("Show DeusKVM in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
-                    }
-                }
-                if coordinator.isEnabled, keyboardGranted, coordinator.permissionGranted, !coordinator.keyboardMonitoringReady {
-                    Text("Quit and reopen DeusKVM to activate keyboard access.")
-                }
+            DisclosureGroup(isExpanded: $isExpanded) {
+                permissionRows
+                permissionHelp
+            } label: {
+                Text(L10n.SettingsOrganization.permissions)
             }
         }
         .onAppear(perform: refreshPermissions)
+        .onChange(of: allGranted) { isExpanded = !$0 }
+        .onChange(of: coordinator.permissionGranted) { _ in refreshPermissions() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in
             refreshPermissions()
         }
@@ -61,11 +39,56 @@ struct PermissionsSection: View {
         }
     }
 
+    private var allGranted: Bool {
+        bluetoothAuthorization == .allowedAlways && accessibilityGranted && keyboardGranted
+    }
+
+    @ViewBuilder
+    private var permissionRows: some View {
+        permissionRow(
+            "Bluetooth",
+            detail: "Connect to your Windows PC.",
+            granted: bluetoothAuthorization == .allowedAlways,
+            restricted: bluetoothAuthorization == .restricted,
+            action: requestBluetooth
+        )
+        permissionRow(
+            "Accessibility",
+            detail: "Switch screens and control the pointer.",
+            granted: accessibilityGranted,
+            action: AccessibilityPermission.request
+        )
+        permissionRow(
+            "Input Monitoring",
+            detail: "Forward every mapped keyboard key.",
+            granted: keyboardGranted,
+            action: KeyboardMonitoringPermission.request
+        )
+    }
+
+    private var permissionHelp: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !accessibilityGranted || !keyboardGranted {
+                Text("If DeusKVM is missing from Accessibility or Input Monitoring, use + to add this app, then enable its switch.")
+                Button("Show DeusKVM in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+                }
+            }
+            if coordinator.isEnabled, keyboardGranted, accessibilityGranted, !coordinator.keyboardMonitoringReady {
+                Text("Quit and reopen DeusKVM to activate keyboard access.")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
     private func refreshPermissions() {
         let bluetooth = CBManager.authorization
         let keyboard = KeyboardMonitoringPermission.isGranted
+        let accessibility = AccessibilityPermission.isTrusted
         if bluetoothAuthorization != bluetooth { bluetoothAuthorization = bluetooth }
         if keyboardGranted != keyboard { keyboardGranted = keyboard }
+        if accessibilityGranted != accessibility { accessibilityGranted = accessibility }
     }
 
     private func permissionRow(
