@@ -22,7 +22,7 @@ add device selection to Configuration or tab persistence.
   and expanded otherwise; update expansion when that permission state changes.
   The whole Permissions header row is a button, including its empty space.
 - Right-align Switch to PC / Return to Mac beside the current-control status.
-  Right-align Enable/Disable on its own row and omit the pairing byline.
+  Right-align Enable/Disable in the Current Control heading and omit the pairing byline.
 - Combine clipboard sharing and scroll inversion under Input settings directly
   below Current control, before Switch at display edge.
 
@@ -141,3 +141,13 @@ checks remain pending; this verification does not mark them passed.
 - [ ] Hardware check: iPhone hidden, MAINGEAR visible; a new Windows companion
   appears before enabling control, and an enabled PC remains listed offline.
 - [ ] Hardware check: reconnect, input switching, and clipboard still work.
+
+## Current Control heading action
+
+- [x] Move Enable/Disable DeusKVM into the section heading, aligned to the right
+  of Current Control. Preserve its existing action and state-dependent label.
+- [x] SwiftFormat and strict SwiftLint pass; signed Release build passes.
+  Refreshed `releases/DeusKVM.app` and verified its strict signature and arm64-only
+  architecture. The installed app has not been replaced.
+- [ ] User visual check: heading/button alignment at the normal window size in
+  enabled and disabled states; verify the action still toggles DeusKVM.

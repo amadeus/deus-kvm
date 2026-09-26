@@ -10,7 +10,7 @@ struct ControlsSettingsView: View {
 
     var body: some View {
         Form {
-            Section(L10n.SettingsOrganization.currentControl) {
+            Section {
                 HStack {
                     Label(coordinator.isRemote ? L10n.Layout.remote : L10n.Layout.local, systemImage: "computermouse")
                     Spacer()
@@ -27,11 +27,15 @@ struct ControlsSettingsView: View {
                 }
                 if coordinator.secureInput { Text(L10n.Layout.secureInput).foregroundStyle(.orange) }
                 if let error = coordinator.lastError { Text(verbatim: error).foregroundStyle(.red) }
-                HStack {
+            } header: {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(L10n.SettingsOrganization.currentControl)
                     Spacer()
                     Button(coordinator.isEnabled ? "Disable DeusKVM" : "Enable DeusKVM") {
                         coordinator.setEnabled(!coordinator.isEnabled)
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
             Section {
