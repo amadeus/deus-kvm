@@ -6,6 +6,7 @@ struct SetupView: View {
     @EnvironmentObject private var lowEnergy: HIDPeripheral
     @EnvironmentObject private var central: HIDCentral
     @EnvironmentObject private var names: DeviceNameStore
+    @EnvironmentObject private var companion: CompanionService
     @AppStorage(AppSettings.developerModeKey) private var developerMode = false
     @StateObject private var login = LaunchAtLoginController()
     @State private var showReset = false
@@ -111,9 +112,9 @@ struct SetupView: View {
         }
     }
 
-    /// hosts that connected to us (peripheral role); subscribed ones can receive input
+    /// Offer hosts after a PC companion handshake; retain saved control choices while offline.
     private var _connectedDevices: [DeviceEntry] {
-        lowEnergy.connectedCentrals.union(lowEnergy.hostPolicy.allowed)
+        companion.ready.union(lowEnergy.hostPolicy.allowed)
             .map { uuid in
                 let alias = names.name(for: uuid)
                 let subscribed = lowEnergy.subscribedCentrals.keys.contains(uuid)

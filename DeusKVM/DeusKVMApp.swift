@@ -93,6 +93,7 @@ private struct AppEnvironment: ViewModifier {
     func body(content: Content) -> some View {
         content
             .environmentObject(lowEnergy)
+            .environmentObject(lowEnergy.companion)
             .environmentObject(central)
             .environmentObject(names)
             .environmentObject(coordinator)

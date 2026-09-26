@@ -127,3 +127,17 @@ checks remain pending; this verification does not mark them passed.
 - [x] Verify formatting/lint, signed arm64 build, and packaged wording; commit.
 - [ ] User check: placement, size, rename Save/Cancel, identifier selection,
   live status updates, outside-click dismissal, and Escape.
+
+## Companion device filtering
+
+- [x] Show new devices only after a valid PC companion handshake. Generic HID
+  connections, including the user's iPhone, no longer enter the Setup list.
+- [x] Retain explicitly enabled hosts while offline so their saved control
+  permission remains accessible. Observe companion state directly so a handshake
+  updates the list even when HID subscriptions have not changed.
+- [x] SwiftFormat and strict SwiftLint pass for all 88 app/test sources. Release
+  build passes; `releases/DeusKVM.app` passes strict signature verification and
+  contains only arm64. The installed app has not been replaced.
+- [ ] Hardware check: iPhone hidden, MAINGEAR visible; a new Windows companion
+  appears before enabling control, and an enabled PC remains listed offline.
+- [ ] Hardware check: reconnect, input switching, and clipboard still work.
