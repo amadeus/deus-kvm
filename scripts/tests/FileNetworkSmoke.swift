@@ -30,7 +30,14 @@ struct FileNetworkSmoke {
                 guard let network = server.offer(epoch: 1, sequence: 2, file: true) else {
                     fputs("No local IPv4 listener available\n", stderr); exit(1)
                 }
-                let offer = ClipboardFileOffer(epoch: 1, clipboardSequence: 0, sequence: 2, name: "source.bin", size: captured.size, network: network)
+                let offer = ClipboardFileOffer(
+                    epoch: 1,
+                    clipboardSequence: 0,
+                    sequence: 2,
+                    name: "source.bin",
+                    size: captured.size,
+                    network: network
+                )
                 do { try JSONEncoder().encode(offer).write(to: folder.appendingPathComponent("offer.json"), options: .atomic) }
                 catch { fputs("Cannot publish test offer\n", stderr); exit(1) }
                 timer.resume()
@@ -39,10 +46,14 @@ struct FileNetworkSmoke {
         let receiver = FileNetworkReceiver(
             offer: ClipboardFileOffer(epoch: 3, clipboardSequence: 0, sequence: 4, name: "reverse.bin", size: bytes.count),
             destination: folder.appendingPathComponent("reverse.bin"), canAccess: { true },
-            ready: { offer in try! JSONEncoder().encode(offer).write(to: folder.appendingPathComponent("reverse-request.json"), options: .atomic) },
+            ready: { offer in try! JSONEncoder().encode(offer).write(
+                to: folder.appendingPathComponent("reverse-request.json"),
+                options: .atomic
+            ) },
             progress: { _ in }, completion: { error in
                 try! Data((error ?? "OK").utf8).write(to: folder.appendingPathComponent("reverse-result"), options: .atomic)
-            })
+            }
+        )
         receiver.start()
         withExtendedLifetime(receiver) { dispatchMain() }
     }

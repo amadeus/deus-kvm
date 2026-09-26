@@ -18,10 +18,12 @@ struct ReverseFileSmoke {
                 if scenario == "cancel", bytes > 0 { try! Data().write(to: folder.appendingPathComponent("cancel")) }
             }, completion: { error in
                 try! Data((error ?? "OK").utf8).write(to: folder.appendingPathComponent("result"), options: .atomic)
-            })
+            }
+        )
         receiver.start()
         withExtendedLifetime(receiver) { dispatchMain() }
     }
+
     static func forward(_ folder: URL) throws {
         let url = folder.appendingPathComponent("source.bin")
         try Data().write(to: url)
@@ -35,11 +37,17 @@ struct ReverseFileSmoke {
             server.configure(true)
             queue.asyncAfter(deadline: .now() + 1.5) {
                 let network = server.offer(epoch: 7, sequence: 9, file: true)!
-                let offer = ClipboardFileOffer(epoch: 7, clipboardSequence: 8, sequence: 9, name: "source.bin", size: captured.size, network: network)
+                let offer = ClipboardFileOffer(
+                    epoch: 7,
+                    clipboardSequence: 8,
+                    sequence: 9,
+                    name: "source.bin",
+                    size: captured.size,
+                    network: network
+                )
                 try! JSONEncoder().encode(offer).write(to: folder.appendingPathComponent("request.json"), options: .atomic)
             }
         }
         withExtendedLifetime(server) { dispatchMain() }
     }
-
 }

@@ -34,15 +34,35 @@ public sealed class FileClipboardTests
         Assert.Throws<NetworkUnavailableException>(() => session.Read(0));
     }
     [Fact]
-    public async Task CancellationUnblocksAnOutstandingRead()
+    public void CancellationUnblocksAnOutstandingRead()
     {
         using var stop = new CancellationTokenSource();
-        var requested = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var requested = new ManualResetEventSlim();
+        var timeout = TimeSpan.FromSeconds(10);
         using var session = new FileClipboardSession(new(1, 2, "file", 4), new TestFileReader(_ => {
-            requested.SetResult(true); stop.Token.WaitHandle.WaitOne(); throw new IOException("Canceled");
+            requested.Set(); stop.Token.WaitHandle.WaitOne(); throw new IOException("Canceled");
         }, stop.Cancel));
-        var read = Task.Run(() => Assert.Throws<IOException>(() => session.Read(0)));
-        await requested.Task.WaitAsync(TimeSpan.FromSeconds(2)); session.Dispose(); await read.WaitAsync(TimeSpan.FromSeconds(2));
+        Exception? readError = null;
+        // The reader deliberately blocks; keep it off the shared test thread pool.
+        var reader = new Thread(() => {
+            try { session.Read(0); }
+            catch (Exception error) { readError = error; }
+        }) { IsBackground = true };
+        reader.Start();
+        try
+        {
+            Assert.True(requested.Wait(timeout), "The reader did not start within the test deadline.");
+            Assert.True(reader.IsAlive, "The read must still be outstanding before disposal.");
+            session.Dispose();
+            Assert.True(reader.Join(timeout), "Disposing the session did not unblock the outstanding read.");
+            Assert.IsType<IOException>(readError);
+        }
+        finally
+        {
+            // Release the fake reader even if the cancellation assertion fails.
+            stop.Cancel();
+            reader.Join(timeout);
+        }
     }
     [Fact]
     public void InvalidBlocksFailAndExpiredOffersStayExpired()

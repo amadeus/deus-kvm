@@ -301,3 +301,22 @@ basic functionality on their setup; it does not enumerate every stress, login,
 2 GB transfer or lifecycle case above. The next authorized step is a single
 small downloadable EXE. See `WINDOWS_SINGLE_EXE_PLAN.md`; the companion runtime
 source is unchanged, and the confirmed Framework ZIP is retained as fallback.
+
+## CI test follow-up (2026-09-25)
+
+Run 36222730075 stopped on Swift formatting in two smoke-test scripts and a
+two-second timeout in the Framework cancellation test. The unchanged Windows
+tests passed in run 36223316374, confirming that timeout was intermittent.
+
+- [x] Format both Swift smoke-test scripts so the repository-wide lint gate passes.
+- [x] Give the deliberately blocking fake file reader a dedicated thread. Wait
+  for its startup before disposing the session, then require it to finish with
+  IOException. Use separate ten-second startup/completion deadlines and release
+  the fake reader in cleanup even when an assertion fails.
+- [x] Full SwiftFormat and strict SwiftLint checks pass; all 95 macOS tests pass.
+- [x] .NET 10 tests: 172 passed, two Windows-only CNG tests skipped on macOS.
+- [x] Framework 4.8 test assembly builds with zero warnings/errors.
+- [ ] Run the revised Framework tests on Windows CI; local compilation does not
+  establish Framework runtime success. Existing hardware checkpoints remain pending.
+
+Production clipboard and cancellation code is unchanged.
