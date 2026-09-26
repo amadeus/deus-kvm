@@ -36,6 +36,8 @@ struct ControlsSettingsView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    // Extend past the grouped header inset to the section's outer edge.
+                    .padding(.trailing, -10)
                 }
             }
             Section {

@@ -151,3 +151,11 @@ checks remain pending; this verification does not mark them passed.
   architecture. The installed app has not been replaced.
 - [ ] User visual check: heading/button alignment at the normal window size in
   enabled and disabled states; verify the action still toggles DeusKVM.
+
+### Heading button edge alignment
+
+- [x] Extend only the button's trailing edge by 10 points to match the grouped
+  section's outer edge. Keep the Current Control title's leading alignment.
+- [x] SwiftFormat, strict SwiftLint, and Release build pass. Refreshed
+  `releases/DeusKVM.app`; strict signature verification passes, arm64 only.
+- [ ] User visual check: button matches the card's right edge; title stays put.
