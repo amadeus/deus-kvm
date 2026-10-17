@@ -68,13 +68,10 @@ Windows:
 
 ## Not changed
 
-- The Mac input path still hops to the main thread, and CoreBluetooth uses the
-  main queue. Steady-state remote work there is small; a dedicated Bluetooth
-  queue would need HIDPeripheral/CompanionService split by isolation.
 - SwiftUI: the settings window's views still observe the whole coordinator, so
   with that window open a crossing re-lays out its Form. Splitting the
   coordinator's published state would narrow this. (The App-level observation
-  is fixed below.)
+  is fixed below. Since the threaded build input no longer waits for it.)
 - Windows raw input is registered with INPUTSINK permanently, so the desktop
   worker wakes for every mouse packet system-wide, including the PC's own mouse
   (notable with 1–8 kHz mice). Registering INPUTSINK only while a handoff is
@@ -117,8 +114,9 @@ Windows from `51d3f19` (`windows/publish.sh`); Mac follow-up from `c5238dd`
 (`scripts/publish-mac.sh`). Both apps need these for larger companion frames;
 a mixed pair keeps 20-byte frames.
 
-- Mac: `releases/DeusKVM.app` (also `releases/DeusKVM.zip`, 1,079,387 bytes;
-  SHA-256 `17500623196b2efddfc329398f055c05b2a035547b65361394873f78cedc2234`).
+- Mac: `releases/Previous/DeusKVM-mac-arm64-2026-10-17-main.zip` (1,079,387
+  bytes; SHA-256 `17500623196b2efddfc329398f055c05b2a035547b65361394873f78cedc2234`;
+  it was `releases/DeusKVM.zip` until the threaded build below replaced it).
   Version 0.0.4 (4). Strict signature verification passes with the existing
   Apple Development identity, hardened runtime, no debugger entitlement; the
   executable contains only arm64. Quit DeusKVM and replace the installed app.
@@ -176,6 +174,67 @@ First minutes with the follow-up build (31 samples, 8 crossings):
   the coordinator's publications. Profiling at 1 ms intervals itself stalled
   input up to 431 ms, so avoid it during real use.
 
+## Off the main thread — 2026-10-17 (branch `threaded`)
+
+CoreBluetooth delivered every callback on the main thread, and remote input
+went from the event tap through the main thread before becoming a HID report,
+so any UI work there (a settings window render, a menu rebuild) delayed input.
+Commits `49f75b1` and `a3f2e2d`:
+
+- [x] CoreBluetooth runs on a dedicated serial queue (`BluetoothTransport`,
+  user-interactive QoS). The queue also sends HID reports and holds their
+  backpressure queue, sends companion frames, and translates captured input.
+  The event tap forwards remote input straight to it.
+- [x] The main thread keeps host selection, GATT services, published UI state
+  and companion protocol decoding. It drives the queue in issue order: the
+  route to the selected host, EXIT, release reports, retargeting and
+  resubscription replays. Callbacks return to the main thread in order and are
+  dropped once the manager is replaced (power-alert restart).
+- [x] Input captured at a crossing waits on the queue (`InputGate`) until the
+  coordinator approves the crossing and queues ENTER, so it still follows
+  ENTER and is discarded for a refused crossing. Waiting motion and scroll are
+  capped at 512 events; keys and buttons always wait.
+- [x] Returning ends the tap session before EXIT, so no input for the session
+  follows EXIT. Quitting waits for the queued EXIT and release reports, as it
+  did when they were sent inline.
+- [x] HID reads and keyboard LED writes are answered on the queue. Companion
+  reads and writes still wait for the main thread, which owns the protocol
+  state (as before, when the callback itself waited for it).
+- `maxDispatchMs` in capture health lines now measures tap → Bluetooth queue
+  delay, including the wait for a crossing's approval.
+- The deployment target is macOS 13, so the queue confinement is a runtime
+  discipline (an `@unchecked Sendable` class touched only on its queue). A
+  custom actor executor would let the compiler check it but needs macOS 14.
+- Windows and the companion protocol are unchanged; the 2026-10-16 Windows EXE
+  stays.
+
+Test build (Mac only), from `a3f2e2d` with `scripts/publish-mac.sh`:
+
+- `releases/DeusKVM.app` (also `releases/DeusKVM.zip`, 1,104,699 bytes;
+  SHA-256 `945d97efd710b4f47975b2cf5544aff66f3058665ab019f267ed5c8633c73b7e`).
+  Version 0.0.4 (4). Strict signature verification passes with the same
+  identity and hardened runtime; entitlements are Bluetooth and Apple Events
+  only (no debugger entitlement); the only executable is arm64.
+- Rollback: the main-branch follow-up build above,
+  `releases/Previous/DeusKVM-mac-arm64-2026-10-17-main.zip`.
+
+Hardware checks (pending), in normal use:
+
+- [ ] Crossing to Windows and back by edge and by hotkey: no lost first
+  keystroke or click after entering; no Windows cursor movement after return.
+- [ ] Typing (modifiers, Caps Lock), clicking, dragging, scrolling and media
+  keys on Windows.
+- [ ] Disable and re-enable from the menu, and Windows taking control of a Mac
+  (if used): no stuck keys or buttons.
+- [ ] Quit and reopen DeusKVM while controlling Windows: nothing stays
+  pressed; Windows reconnects.
+- [ ] Mac Bluetooth off and on: the app recovers and Windows reconnects.
+- [ ] Clipboard text and file paste in both directions.
+- [ ] Switching Windows between two Macs (if used).
+- [ ] Menu bar icon and menu still update on crossings.
+- [ ] Capture logs over a day: dispatch delay and backpressure versus the
+  follow-up build.
+
 ## Local verification
 
 All 98 Mac tests and 176 Windows core tests pass (2 CNG GCM tests skip off
@@ -191,3 +250,10 @@ seek, changed source, revocation, cancellation, empty, collision, stale and
 Mac follow-up: all 100 Mac tests pass, including one report per scroll step,
 buttons-only replay state and the boot keyboard decision; strict SwiftLint and
 SwiftFormat pass; each follow-up commit builds and tests on its own.
+
+Threaded: all 105 Mac tests pass, including five InputGate cases (release in
+capture order on approval, discard on stop or refusal, older sessions never
+replace newer input, approving an older session keeps newer waiting input, the
+motion cap never drops keys). Debug and Release builds have no concurrency
+diagnostics under Swift 6 complete checking; strict SwiftLint and SwiftFormat
+pass. CoreBluetooth on the queue is covered only by the hardware checks above.

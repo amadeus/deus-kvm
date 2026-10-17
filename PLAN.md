@@ -1533,3 +1533,11 @@ docs/PERFORMANCE_AUDIT.md: motion summed under Bluetooth backpressure,
 negotiated companion frames, pipelined file transfer, fewer settings/CONFIG
 sends, and reduced Windows idle work. Local tests and loopback transfers pass;
 its hardware checklist is pending.
+
+### Off the main thread — 2026-10-17 (branch `threaded`)
+
+CoreBluetooth, HID report sending, companion frame sending and captured input
+moved to a dedicated Bluetooth queue; the main thread keeps host policy,
+services, UI state and companion decoding (docs/PERFORMANCE_AUDIT.md). The
+local build, 105 Mac tests and lint pass, and the signed arm64 test build is in
+`releases/`. Its hardware checklist is pending.
