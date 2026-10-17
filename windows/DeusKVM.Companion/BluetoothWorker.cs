@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Security.Principal;
 using System.Text.Json;
 using DeusKVM.Companion.Core;
 
@@ -22,6 +20,7 @@ internal sealed class BluetoothWorker : ApplicationContext
     private KnownMacRecovery? recovery;
     private bool started;
     private long lastTick;
+    private DateTime pairingHintWritten;
     public int ExitCode { get; private set; }
 
     private sealed class Attempt(MacSession link, Task work)
@@ -200,7 +199,10 @@ internal sealed class BluetoothWorker : ApplicationContext
                     priority.SetAvailable(previous.Link.Mac, false);
             }
             else if (!previous.Link.Active)
+            {
                 previous.Link.SetActive(true); // same physical owner after GATT recovery
+                previous.Link.RefreshDesktop();
+            }
         }
 
         if (arbiter.Owner is null && arbiter.Releasing is null)
@@ -211,6 +213,7 @@ internal sealed class BluetoothWorker : ApplicationContext
             {
                 priority.SelectRequested(next);
                 winner.Link.SetActive(true);
+                winner.Link.RefreshDesktop();
                 Remember(next, true);
                 Emit(status with { State = "Connected", DeviceName = next.Name, DeviceId = next.Id,
                     Detail = "Active Mac; preparing edge and clipboard session", LastDiscovery = DateTimeOffset.UtcNow,
@@ -229,6 +232,10 @@ internal sealed class BluetoothWorker : ApplicationContext
 
     private void RefreshPairingHint()
     {
+        // This loop runs every 250 ms; reopen and parse the file only after a pairing rewrites it.
+        var written = File.GetLastWriteTimeUtc(Paths.Settings);
+        if (written == pairingHintWritten) return;
+        pairingHintWritten = written;
         var next = JsonFiles.Read<CompanionSettings>(Paths.Settings);
         if (next == pairingHint) return;
         pairingHint = next;
@@ -280,8 +287,9 @@ internal sealed class BluetoothWorker : ApplicationContext
 
     private void Emit(WorkerStatus next)
     {
-        next = next with { At = DateTimeOffset.UtcNow, Identity = WindowsIdentity.GetCurrent().Name,
-            ProcessSession = Process.GetCurrentProcess().SessionId };
+        // Cached: these lookups ran on the STA that also dispatches GATT notifications.
+        next = next with { At = DateTimeOffset.UtcNow, Identity = ProcessIdentity.Name,
+            ProcessSession = ProcessIdentity.Session };
         output.WriteLine(JsonSerializer.Serialize(next));
         status = next with { DiscoveryEvent = null };
     }

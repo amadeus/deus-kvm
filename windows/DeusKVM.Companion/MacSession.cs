@@ -87,6 +87,12 @@ internal sealed class MacSession : IDisposable
             control.Tick(device.BluetoothAddress.ToString("X12"));
     }
 
+    public void RefreshDesktop()
+    {
+        if (!disposed && device is not null && control is not null)
+            control.RefreshDesktop(device.BluetoothAddress.ToString("X12"));
+    }
+
     private void ConnectionChanged(BluetoothLEDevice sender, object args)
     {
         var connected = sender.ConnectionStatus == BluetoothConnectionStatus.Connected;

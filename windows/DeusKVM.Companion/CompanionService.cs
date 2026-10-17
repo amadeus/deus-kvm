@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Security.Principal;
 using System.ServiceProcess;
 using System.Text.Json;
 using DeusKVM.Companion.Core;
@@ -12,6 +11,9 @@ internal sealed class CompanionService : ServiceBase
     private Task? runner;
     private volatile WorkerStatus worker = new("Starting", "Starting Bluetooth recovery", DateTimeOffset.UtcNow);
     private readonly object logLock = new();
+    private WorkerStatus? savedWorker;
+    private (uint Id, string State) savedConsole;
+    private long savedAt;
 
     public CompanionService()
     {
@@ -52,7 +54,7 @@ internal sealed class CompanionService : ServiceBase
     {
         try
         {
-            Log($"Service started as {WindowsIdentity.GetCurrent().Name}; session {Process.GetCurrentProcess().SessionId}");
+            Log($"Service started as {ProcessIdentity.Name}; session {ProcessIdentity.Session}");
             while (!stop.IsCancellationRequested)
             {
                 await RunWorkerAsync(stop);
@@ -69,7 +71,7 @@ internal sealed class CompanionService : ServiceBase
         finally
         {
             worker = new("Stopped", "Companion service is stopped.", DateTimeOffset.UtcNow);
-            SaveStatus();
+            SaveStatus(force: true);
         }
     }
 
@@ -140,12 +142,22 @@ internal sealed class CompanionService : ServiceBase
         }
     }
 
-    private void SaveStatus()
+    // Readers need changes promptly and otherwise only a refresh well inside ServicePolicy.IsFresh's
+    // 45 s window; rewriting every 2 s cost a file replace (and antivirus scan) for unchanged state.
+    private void SaveStatus(bool force = false)
     {
         var console = ConsoleSession.Read();
-        JsonFiles.Write(Paths.Status, new ServiceSnapshot(RuntimeCompat.ProcessId,
-            WindowsIdentity.GetCurrent().Name, Process.GetCurrentProcess().SessionId,
-            console.Id, console.State, worker, DateTimeOffset.UtcNow));
+        var current = worker;
+        if (!force && ReferenceEquals(current, savedWorker) && console == savedConsole &&
+            RuntimeCompat.TickCount64 - savedAt < 15000) return;
+        try
+        {
+            JsonFiles.Write(Paths.Status, new ServiceSnapshot(RuntimeCompat.ProcessId, ProcessIdentity.Name, ProcessIdentity.Session,
+                console.Id, console.State, current, DateTimeOffset.UtcNow));
+            savedWorker = current; savedConsole = console; savedAt = RuntimeCompat.TickCount64;
+        }
+        // A transient lock (for example antivirus on status.json.new) retries on the next pass.
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
 
     private void Log(string text)

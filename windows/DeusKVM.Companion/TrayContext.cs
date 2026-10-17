@@ -17,6 +17,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly System.Windows.Forms.Timer refresh = new() { Interval = 2000 };
     private SettingsForm? settings;
     private bool busy;
+    private int hiddenTicks;
 
     public TrayContext(EventWaitHandle showSettings, bool openSettings = true)
     {
@@ -40,10 +41,13 @@ internal sealed class TrayContext : ApplicationContext
         removeItem.Click += async (_, _) => await RemoveAsync();
         icon = new NotifyIcon { Icon = AppIcon.Image, Text = "DeusKVM Companion", ContextMenuStrip = menu, Visible = true };
         icon.DoubleClick += (_, _) => ShowSettings();
+        menu.Opening += (_, _) => RefreshStatus();
         refresh.Tick += (_, _) =>
         {
             if (showSettings.WaitOne(0)) ShowSettings();
-            RefreshStatus();
+            // SCM, registry and status.json reads: live while Settings is open, otherwise
+            // every 10 s for the tooltip (the menu refreshes as it opens).
+            else if (settings is { IsDisposed: false, Visible: true } || ++hiddenTicks % 5 == 0) RefreshStatus();
         };
         refresh.Start();
         RefreshStatus();
@@ -63,6 +67,7 @@ internal sealed class TrayContext : ApplicationContext
 
     private void RefreshStatus()
     {
+        if (settings?.IsDisposed == true) settings = null; // a closed window is not refreshed
         trayStartupItem.Enabled = removeItem.Enabled = !busy;
         try
         {

@@ -84,16 +84,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     public void Tick(string address)
     {
         if (disposed) return;
-        if (active)
-        {
-            if (desktop is null)
-            {
-                var epoch = ++desktopGeneration;
-                desktop = new DesktopHost(message => context.Post(_ =>
-                { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null));
-            }
-            desktop.Refresh(address);
-        }
+        RefreshDesktop(address);
         UpdateClipboardSession();
         if (clipboardEnabled) Clipboard.Tick(ClipboardNow);
         if (active && desktop?.Connected == false) SetDetail(desktop.Detail);
@@ -109,6 +100,20 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
             AdvertiseClipboard();
             if (active && desktop?.Connected != true) { blind = 4; Send(Protocol.Message.State, [4, 2, 0]); SetDetail(desktop?.Detail ?? "Waiting for desktop"); }
         }
+    }
+
+    // Also called on activation so the console worker (needed for ENTER placement and
+    // edge return) starts immediately rather than at the next three-second tick.
+    public void RefreshDesktop(string address)
+    {
+        if (disposed || !active) return;
+        if (desktop is null)
+        {
+            var epoch = ++desktopGeneration;
+            desktop = new DesktopHost(message => context.Post(_ =>
+            { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null));
+        }
+        desktop.Refresh(address);
     }
 
     public void SetActive(bool value, bool notify = true)
