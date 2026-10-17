@@ -71,9 +71,10 @@ Windows:
 - The Mac input path still hops to the main thread, and CoreBluetooth uses the
   main queue. Steady-state remote work there is small; a dedicated Bluetooth
   queue would need HIDPeripheral/CompanionService split by isolation.
-- SwiftUI: the App struct holds four `@StateObject`s, so any publication
-  re-evaluates the scene and menu bar (for example at each crossing). Measure
-  entry `maxDispatchMs` with Settings open and closed before restructuring.
+- SwiftUI: the settings window's views still observe the whole coordinator, so
+  with that window open a crossing re-lays out its Form. Splitting the
+  coordinator's published state would narrow this. (The App-level observation
+  is fixed below.)
 - Windows raw input is registered with INPUTSINK permanently, so the desktop
   worker wakes for every mouse packet system-wide, including the PC's own mouse
   (notable with 1–8 kHz mice). Registering INPUTSINK only while a handoff is
@@ -106,23 +107,29 @@ below were not individually reported and remain open.
 - [ ] Enable/takeover a Mac: edge return becomes ready without the old delay.
 - [ ] Windows tray/Settings status, tooltip and menu; status.json freshness.
 - [ ] Idle CPU on both machines versus the previous builds.
+- [ ] Follow-up Mac build: menu bar icon and menu still update when crossing;
+  typing and scrolling on Windows behave normally. Capture logs from normal use
+  will show whether rejections and post-crossing spikes dropped.
 
 ## Test builds
 
-Built from `51d3f19` with `scripts/publish-mac.sh` and `windows/publish.sh`.
-Both apps need this build for larger companion frames; a mixed pair keeps 20.
+Windows from `51d3f19` (`windows/publish.sh`); Mac follow-up from `c5238dd`
+(`scripts/publish-mac.sh`). Both apps need these for larger companion frames;
+a mixed pair keeps 20-byte frames.
 
-- Mac: `releases/DeusKVM.app` (also `releases/DeusKVM.zip`, 1,082,478 bytes;
-  SHA-256 `a34603c64854dd9829348d45b6ad3838ea1be683fd788b42484314558596420b`).
+- Mac: `releases/DeusKVM.app` (also `releases/DeusKVM.zip`, 1,079,387 bytes;
+  SHA-256 `17500623196b2efddfc329398f055c05b2a035547b65361394873f78cedc2234`).
   Version 0.0.4 (4). Strict signature verification passes with the existing
   Apple Development identity, hardened runtime, no debugger entitlement; the
   executable contains only arm64. Quit DeusKVM and replace the installed app.
-  The previous build is `releases/Previous/DeusKVM-mac-arm64-2026-09-25.zip`.
+  The first performance build is `releases/Previous/DeusKVM-mac-arm64-2026-10-16.zip`
+  (the one the real-use data below came from).
 - Windows: `releases/DeusKVM-Companion-win-x64-2026-10-16.exe`, 912,384 bytes;
   SHA-256 `668c5ad0e4728b7b6cf635f35dad16ee17b46c1d6a24dc4103122a848c7c4aec`.
   x64 launcher; package verification passes (14 runtime files, embedded ZIP
   and hash, OS-only references). Open it on the PC to update the service. The
-  prior EXE is retained under `releases/Previous/`.
+  prior EXE is retained under `releases/Previous/`. Unchanged by the Mac
+  follow-up; reinstalling it is unnecessary.
 
 Capture health lines (one per second while controlling Windows) include the new
 backpressure counts: `log stream --predicate 'subsystem == "io.github.amadeus.deuskvm" && category == "Capture"'`.
@@ -144,14 +151,16 @@ controlling Windows and 58 crossings. Read them with `/usr/bin/log show`; zsh's
 - Input dispatch delay was 0 ms median. All 43 samples of 8 ms or more (25 ms
   max) fell within two seconds after a crossing.
 
-Follow-ups suggested by this data (not implemented):
+Follow-ups from this data, implemented 2026-10-17 (Mac only):
 
-- Each key event also sends a boot-protocol keyboard notification, and each
-  scroll step sends a trailing zero report; both came from BTRemote. Sparse
-  typing and scrolling is where the queue fills, so one notification per event
-  for report-protocol hosts should cut those stalls. Cached mouse reports would
-  need relative fields zeroed so a resubscription never replays motion.
-- The post-crossing spikes match the SwiftUI scene re-render under Not changed.
+- [x] One notification per key and scroll event (`1c15297`). Key events also
+  sent a boot-protocol keyboard copy, and each scroll step a trailing zero
+  report; both came from BTRemote. Report-protocol hosts now get the report
+  keyboard only, and cached mouse reports keep buttons only, so a read or
+  resubscription never replays relative motion or scroll.
+- [x] The App no longer observes the shared objects (`c5238dd`). Only the menu
+  bar icon and menu observe the coordinator, so a crossing no longer
+  re-evaluates every scene and rebuilds the menu from the App body.
 
 ## Local verification
 
@@ -164,3 +173,7 @@ whole-point parking, negotiated frame sizes, and shared wire vectors at 64 and
 Both loopback file suites pass: lazy metadata, wrong key, multi-block bytes,
 seek, changed source, revocation, cancellation, empty, collision, stale and
 2 GB transfers in each direction.
+
+Mac follow-up: all 100 Mac tests pass, including one report per scroll step,
+buttons-only replay state and the boot keyboard decision; strict SwiftLint and
+SwiftFormat pass; each follow-up commit builds and tests on its own.
