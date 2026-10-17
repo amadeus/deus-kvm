@@ -218,7 +218,22 @@ Test build (Mac only), from `a3f2e2d` with `scripts/publish-mac.sh`:
 - Rollback: the main-branch follow-up build above,
   `releases/Previous/DeusKVM-mac-arm64-2026-10-17-main.zip`.
 
-Hardware checks (pending), in normal use:
+First minutes with the threaded build installed (40 samples while controlling
+Windows, 23 crossings, 2,697 input events):
+
+- Tap → Bluetooth queue delay stayed under 1 ms in every sample, including the
+  first after each crossing (the follow-up build's reached 8–22 ms there).
+- Bluetooth rejections were 0.045 per event at 20–50 events/s and 0.012–0.014
+  above 50/s, in line with the follow-up build; nothing stayed pending and the
+  companion queue stayed empty.
+- Entry setup 2 ms median (8 max); local restore 2 ms median with two 16–17 ms
+  returns. The follow-up build also had 11–15 ms returns, so these predate the
+  change.
+- 0% CPU idle, 5–7% while controlling Windows, 45 MB memory. No crash reports
+  or app errors; the system messages match the earlier builds'.
+
+Hardware checks (pending), in normal use. 2026-10-17: the user reports the
+threaded build works; the items below were not individually reported.
 
 - [ ] Crossing to Windows and back by edge and by hotkey: no lost first
   keystroke or click after entering; no Windows cursor movement after return.
