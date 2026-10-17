@@ -104,6 +104,27 @@ Windows:
 - [ ] Windows tray/Settings status, tooltip and menu; status.json freshness.
 - [ ] Idle CPU on both machines versus the previous builds.
 
+## Test builds
+
+Built from `51d3f19` with `scripts/publish-mac.sh` and `windows/publish.sh`.
+Both apps need this build for larger companion frames; a mixed pair keeps 20.
+
+- Mac: `releases/DeusKVM.app` (also `releases/DeusKVM.zip`, 1,082,478 bytes;
+  SHA-256 `a34603c64854dd9829348d45b6ad3838ea1be683fd788b42484314558596420b`).
+  Version 0.0.4 (4). Strict signature verification passes with the existing
+  Apple Development identity, hardened runtime, no debugger entitlement; the
+  executable contains only arm64. Quit DeusKVM and replace the installed app.
+  The previous build is `releases/Previous/DeusKVM-mac-arm64-2026-09-25.zip`.
+- Windows: `releases/DeusKVM-Companion-win-x64-2026-10-16.exe`, 912,384 bytes;
+  SHA-256 `668c5ad0e4728b7b6cf635f35dad16ee17b46c1d6a24dc4103122a848c7c4aec`.
+  x64 launcher; package verification passes (14 runtime files, embedded ZIP
+  and hash, OS-only references). Open it on the PC to update the service. The
+  prior EXE is retained under `releases/Previous/`.
+
+Capture health lines (one per second while controlling Windows) include the new
+backpressure counts: `log stream --predicate 'subsystem == "io.github.amadeus.deuskvm" && category == "Capture"'`.
+The installed apps on either machine were not replaced.
+
 ## Local verification
 
 All 98 Mac tests and 176 Windows core tests pass (2 CNG GCM tests skip off
