@@ -16,18 +16,17 @@ final class CompanionService: ObservableObject {
     var onReady: ((UUID) -> Void)?
     var onActivity: ((UUID) -> Void)?
     var onComputerName: ((UUID, String) -> Void)?
-    private var manager: CBPeripheralManager?
+    /// Frames are encoded here and sent from the Bluetooth queue.
+    var transport: BluetoothTransport?
     private var clients: [UUID: Client] = [:]
-    private var controls: [Queued] = []
-    private var bulk: [Queued] = []
-    private var blocked = false
     private var selection = CompanionSelection()
     var onSelection: (() -> Void)?
     var onDisableRequested: ((Bool, @escaping () -> Void) -> Void)?
     private var wantsControl = false
     private var chars: [CBMutableCharacteristic] = []
     var diagnosticState: String {
-        "queued=\(controls.count + bulk.count) blocked=\(blocked) blind=\(blind.values.sorted())"
+        let link = transport?.stats.companionState ?? (queued: 0, blocked: false)
+        return "queued=\(link.queued) blocked=\(link.blocked) blind=\(blind.values.sorted())"
     }
 
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "Companion")
@@ -49,11 +48,8 @@ final class CompanionService: ObservableObject {
         var supportsTakeover = false
     }
 
-    private struct Queued { let data: Data; let index: Int; let central: CBCentral }
-
-    func build(_ manager: CBPeripheralManager) -> CBMutableService {
+    func build() -> CBMutableService {
         reset()
-        self.manager = manager
         let service = CBMutableService(type: Self.uuid, primary: true)
         let properties: [CBCharacteristicProperties] = [
             .notifyEncryptionRequired,
@@ -70,6 +66,7 @@ final class CompanionService: ObservableObject {
             )
         }
         service.characteristics = chars
+        transport?.configureCompanion(chars)
         return service
     }
 
@@ -103,7 +100,7 @@ final class CompanionService: ObservableObject {
         selection.reset()
         subscribedHosts.removeAll()
         clients.removeAll(); ready.removeAll(); monitors.removeAll(); blind.removeAll(); lastSeen.removeAll()
-        controls.removeAll(); bulk.removeAll(); chars.removeAll(); blocked = false; manager = nil
+        chars.removeAll(); transport?.resetCompanion()
     }
 
     func owns(_ characteristic: CBCharacteristic) -> Bool {
@@ -138,33 +135,34 @@ final class CompanionService: ObservableObject {
         subscribedHosts.remove(id)
         clients.removeValue(forKey: id); ready.remove(id); monitors.removeValue(forKey: id)
         blind.removeValue(forKey: id); lastSeen.removeValue(forKey: id)
-        controls.removeAll { $0.central.identifier == id }; bulk.removeAll { $0.central.identifier == id }
+        transport?.dropCompanion(for: id)
     }
 
-    func receive(_ request: CBATTRequest) -> CBATTError.Code {
-        guard request.offset == 0, let value = request.value,
-              let index = chars.firstIndex(where: { $0.uuid == request.characteristic.uuid }),
-              index == 1 || index == 3, var client = clients[request.central.identifier] else { return .writeNotPermitted }
+    /// The Bluetooth queue held more than 512 frames for this client.
+    func overflowed(_ id: UUID) {
+        disconnect(id)
+    }
+
+    func receive(_ write: CompanionWrite) -> CBATTError.Code {
+        guard write.offset == 0, let value = write.value, write.index == 1 || write.index == 3,
+              var client = clients[write.central] else { return .writeNotPermitted }
         do {
-            let packet = try index == 1 ? client.controlDecoder.receive(value) : client.bulkDecoder.receive(value)
-            clients[request.central.identifier] = client
+            let packet = try write.index == 1 ? client.controlDecoder.receive(value) : client.bulkDecoder.receive(value)
+            clients[write.central] = client
             if let packet {
-                guard packet.stream == (index == 1 ? 0 : 1) else { throw CompanionProtocol.Failure.malformed }
-                try handle(packet, from: request.central.identifier)
+                guard packet.stream == (write.index == 1 ? 0 : 1) else { throw CompanionProtocol.Failure.malformed }
+                try handle(packet, from: write.central)
             }
             return .success
         } catch {
             log.error("invalid companion message: \(String(describing: error), privacy: .public)")
-            disconnect(request.central.identifier)
+            disconnect(write.central)
             return .unlikelyError
         }
     }
 
-    func respond(to request: CBATTRequest, using manager: CBPeripheralManager) {
-        let value = Data("{\"v\":1,\"ready\":\(ready.contains(request.central.identifier))}".utf8)
-        guard request.offset <= value.count else { manager.respond(to: request, withResult: .invalidOffset); return }
-        request.value = Data(value.dropFirst(request.offset))
-        manager.respond(to: request, withResult: .success)
+    func readValue(for id: UUID) -> Data {
+        Data("{\"v\":1,\"ready\":\(ready.contains(id))}".utf8)
     }
 
     private func handle(_ packet: CompanionProtocol.Packet, from id: UUID) throws {
@@ -319,24 +317,6 @@ final class CompanionService: ObservableObject {
         let packet = CompanionProtocol.Packet(stream: stream, type: type.rawValue, payload: payload)
         let frames = stream == 0 ? client.controlEncoder.encode(packet) : client.bulkEncoder.encode(packet)
         clients[id] = client
-        guard controls.count + bulk.count + frames.count <= 512 else { disconnect(id); return }
-        let items = frames.map { Queued(data: $0, index: stream == 0 ? 0 : 2, central: client.central) }
-        if stream == 0 { controls.append(contentsOf: items) } else { bulk.append(contentsOf: items) }
-        drain()
-    }
-
-    func readyToSend() {
-        blocked = false; drain()
-    }
-
-    private func drain() {
-        guard let manager, !blocked else { return }
-        while let item = controls.first ?? bulk.first {
-            guard manager.updateValue(item.data, for: chars[item.index], onSubscribedCentrals: [item.central]) else {
-                blocked = true
-                return
-            }
-            if !controls.isEmpty { controls.removeFirst() } else { bulk.removeFirst() }
-        }
+        transport?.enqueueCompanion(frames, control: stream == 0, to: client.central)
     }
 }

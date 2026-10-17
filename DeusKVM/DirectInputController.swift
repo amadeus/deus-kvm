@@ -2,9 +2,9 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-@MainActor
-final class DirectInputController: ObservableObject {
-    @Published private(set) var isCapturing = false
+/// Translates captured input into HID reports; during capture it runs on the Bluetooth queue.
+final class DirectInputController {
+    private(set) var isCapturing = false
 
     private let defaults: UserDefaults
     private var pressedKeys: Set<Keycode> = []

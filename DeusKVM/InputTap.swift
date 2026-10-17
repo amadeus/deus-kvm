@@ -13,7 +13,6 @@ enum TapOutput: Sendable {
     case installed(Int, Bool)
     case keyboardMonitoring(Int, Bool)
     case begin(Int, CGPoint, fromEdge: Bool)
-    case input(Int, DirectInputEvent, TimeInterval)
     case end(Int)
     case disabled
 }
@@ -39,9 +38,15 @@ final class InputTap: @unchecked Sendable {
     private var deferredGeneration = 0
     private var runState = TapRunState()
     private let output: @MainActor @Sendable (TapOutput) -> Void
+    /// Remote input skips the main thread; the receiver orders it by generation.
+    private let forward: @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
 
-    init(output: @escaping @MainActor @Sendable (TapOutput) -> Void) {
+    init(
+        output: @escaping @MainActor @Sendable (TapOutput) -> Void,
+        forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
+    ) {
         self.output = output
+        self.forward = forward
     }
 
     func configure(_ value: TapConfiguration) {
@@ -314,7 +319,7 @@ final class InputTap: @unchecked Sendable {
             }
         }
         if wasRemote, let input = DirectInputEvent(type: type, event: event) {
-            _emit(.input(generation, input, ProcessInfo.processInfo.systemUptime))
+            forward(generation, input, ProcessInfo.processInfo.systemUptime)
         }
         return wasRemote
     }
@@ -342,7 +347,7 @@ final class InputTap: @unchecked Sendable {
             }
             guard remote else { return }
             let input = DirectInputEvent(kind: down ? .keyDown(key) : .keyUp(key), modifiers: KeyboardModifiers(eventFlags: flags))
-            _emit(.input(generation, input, ProcessInfo.processInfo.systemUptime))
+            forward(generation, input, ProcessInfo.processInfo.systemUptime)
         }
     }
 
@@ -354,7 +359,7 @@ final class InputTap: @unchecked Sendable {
             handoff.heldMediaKeys.remove(media.key.rawValue)
         }
         if remote, let input = DirectInputEvent(type: MediaKeyEvent.eventType, event: event) {
-            _emit(.input(generation, input, ProcessInfo.processInfo.systemUptime))
+            forward(generation, input, ProcessInfo.processInfo.systemUptime)
         }
         return remote
     }

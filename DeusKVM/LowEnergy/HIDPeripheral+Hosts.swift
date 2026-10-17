@@ -7,20 +7,20 @@ extension HIDPeripheral {
     func stop() {
         isHIDServiceAllowed = false
         advertisingStarting = false
-        pManager?.stopAdvertising()
+        transport.stopAdvertising()
         isAdvertising = false
     }
 
     func setEnabled(_ enabled: Bool) {
         isEnabled = enabled
         companion.setAvailability(enabled: enabled, allowed: hostPolicy.allowed)
+        syncTransport()
         if enabled {
             start()
         } else {
             stop()
             releaseInputForDisable()
-            cachedReports = Self.emptyReports
-            cachedBootMouseReport = MouseReport.zero.bootData
+            transport.resetReports()
         }
         reconcileConnectionLatency()
     }
@@ -28,20 +28,20 @@ extension HIDPeripheral {
     /// A preference, not a guaranteed interval. Only the enabled HID target
     /// requests low latency; still-connected former targets return to balanced.
     func reconcileConnectionLatency() {
-        guard let pManager, pManager.state == .poweredOn else { lowLatencyCentral = nil; return }
+        guard managerStarted, state == .poweredOn else { lowLatencyCentral = nil; return }
         let next = isEnabled ? hostPolicy.target.flatMap { centralObjects[$0] } : nil
         guard lowLatencyCentral?.identifier != next?.identifier else { return }
         if let previous = lowLatencyCentral, hostPolicy.ready.contains(previous.identifier) {
-            pManager.setDesiredConnectionLatency(.medium, for: previous)
+            transport.setLatency(.medium, for: previous)
         }
         if let next {
-            pManager.setDesiredConnectionLatency(.low, for: next)
+            transport.setLatency(.low, for: next)
             trace("requested low connection latency for active HID target: \(next.identifier)")
         }
         lowLatencyCentral = next
     }
 
-    static let emptyReports: [UInt8: Data] = [
+    nonisolated static let emptyReports: [UInt8: Data] = [
         ReportID.mouse.rawValue: MouseReport.zero.data,
         ReportID.keyboard.rawValue: KeyboardReport.zero.data,
         ReportID.systemControl.rawValue: SystemControlReport.zero.data,
@@ -79,14 +79,14 @@ extension HIDPeripheral {
     }
 
     func reconcileAdvertising() {
-        guard let pManager else { return }
+        guard managerStarted else { return }
         let wanted = hostPolicy.shouldAdvertise(
             enabled: isEnabled && isHIDServiceAllowed,
             poweredOn: state == .poweredOn,
             serviceAdded: isHIDServiceAdded
         )
         if !wanted {
-            if isAdvertising || advertisingStarting { pManager.stopAdvertising() }
+            if isAdvertising || advertisingStarting { transport.stopAdvertising() }
             advertisingStarting = false
             if isAdvertising { isAdvertising = false }
         } else if !isAdvertising, !advertisingStarting {
@@ -99,13 +99,8 @@ extension HIDPeripheral {
                 advertisement[CBAdvertisementDataLocalNameKey] = name
                 trace("advertising with system Bluetooth name: \(name)")
             }
-            pManager.startAdvertising(advertisement)
+            transport.startAdvertising(advertisement)
         }
-    }
-
-    func activeRecipients() -> [CBCentral] {
-        guard isEnabled, let id = hostPolicy.target, let central = centralObjects[id] else { return [] }
-        return [central]
     }
 
     func inputKind(_ characteristic: CBCharacteristic) -> HIDHostPolicy.Input? {
@@ -135,42 +130,19 @@ extension HIDPeripheral {
         return nil
     }
 
-    func drainPendingBroadcast() {
-        guard let pManager else { return }
-        let recipients = releaseRecipients.isEmpty ? activeRecipients() : releaseRecipients
-        guard !recipients.isEmpty else { pendingBroadcasts.removeAll(); return }
-        while let entry = pendingBroadcasts.first {
-            guard pManager.updateValue(entry.data, for: entry.target, onSubscribedCentrals: recipients) else {
-                isReadyToSendNotification = false
-                return
-            }
-            pendingBroadcasts.removeFirst()
-        }
-        releaseRecipients.removeAll()
-        let callbacks = releaseCallbacks
-        releaseCallbacks.removeAll()
-        callbacks.forEach { $0() }
-    }
-
     func releaseInputForDisable() {
         guard let target = hostPolicy.target, let central = centralObjects[target] else { return }
-        releaseRecipients = [central]
-        pendingBroadcasts.removeAll()
-        for (id, data) in Self.emptyReports {
-            if let characteristic = charsByReportID[id] { pendingBroadcasts.append(data, target: characteristic) }
-        }
-        if let bootMouseInputChar { pendingBroadcasts.append(MouseReport.zero.bootData, target: bootMouseInputChar) }
-        if let bootKeyboardInputChar { pendingBroadcasts.append(KeyboardReport.zero.data, target: bootKeyboardInputChar) }
-        drainPendingBroadcast()
+        transport.release(to: central)
     }
 
+    /// Runs on the main thread once the release reports reach CoreBluetooth.
     func afterInputRelease(_ completion: @escaping () -> Void) {
-        if releaseRecipients.isEmpty { completion() } else { releaseCallbacks.append(completion) }
+        let completion = Unchecked(value: completion)
+        transport.afterRelease { DispatchQueue.main.async { MainActor.assumeIsolated { completion.value() } } }
     }
 
     /// Counts only; resets so each capture health line covers its own interval.
     func takeNotificationDiagnostics() -> String {
-        defer { rejectedNotifications = 0; mergedMotion = 0 }
-        return "hidPending=\(pendingBroadcasts.count) hidRejected=\(rejectedNotifications) hidMerged=\(mergedMotion)"
+        transport.stats.takeHID()
     }
 }

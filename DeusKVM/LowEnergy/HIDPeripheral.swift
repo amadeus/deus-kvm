@@ -3,7 +3,8 @@ import CoreBluetooth
 import os
 import SwiftUI
 
-/// HID-over-GATT peripheral engine
+/// HID-over-GATT peripheral engine. Host selection, services and published state stay on the
+/// main actor; CoreBluetooth, report sending and captured input run in BluetoothTransport.
 @MainActor
 final class HIDPeripheral: NSObject, ObservableObject {
     @Published private(set) var state: CBManagerState = .unknown
@@ -22,19 +23,21 @@ final class HIDPeripheral: NSObject, ObservableObject {
     @Published private(set) var lastError: String?
 
     let companion = CompanionService()
-    private let batteryLevel: UInt8 = 100
+    let transport = BluetoothTransport()
+    /// Matches the transport's manager epoch; callbacks from a replaced manager are ignored.
+    private(set) var transportEpoch = 0
+    var managerStarted = false
+    private var route: TransportRoute?
 
     var centralObjects: [UUID: CBCentral] = [:]
     var lowLatencyCentral: CBCentral?
 
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "HIDPeripheral")
-    var pManager: CBPeripheralManager?
     private var batteryServiceObj: CBMutableService?
     private var deviceInfoServiceObj: CBMutableService?
     private var hidServiceObj: CBMutableService?
     var isEnabled = true
     var isHIDServiceAllowed = false
-    var isReadyToSendNotification = true
 
     var charsByReportID: [UInt8: CBMutableCharacteristic] = [:]
     var bootMouseInputChar: CBMutableCharacteristic?
@@ -45,27 +48,27 @@ final class HIDPeripheral: NSObject, ObservableObject {
     private var serviceChangedArmed = false
     private static let serviceChangedGrace: UInt64 = 2_000_000_000
 
-    /// last-sent payloads for reads and new subscriptions
-    var cachedReports = HIDPeripheral.emptyReports
+    private struct TransportRoute: Equatable {
+        let id: UUID?
+        let central: ObjectIdentifier?
+        let enabled: Bool
+        let bootKeyboard: Bool
+    }
 
-    var pendingBroadcasts = HIDNotificationQueue<CBMutableCharacteristic>()
-    /// aggregate backpressure counts since the last capture health sample
-    var rejectedNotifications = 0, mergedMotion = 0
-    var releaseRecipients: [CBCentral] = []
-    var releaseCallbacks: [() -> Void] = []
-    var cachedBootMouseReport = MouseReport.zero.bootData
+    override init() {
+        super.init()
+        transport.attach(self)
+        companion.transport = transport
+    }
 
     func start() {
         guard isEnabled else { return }
         companion.setAvailability(enabled: isEnabled, allowed: hostPolicy.allowed)
         companion.clipboardTarget = { [weak self] in self?.hostPolicy.target }
         isHIDServiceAllowed = true
-        if pManager == nil {
-            pManager = CBPeripheralManager(
-                delegate: self,
-                queue: nil,
-                options: [CBPeripheralManagerOptionShowPowerAlertKey: true]
-            )
+        if !managerStarted {
+            managerStarted = true
+            transport.startManager()
         } else if state == .poweredOn {
             if isHIDServiceAdded {
                 reconcileAdvertising()
@@ -82,15 +85,12 @@ final class HIDPeripheral: NSObject, ObservableObject {
     }
 
     private func _resetForRestart() {
-        pManager?.stopAdvertising()
-        pManager = nil
+        transport.restart()
+        transportEpoch += 1
+        managerStarted = false
         advertisingStarting = false
         isAdvertising = false
         isHIDServiceAdded = false
-        isReadyToSendNotification = true
-        pendingBroadcasts.removeAll()
-        releaseRecipients.removeAll()
-        releaseCallbacks.removeAll()
         companion.reset()
         batteryServiceObj = nil
         deviceInfoServiceObj = nil
@@ -107,43 +107,33 @@ final class HIDPeripheral: NSObject, ObservableObject {
         reconcileHosts()
         connectedCentrals.removeAll()
         centralObjects.removeAll()
-    }
-
-    func sendMouse(_ report: MouseReport) {
-        cachedBootMouseReport = report.held.bootData
-        let sameButtons = report.buttons.rawValue == cachedReports[ReportID.mouse.rawValue]?.first
-        let coalesceMotion = sameButtons && report.wheel == 0 && report.pan == 0
-        broadcast(report.data, reportID: .mouse, cached: report.held.data, coalesceMotion: coalesceMotion)
-    }
-
-    func sendKeyboard(_ report: KeyboardReport) {
-        broadcast(report.data, reportID: .keyboard)
-        // boot-protocol hosts read this characteristic instead
-        guard let target = hostPolicy.target, HIDHostPolicy.needsBootKeyboard(inputSubscriptions[target] ?? []) else { return }
-        bootKeyboardInputChar.map { _ = updateValue(report.data, for: $0) }
-    }
-
-    func sendConsumer(_ report: ConsumerReport) {
-        broadcast(report.data, reportID: .consumerControl)
-    }
-
-    func sendSystemControl(_ report: SystemControlReport) {
-        broadcast(report.data, reportID: .systemControl)
+        syncTransport()
     }
 
     func apply(_ policy: HIDHostPolicy) {
         if policy.target != hostPolicy.target {
             // Release on the old destination before changing recipients.
             onTargetWillChange?()
-            if releaseRecipients.isEmpty { pendingBroadcasts.removeAll() }
-            cachedReports = Self.emptyReports
-            cachedBootMouseReport = MouseReport.zero.bootData
-            keyboardLEDs = []
+            transport.retarget()
+            if !keyboardLEDs.isEmpty { keyboardLEDs = [] }
         }
         if policy != hostPolicy { hostPolicy = policy }
+        syncTransport()
         reconcileConnectionLatency()
         companion.setAvailability(enabled: isEnabled, allowed: policy.allowed)
         reconcileAdvertising()
+    }
+
+    /// Pushes the selected host to the Bluetooth queue when its central, enablement or keyboard
+    /// protocol changes. Input and releases there use the route in effect when they run.
+    func syncTransport() {
+        let id = hostPolicy.target
+        let central = id.flatMap { centralObjects[$0] }
+        let bootKeyboard = id.map { HIDHostPolicy.needsBootKeyboard(inputSubscriptions[$0] ?? []) } ?? false
+        let next = TransportRoute(id: id, central: central.map(ObjectIdentifier.init), enabled: isEnabled, bootKeyboard: bootKeyboard)
+        guard next != route else { return }
+        route = next
+        transport.route(target: central, id: id, enabled: isEnabled, bootKeyboard: bootKeyboard)
     }
 
     /// if host connects but never subscribes (stale GATT cache), cycle a temp service to fire Service Changed so it re-discovers
@@ -162,14 +152,14 @@ final class HIDPeripheral: NSObject, ObservableObject {
     }
 
     private func _cycleServiceChanged() {
-        guard isEnabled, let pManager else { return }
+        guard isEnabled, managerStarted else { return }
         if let svc = serviceChangedObj {
-            pManager.remove(svc)
-            pManager.add(svc)
+            transport.remove(svc)
+            transport.add(svc)
         } else {
             let svc = buildServiceChangedTrigger()
             serviceChangedObj = svc
-            pManager.add(svc)
+            transport.add(svc)
         }
         trace("Service Changed cycled")
     }
@@ -189,10 +179,10 @@ final class HIDPeripheral: NSObject, ObservableObject {
     }
 
     private func installServices() {
-        guard let pManager, !isHIDServiceAdded, batteryServiceObj == nil else { return }
+        guard managerStarted, !isHIDServiceAdded, batteryServiceObj == nil else { return }
         let battery = buildBatteryService()
         batteryServiceObj = battery
-        pManager.add(battery)
+        transport.add(battery)
     }
 
     private func buildDeviceInfoService() -> CBMutableService {
@@ -355,31 +345,6 @@ final class HIDPeripheral: NSObject, ObservableObject {
         return char
     }
 
-    private func broadcast(_ data: Data, reportID: ReportID, cached: Data? = nil, coalesceMotion: Bool = false) {
-        guard isEnabled else { return }
-        cachedReports[reportID.rawValue] = cached ?? data
-        guard let char = charsByReportID[reportID.rawValue] else { return }
-        _ = updateValue(data, for: char, coalesceMotion: coalesceMotion)
-    }
-
-    @discardableResult
-    private func updateValue(_ data: Data, for char: CBMutableCharacteristic, coalesceMotion: Bool = false) -> Bool {
-        guard let pManager else { return false }
-        let recipients = activeRecipients()
-        guard !recipients.isEmpty else { return false }
-        if !isReadyToSendNotification {
-            if pendingBroadcasts.append(data, target: char, coalesceMotion: coalesceMotion) { mergedMotion += 1 }
-            return false
-        }
-        let accepted = pManager.updateValue(data, for: char, onSubscribedCentrals: recipients)
-        if !accepted {
-            isReadyToSendNotification = false
-            rejectedNotifications += 1
-            if pendingBroadcasts.append(data, target: char, coalesceMotion: coalesceMotion) { mergedMotion += 1 }
-        }
-        return accepted
-    }
-
     func trace(_ message: @autoclosure () -> String) {
         guard UserDefaults.standard.bool(forKey: AppSettings.developerModeKey) else { return }
         let text = message()
@@ -388,20 +353,22 @@ final class HIDPeripheral: NSObject, ObservableObject {
 
     private func _trackInteraction(from central: CBCentral) {
         centralObjects[central.identifier] = central
+        syncTransport()
         guard !connectedCentrals.contains(central.identifier) else { return }
         connectedCentrals.insert(central.identifier)
         trace("central tracked: \(central.identifier)")
     }
 }
 
-extension HIDPeripheral: @preconcurrency CBPeripheralManagerDelegate {
-    func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
-        state = peripheral.state
-        trace("CB state -> \(peripheral.state.rawValue)")
-        if peripheral.state == .poweredOn, isHIDServiceAllowed, !isHIDServiceAdded {
+/// CoreBluetooth callbacks forwarded in order from BluetoothTransport.
+extension HIDPeripheral {
+    func transportStateDidChange(_ newState: CBManagerState) {
+        state = newState
+        trace("CB state -> \(newState.rawValue)")
+        if newState == .poweredOn, isHIDServiceAllowed, !isHIDServiceAdded {
             installServices()
         }
-        if peripheral.state != .poweredOn {
+        if newState != .poweredOn {
             advertisingStarting = false
             isAdvertising = false
             inputSubscriptions.removeAll()
@@ -411,24 +378,28 @@ extension HIDPeripheral: @preconcurrency CBPeripheralManagerDelegate {
         } else { reconcileAdvertising() }
     }
 
-    func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+    func transportDidAdd(_ uuid: CBUUID, error: String?) {
         if let error {
-            log.error("didAddService(\(service.uuid)) error: \(error.localizedDescription, privacy: .public)")
-            lastError = error.localizedDescription
+            log.error("didAddService(\(uuid)) error: \(error, privacy: .public)")
+            lastError = error
         }
-        switch service.uuid {
+        switch uuid {
         case HIDProfile.batteryService:
             let dis = buildDeviceInfoService()
             deviceInfoServiceObj = dis
-            peripheral.add(dis)
+            transport.add(dis)
         case HIDProfile.deviceInformationService:
             let hid = buildHIDService(includingBattery: batteryServiceObj)
             hidServiceObj = hid
-            peripheral.add(hid)
+            transport.configureHID(
+                reports: charsByReportID, bootMouse: bootMouseInputChar,
+                bootKeyboard: bootKeyboardInputChar, battery: batteryLevelChar
+            )
+            transport.add(hid)
         case HIDProfile.hidService:
             guard error == nil else { return }
             isHIDServiceAdded = true
-            peripheral.add(companion.build(peripheral))
+            transport.add(companion.build())
         case CompanionService.uuid:
             reconcileAdvertising()
         default:
@@ -436,12 +407,12 @@ extension HIDPeripheral: @preconcurrency CBPeripheralManagerDelegate {
         }
     }
 
-    func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
+    func transportDidStartAdvertising(error: String?) {
         advertisingStarting = false
         if let error {
             isAdvertising = false
-            lastError = error.localizedDescription
-            log.error("startAdvertising error: \(error.localizedDescription, privacy: .public)")
+            lastError = error
+            log.error("startAdvertising error: \(error, privacy: .public)")
         } else {
             isAdvertising = true
             trace("advertising started")
@@ -449,11 +420,7 @@ extension HIDPeripheral: @preconcurrency CBPeripheralManagerDelegate {
         }
     }
 
-    func peripheralManager(
-        _ peripheral: CBPeripheralManager,
-        central: CBCentral,
-        didSubscribeTo characteristic: CBCharacteristic
-    ) {
+    func transportDidSubscribe(_ central: CBCentral, to characteristic: CBCharacteristic) {
         if companion.owns(characteristic) { companion.subscribed(central, characteristic); return }
         _trackInteraction(from: central)
         subscribedCentrals[central.identifier, default: []].insert(characteristic.uuid)
@@ -463,25 +430,10 @@ extension HIDPeripheral: @preconcurrency CBPeripheralManagerDelegate {
         }
         reconcileHosts()
         guard central.identifier == hostPolicy.target else { return }
-        if let id = reportID(forCharacteristic: characteristic),
-           let cached = cachedReports[id],
-           let char = charsByReportID[id]
-        {
-            _ = updateValue(cached, for: char)
-        } else if characteristic.uuid == HIDProfile.bootMouseInputReport, let bootMouseInputChar {
-            _ = updateValue(MouseReport.zero.bootData, for: bootMouseInputChar)
-        } else if characteristic.uuid == HIDProfile.bootKeyboardInputReport, let bootKeyboardInputChar {
-            _ = updateValue(KeyboardReport.zero.data, for: bootKeyboardInputChar)
-        } else if characteristic.uuid == HIDProfile.batteryLevel, let batteryLevelChar {
-            _ = updateValue(Data([batteryLevel]), for: batteryLevelChar)
-        }
+        transport.replay(characteristic)
     }
 
-    func peripheralManager(
-        _ peripheral: CBPeripheralManager,
-        central: CBCentral,
-        didUnsubscribeFrom characteristic: CBCharacteristic
-    ) {
+    func transportDidUnsubscribe(_ central: CBCentral, from characteristic: CBCharacteristic) {
         if companion.owns(characteristic) { companion.unsubscribed(central); return }
         trace("unsubscribe: \(central.identifier) <- \(characteristic.uuid)")
         if let input = inputKind(characteristic) {
@@ -498,101 +450,36 @@ extension HIDPeripheral: @preconcurrency CBPeripheralManagerDelegate {
             chars.remove(characteristic.uuid)
         }
         if chars.isEmpty {
-            if releaseRecipients.contains(where: { $0.identifier == central.identifier }) {
-                pendingBroadcasts.removeAll(); releaseRecipients.removeAll(); releaseCallbacks.removeAll()
-            }
+            transport.dropRelease(for: central.identifier)
             subscribedCentrals.removeValue(forKey: central.identifier)
             centralObjects.removeValue(forKey: central.identifier)
             inputSubscriptions.removeValue(forKey: central.identifier)
             connectedCentrals.remove(central.identifier)
             serviceChangedArmed = false
+            syncTransport()
         } else {
             subscribedCentrals[central.identifier] = chars
         }
     }
 
-    func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
-        isReadyToSendNotification = true
-        drainPendingBroadcast()
-        companion.readyToSend()
-    }
-
-    func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
-        trace("read: \(request.central.identifier) -> \(request.characteristic.uuid)")
-        if companion.owns(request.characteristic) { companion.respond(to: request, using: peripheral); return }
-        _trackInteraction(from: request.central)
+    /// The transport already answered from its replay state; this is bookkeeping.
+    func transportDidRead(_ central: CBCentral, characteristic: CBCharacteristic) {
+        trace("read: \(central.identifier) -> \(characteristic.uuid)")
+        _trackInteraction(from: central)
         scheduleServiceChanged()
-        let value = readValue(forRequest: request)
-        guard let value else {
-            peripheral.respond(to: request, withResult: .invalidAttributeValueLength)
-            return
-        }
-        guard request.offset <= value.count else {
-            peripheral.respond(to: request, withResult: .invalidOffset)
-            return
-        }
-        request.value = value.subdata(in: request.offset ..< value.count)
-        peripheral.respond(to: request, withResult: .success)
     }
 
-    private func readValue(forRequest request: CBATTRequest) -> Data? {
-        let reports = request.central.identifier == hostPolicy.target ? cachedReports : Self.emptyReports
-        switch request.characteristic.uuid {
-        case HIDProfile.batteryLevel: return Data([batteryLevel])
-        case HIDProfile.hidInformation: return HIDProfile.hidInformationValue
-        case HIDProfile.reportMap: return HIDProfile.reportMapData
-        case HIDProfile.protocolMode: return Data([0x01]) // report protocol
-        case HIDProfile.manufacturerName: return HIDProfile.manufacturerNameValue
-        case HIDProfile.modelNumber: return HIDProfile.modelNumberValue
-        case HIDProfile.pnpID: return HIDProfile.pnpIDValue
-        case HIDProfile.report:
-            if let id = reportID(forCharacteristic: request.characteristic) {
-                return reports[id] ?? Data()
-            }
-            return Data()
-        case HIDProfile.bootMouseInputReport:
-            return request.central.identifier == hostPolicy.target ? cachedBootMouseReport : MouseReport.zero.bootData
-        case HIDProfile.bootKeyboardInputReport: return reports[ReportID.keyboard.rawValue]
-        default: return Data()
-        }
-    }
-
-    func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
-        if let first = requests.first, companion.owns(first.characteristic) {
-            var result = CBATTError.Code.success
-            for request in requests {
-                result = companion.receive(request)
-                if result != .success { break }
-            }
-            peripheral.respond(to: first, withResult: result)
-            return
-        }
-        for request in requests {
-            trace("write: \(request.central.identifier) -> \(request.characteristic.uuid)")
-            _trackInteraction(from: request.central)
-            handleWriteRequest(request)
-        }
-        if let first = requests.first {
-            peripheral.respond(to: first, withResult: .success)
-        }
-    }
-
-    private func handleWriteRequest(_ request: CBATTRequest) {
-        guard request.central.identifier == hostPolicy.target, let value = request.value else { return }
-        switch request.characteristic.uuid {
-        // Windows repeats LED output reports; unchanged values must not re-render the app scene.
-        case HIDProfile.bootKeyboardOutputReport:
-            if let byte = value.first, KeyboardLEDs(byte: byte) != keyboardLEDs { keyboardLEDs = KeyboardLEDs(byte: byte) }
-        case HIDProfile.report:
-            if reportID(forCharacteristic: request.characteristic) == ReportID.keyboardLEDs.rawValue,
-               let byte = value.first, KeyboardLEDs(byte: byte) != keyboardLEDs
-            {
-                keyboardLEDs = KeyboardLEDs(byte: byte)
-            }
-        case HIDProfile.protocolMode, HIDProfile.hidControlPoint:
-            break
-        default:
-            break
+    /// The transport already acknowledged these HID writes; keyboard LEDs and bookkeeping remain.
+    func transportDidWrite(_ writes: [HIDWrite]) {
+        for write in writes {
+            let characteristic = write.characteristic
+            trace("write: \(write.central.identifier) -> \(characteristic.uuid)")
+            _trackInteraction(from: write.central)
+            guard write.central.identifier == hostPolicy.target, let byte = write.value?.first else { continue }
+            // Windows repeats LED output reports; unchanged values must not re-render the app scene.
+            let isLEDReport = characteristic.uuid == HIDProfile.bootKeyboardOutputReport ||
+                (characteristic.uuid == HIDProfile.report && reportID(forCharacteristic: characteristic) == ReportID.keyboardLEDs.rawValue)
+            if isLEDReport, KeyboardLEDs(byte: byte) != keyboardLEDs { keyboardLEDs = KeyboardLEDs(byte: byte) }
         }
     }
 }

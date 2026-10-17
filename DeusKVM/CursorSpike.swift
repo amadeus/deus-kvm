@@ -19,7 +19,10 @@ final class CursorSpike {
     private func start() {
         _log("AX=\(AXIsProcessTrusted()) post=\(CGPreflightPostEventAccess())")
         _log("frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "unknown")")
-        tap = InputTap { [weak self] event in self?._receive(event) }
+        tap = InputTap(output: { [weak self] event in self?._receive(event) }, forward: { [weak self] _, input, _ in
+            guard case .mouseMove = input.kind else { return }
+            Task { @MainActor in self?.motions += 1 }
+        })
         tap?.configure(TapConfiguration(
             targetAvailable: true,
             geometry: EdgeGeometry(bounds: CGDisplayBounds(CGMainDisplayID()), edge: .right, otherDisplays: [])
@@ -42,8 +45,6 @@ final class CursorSpike {
             let success = cursor.hide(at: point, returningTo: origin)
             _log("hide=\(success) point=\(String(describing: CGEvent(source: nil)?.location))")
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?._finish() }
-        case let .input(_, input, _):
-            if case .mouseMove = input.kind { motions += 1 }
         case .end, .disabled: _finish()
         }
     }

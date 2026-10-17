@@ -20,6 +20,14 @@ struct DirectInputEvent: Sendable {
         self.modifiers = modifiers
     }
 
+    /// Motion and scroll hold no state on the host, so losing one cannot leave anything pressed.
+    var isRelative: Bool {
+        switch kind {
+        case .mouseMove, .scroll: true
+        default: false
+        }
+    }
+
     init?(type: CGEventType, event: CGEvent) {
         let flags = event.flags
         modifiers = KeyboardModifiers(eventFlags: flags)

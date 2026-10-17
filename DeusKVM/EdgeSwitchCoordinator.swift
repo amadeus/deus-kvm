@@ -11,13 +11,16 @@ struct EdgeDisplay: Identifiable, Equatable {
 
 @MainActor
 final class EdgeSwitchCoordinator: ObservableObject {
-    let directInput = DirectInputController()
     private lazy var clipboard = MacClipboardSync(service: lowEnergy.companion)
     private let lowEnergy: HIDPeripheral
     private let central: HIDCentral
     private let cursor = CursorConcealer()
-    private let diagnostics = CaptureDiagnostics()
-    private lazy var tap = InputTap { [weak self] event in self?._receive(event) }
+    private let diagnostics: CaptureDiagnostics
+    /// Remote input goes from the tap thread straight to the Bluetooth queue; only crossings,
+    /// returns and tap lifecycle events come here.
+    private lazy var tap = InputTap(output: { [weak self] event in self?._receive(event) }, forward: { [transport = lowEnergy.transport] in
+        transport.input($1, generation: $0, capturedAt: $2)
+    })
     private var timer: Timer?
     private var companionDeadlineTimer: Timer?
     private var started = false
@@ -81,6 +84,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     init(lowEnergy: HIDPeripheral, central: HIDCentral) {
         self.lowEnergy = lowEnergy
         self.central = central
+        diagnostics = CaptureDiagnostics(stats: lowEnergy.transport.stats)
         let defaults = UserDefaults.standard
         isEnabled = defaults.object(forKey: AppSettings.enabledKey) as? Bool ?? true
         connectionState = isEnabled ? .unavailable : .disabled
@@ -183,6 +187,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         tap.stop()
         tapReady = false
         tapStarting = false
+        lowEnergy.transport.flush()
     }
 
     func setEnabled(_ value: Bool) {
@@ -215,14 +220,16 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private func _returnLocal(at point: CGPoint?, reason: String) {
         let wasRemote = isRemote
         let startedAt = ProcessInfo.processInfo.systemUptime
+        // End the session first: the tap forwards straight to the Bluetooth queue, and nothing
+        // captured for this session may follow EXIT there.
+        tap.forceLocal()
         if isRemote, let target = captureTarget {
             lowEnergy.companion.send(.exit, payload: Data([switchID]), to: target)
         }
         companionCapture = false
-        tap.forceLocal()
         cursor.restore(at: point)
         if wasRemote { tap.observeReturn(since: startedAt) }
-        directInput.stop()
+        lowEnergy.transport.stopInput()
         if wasRemote { isRemote = false }
         captureTarget = nil
         refreshClipboard()
@@ -412,7 +419,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
             }
             lastError = nil
             captureTarget = currentTarget
-            directInput.start(HIDInput.make(lowEnergy: lowEnergy, central: central))
             isRemote = true
             scheduleChecks()
             refreshClipboard()
@@ -430,10 +436,9 @@ final class EdgeSwitchCoordinator: ObservableObject {
                     CompanionProtocol.Message(rawValue: entry.type)!, payload: entry.payload, to: target
                 )
             }
-        case let .input(generation, input, capturedAt):
-            guard tap.isCurrent(generation), isRemote else { return }
-            diagnostics.input(capturedAt: capturedAt)
-            directInput.handle(input)
+            // Input captured since the crossing waits on the Bluetooth queue until this point,
+            // so it follows ENTER and never forwards for a refused crossing.
+            lowEnergy.transport.startInput(generation: generation)
         case let .end(generation):
             if tap.isCurrent(generation) { returnLocal(reason: "toggle hotkey") }
         case .disabled:
