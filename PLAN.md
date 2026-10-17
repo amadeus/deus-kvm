@@ -458,6 +458,8 @@ the configured span onto the arriving edge, inset 1–3 px.
 edge-return build. Malformed/sequence-gap/CRC failures reset the companion link
 and require a new HELLO; NACK/replay and larger negotiated chunks are deferred
 until bulk clipboard traffic. No corrupted or incomplete message is acted on.
+Negotiated bulk chunks were implemented on 2026-10-16 as specified below;
+control frames and both HELLOs stay 20 bytes (docs/PERFORMANCE_AUDIT.md).
 
 **Source of truth.** `DeusKVM/Companion/CompanionProtocol.swift` (pure Swift,
 no AppKit, unit-tested) defines every constant, enum and encoder below.
@@ -1523,3 +1525,11 @@ pre-login desktop-worker mechanics remain engineering gates to verify on Windows
   pass. Windows solution builds with zero warnings/errors; 79 core tests and
   three disposable-file cleanup tests pass locally. The current win-x64 ZIP
   is published and verified. Native Windows lifecycle/GUI tests were not run.
+
+### Performance audit — 2026-10-16
+
+Mac and Windows performance changes and the remaining recommendations are in
+docs/PERFORMANCE_AUDIT.md: motion summed under Bluetooth backpressure,
+negotiated companion frames, pipelined file transfer, fewer settings/CONFIG
+sends, and reduced Windows idle work. Local tests and loopback transfers pass;
+its hardware checklist is pending.
