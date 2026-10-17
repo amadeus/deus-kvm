@@ -33,8 +33,10 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private var lastReturnRejection: TimeInterval = 0
     @Published private(set) var pcMonitors: [PCMonitor] = []
     @Published private(set) var companionStatus = "Waiting for Windows companion"
+    /// Settings bindings (the corner slider especially) can repeat unchanged values; only
+    /// real changes save, and only the Windows edge/display changes resend CONFIG.
     @Published var pcMonitorID = "" {
-        didSet { _save() }
+        didSet { if pcMonitorID != oldValue { _save(configuresCompanion: true) } }
     }
 
     @Published private(set) var isEnabled = true
@@ -49,19 +51,19 @@ final class EdgeSwitchCoordinator: ObservableObject {
     @Published private(set) var canSwitch = false
     @Published private(set) var captureBlocker: String?
     @Published var edgeEnabled = AppSettings.defaultEdgeSwitchEnabled {
-        didSet { _save() }
+        didSet { if edgeEnabled != oldValue { _save() } }
     }
 
     @Published var displayID = "" {
-        didSet { _save() }
+        didSet { if displayID != oldValue { _save() } }
     }
 
     @Published var edge: DisplayEdge = .right {
-        didSet { _save() }
+        didSet { if edge != oldValue { _save(configuresCompanion: true) } }
     }
 
     @Published var cornerSize = AppSettings.defaultCornerSize {
-        didSet { _save() }
+        didSet { if cornerSize != oldValue { _save() } }
     }
 
     var recordingShortcut = false {
@@ -73,7 +75,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     }
 
     @Published var shortcut = ToggleShortcut() {
-        didSet { _save() }
+        didSet { if shortcut != oldValue { _save() } }
     }
 
     init(lowEnergy: HIDPeripheral, central: HIDCentral) {
@@ -221,7 +223,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         cursor.restore(at: point)
         if wasRemote { tap.observeReturn(since: startedAt) }
         directInput.stop()
-        isRemote = false
+        if wasRemote { isRemote = false }
         captureTarget = nil
         refreshClipboard()
         scheduleChecks()
@@ -252,12 +254,13 @@ final class EdgeSwitchCoordinator: ObservableObject {
     }
 
     private func _refreshDisplays() {
-        displays = NSScreen.screens.compactMap { screen in
+        let next: [EdgeDisplay] = NSScreen.screens.compactMap { screen in
             guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
             let id = number.uint32Value
             guard let uuid = CGDisplayCreateUUIDFromDisplayID(id)?.takeRetainedValue() else { return nil }
             return EdgeDisplay(id: CFUUIDCreateString(nil, uuid) as String, name: screen.localizedName, bounds: CGDisplayBounds(id))
         }
+        if next != displays { displays = next }
         if !displays.contains(where: { $0.id == displayID }), let fallback = displays.first {
             displayID = fallback.id
         }
@@ -279,7 +282,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         let available = currentTarget != nil
         if targetAvailable != available { targetAvailable = available }
         refreshCaptureReadiness()
-        if isEnabled { _refreshCompanion() } else { companionStatus = "DeusKVM is disabled" }
+        if isEnabled { _refreshCompanion() } else if companionStatus != "DeusKVM is disabled" { companionStatus = "DeusKVM is disabled" }
         _refreshConnectionState()
         refreshClipboard()
         if isRemote, !canSwitch || captureTarget != currentTarget {
@@ -317,12 +320,12 @@ final class EdgeSwitchCoordinator: ObservableObject {
         ))
     }
 
-    private func _save() {
+    private func _save(configuresCompanion: Bool = false) {
         guard !restoringPreferences else { return }
         if isRemote { returnLocal() }
         let defaults = UserDefaults.standard
         defaults.set(pcMonitorID, forKey: "pcMonitorID")
-        _configureCompanion()
+        if configuresCompanion { _configureCompanion() }
         defaults.set(edgeEnabled, forKey: AppSettings.edgeSwitchEnabledKey)
         defaults.set(displayID, forKey: AppSettings.edgeDisplayUUIDKey)
         defaults.set(edge.rawValue, forKey: AppSettings.edgeSideKey)

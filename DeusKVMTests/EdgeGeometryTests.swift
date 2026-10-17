@@ -21,6 +21,12 @@ final class EdgeGeometryTests: XCTestCase {
         }
     }
 
+    func testParkingPointUsesWholePointsOnOddSizedDisplays() {
+        let geometry = EdgeGeometry(bounds: CGRect(x: -1728, y: 0, width: 1728, height: 1117), edge: .left, otherDisplays: [])
+        XCTAssertEqual(geometry.parkingPoint, CGPoint(x: -864, y: 558))
+        XCTAssertFalse(TapWorkSchedule.needsCursorCorrection(location: geometry.parkingPoint, parkingPoint: geometry.parkingPoint))
+    }
+
     func testSharedEdgeOnlyArmsOnExposedSegment() {
         let geometry = EdgeGeometry(
             bounds: CGRect(x: 0, y: 0, width: 1920, height: 1080), edge: .right,

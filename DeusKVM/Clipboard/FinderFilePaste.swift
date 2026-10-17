@@ -19,7 +19,16 @@ private final class FilePasteLease: @unchecked Sendable {
 final class FinderFilePaste: NSObject {
     private var offer: ClipboardFileOffer?
     private var revision = 0
-    var local = true
+    /// While remote, this main-thread key tap would sit ahead of InputTap for every
+    /// forwarded key; keep it disabled until the user is back on the Mac.
+    var local = true {
+        didSet {
+            guard local != oldValue, let tap else { return }
+            swallowed = false
+            CGEvent.tapEnable(tap: tap, enable: local)
+        }
+    }
+
     var send: (ClipboardFileOffer) -> Void = { _ in }
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
@@ -52,7 +61,7 @@ final class FinderFilePaste: NSObject {
         if let tap {
             source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
+            CGEvent.tapEnable(tap: tap, enable: local)
         }
     }
 
@@ -66,7 +75,7 @@ final class FinderFilePaste: NSObject {
 
     private func event(_ type: CGEventType, _ event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }; return false
+            if let tap { CGEvent.tapEnable(tap: tap, enable: local) }; return false
         }
         guard event.getIntegerValueField(.keyboardEventKeycode) == 9 else { return false }
         if type == .keyUp, swallowed { swallowed = false; return true }
@@ -95,6 +104,8 @@ final class FinderFilePaste: NSObject {
             .success,
             let focused else { return true }
         let element = unsafeDowncast(focused, to: AXUIElement.self)
+        // Timeouts are per element; the default (about 6 s) would block this main-thread tap.
+        AXUIElementSetMessagingTimeout(element, 0.1)
         var role: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success else { return true }
         return [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role as? String ?? "")

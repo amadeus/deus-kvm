@@ -23,8 +23,10 @@ struct EdgeGeometry: Equatable, Sendable {
     let otherDisplays: [CGRect]
     var cornerSize: Double = 0
 
+    /// Whole points: an odd-sized display (for example 1728 × 1117) has a half-point
+    /// center, and the tap's exact parked-position check must not warp on every event.
     var parkingPoint: CGPoint {
-        CGPoint(x: bounds.midX, y: bounds.midY)
+        CGPoint(x: bounds.midX.rounded(.down), y: bounds.midY.rounded(.down))
     }
 
     func isAtEdge(_ point: CGPoint) -> Bool {
