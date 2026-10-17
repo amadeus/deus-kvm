@@ -78,8 +78,11 @@ public sealed class ClipboardTransfer(Action<Protocol.Message, byte[]> send, Act
             case Protocol.Message.ClipGet:
                 if (id != sequence || local is null) { Yield(); return; }
                 if (value > local.Length || value % BlockBytes != 0) throw new InvalidDataException("Invalid clipboard offset");
-                send(Protocol.Message.ClipData, Header(epoch, id, value)
-                    .Concat(local.Skip((int)value).Take(BlockBytes)).ToArray());
+                // Direct copy: .NET Framework's Skip walks from the start of the text for every block.
+                var block = new byte[12 + Math.Min(BlockBytes, local.Length - (int)value)];
+                Header(epoch, id, value).CopyTo(block, 0);
+                Buffer.BlockCopy(local, (int)value, block, 12, block.Length - 12);
+                send(Protocol.Message.ClipData, block);
                 break;
             case Protocol.Message.ClipData:
                 if (payload.Length > BlockBytes + 12) throw new InvalidDataException("Clipboard block too large");

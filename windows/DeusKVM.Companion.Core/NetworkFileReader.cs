@@ -10,12 +10,16 @@ public sealed class NetworkUnavailableException() : IOException("File transfer r
 // Lazy, persistent connection. Creation and clipboard metadata inspection do no I/O.
 public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? diagnostic = null) : IFileBlockReader
 {
+    // Sequential reads keep a few block requests ahead: one 256 KiB round trip at a time
+    // idles the link for the RTT plus both ends' processing. Replies stay in request order.
+    private const int ReadAhead = 2;
     private readonly CancellationTokenSource lifetime = new();
+    private readonly Queue<(uint Offset, int Count)> requested = new();
     private TcpClient? client;
     private NetworkStream? stream;
     private FileNetworkCrypto? outgoing, incoming;
     private bool delivered;
-    private long lastProgress;
+    private long lastProgress, requestedEnd, sequentialEnd = -1;
     public void Dispose() { lifetime.Cancel(); client?.Dispose(); outgoing?.Dispose(); incoming?.Dispose(); }
 
     public byte[] Read(uint offset)
@@ -73,23 +77,45 @@ public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? 
         if (stream is null) await Connect().ConfigureAwait(false);
         using var request = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         request.CancelAfter(15000);
-        var plain = ClipboardTransfer.Header(offer.Epoch, offer.Sequence, offset).Concat(new byte[4]).ToArray();
-        BinaryPrimitives.WriteUInt32LittleEndian(plain.AsSpan(12), (uint)count);
-        var encrypted = outgoing!.Seal(plain);
-        var header = new byte[4]; BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)encrypted.Length);
-        await stream!.WriteAsync(header.Concat(encrypted).ToArray(), request.Token).ConfigureAwait(false);
-        await stream!.ReadExactlyAsync(header, request.Token).ConfigureAwait(false);
-        var size = BinaryPrimitives.ReadUInt32LittleEndian(header);
-        if (size is < 17 or > FileNetworkCrypto.MaximumBlock + 17) throw new InvalidDataException("Invalid network response size");
-        var ciphertext = new byte[(int)size];
-        await stream!.ReadExactlyAsync(ciphertext, request.Token).ConfigureAwait(false);
-        var response = incoming!.Open(ciphertext);
-        // Authentication succeeded: source errors must not silently downgrade.
-        delivered = true;
-        if (response[0] != 0 || response.Length != count + 1) throw new IOException("Mac file changed or became unavailable");
+        // A seek abandons read-ahead; replies already requested are still read to keep the record counter in order.
+        while (requested.Count > 0 && requested.Peek().Offset != offset)
+            await Receive(requested.Dequeue(), request.Token).ConfigureAwait(false);
+        if (requested.Count == 0) await Request(offset, count, request.Token).ConfigureAwait(false);
+        if (offset == 0 || offset == sequentialEnd)
+            while (requested.Count <= ReadAhead && requestedEnd < offer.Size)
+                await Request((uint)requestedEnd, Math.Min(FileNetworkCrypto.MaximumBlock, offer.Size - (int)requestedEnd), request.Token)
+                    .ConfigureAwait(false);
+        var response = await Receive(requested.Dequeue(), request.Token).ConfigureAwait(false);
+        sequentialEnd = offset + count;
         var now = RuntimeCompat.TickCount64;
         if (offset == 0 || offset + count == offer.Size || now - lastProgress >= 1000)
         { lastProgress = now; diagnostic?.Invoke($"network-block offset={offset} count={count} size={offer.Size}"); }
         return response.AsSpan(1).ToArray();
+    }
+
+    private async Task Request(uint offset, int count, CancellationToken stop)
+    {
+        var plain = new byte[16];
+        ClipboardTransfer.Header(offer.Epoch, offer.Sequence, offset).CopyTo(plain, 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(plain.AsSpan(12), (uint)count);
+        var record = new byte[4 + plain.Length + 16];
+        BinaryPrimitives.WriteUInt32LittleEndian(record, (uint)outgoing!.Seal(plain, record.AsSpan(4)));
+        await stream!.WriteAsync(record, stop).ConfigureAwait(false);
+        requested.Enqueue((offset, count)); requestedEnd = offset + count;
+    }
+
+    private async Task<byte[]> Receive((uint Offset, int Count) block, CancellationToken stop)
+    {
+        var header = new byte[4];
+        await stream!.ReadExactlyAsync(header, stop).ConfigureAwait(false);
+        var size = BinaryPrimitives.ReadUInt32LittleEndian(header);
+        if (size is < 17 or > FileNetworkCrypto.MaximumBlock + 17) throw new InvalidDataException("Invalid network response size");
+        var ciphertext = new byte[(int)size];
+        await stream!.ReadExactlyAsync(ciphertext, stop).ConfigureAwait(false);
+        var response = incoming!.Open(ciphertext);
+        // Authentication succeeded: source errors must not silently downgrade.
+        delivered = true;
+        if (response[0] != 0 || response.Length != block.Count + 1) throw new IOException("Mac file changed or became unavailable");
+        return response;
     }
 }

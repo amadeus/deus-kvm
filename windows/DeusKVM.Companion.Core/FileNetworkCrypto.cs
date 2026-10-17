@@ -56,7 +56,13 @@ public sealed class FileNetworkCrypto : IDisposable
     public byte[] Seal(byte[] data)
     {
         var result = new byte[data.Length + 16];
-        aes.Encrypt(Nonce(), data, result.AsSpan(0, data.Length), result.AsSpan(data.Length)); return result;
+        Seal(data, result); return result;
+    }
+    // Writes ciphertext then tag into a caller-owned buffer; returns the record length.
+    public int Seal(ReadOnlySpan<byte> data, Span<byte> destination)
+    {
+        aes.Encrypt(Nonce(), data, destination.Slice(0, data.Length), destination.Slice(data.Length, 16));
+        return data.Length + 16;
     }
     public byte[] Open(byte[] data)
     {

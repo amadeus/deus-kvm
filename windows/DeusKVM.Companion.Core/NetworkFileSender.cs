@@ -27,6 +27,10 @@ public static class NetworkFileSender
             using var outgoing = new FileNetworkCrypto(key, client, server, "client");
             RuntimeCompat.ZeroMemory(key);
             var header = new byte[4];
+            // One status+block plaintext and one sealed frame per transfer. LINQ Concat/ToArray
+            // copies byte by byte on .NET Framework: milliseconds and large-heap garbage per block.
+            var reply = new byte[1 + FileNetworkCrypto.MaximumBlock];
+            var frame = new byte[4 + reply.Length + 16];
             while (true)
             {
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop); deadline.CancelAfter(15000);
@@ -43,9 +47,11 @@ public static class NetworkFileSender
                 stop.ThrowIfCancellationRequested();
                 var bytes = read(offset, (int)count);
                 stop.ThrowIfCancellationRequested();
-                var response = outgoing.Seal(new byte[] { bytes is null ? (byte)1 : (byte)0 }.Concat(bytes ?? []).ToArray());
-                BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)response.Length);
-                await wire.WriteAsync(header.Concat(response).ToArray(), deadline.Token);
+                reply[0] = bytes is null ? (byte)1 : (byte)0;
+                if (bytes is not null) Buffer.BlockCopy(bytes, 0, reply, 1, bytes.Length);
+                var length = outgoing.Seal(reply.AsSpan(0, 1 + (bytes?.Length ?? 0)), frame.AsSpan(4));
+                BinaryPrimitives.WriteUInt32LittleEndian(frame, (uint)length);
+                await wire.WriteAsync(frame.AsMemory(0, 4 + length), deadline.Token);
                 if (bytes is null) return;
             }
         }

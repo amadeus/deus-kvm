@@ -26,7 +26,9 @@ final class FileNetworkServer: @unchecked Sendable {
         listener?.cancel(); listener = nil; port = nil; revoke()
         guard enabled else { return }
         do {
-            let parameters = NWParameters.tcp
+            let tcp = NWProtocolTCP.Options()
+            tcp.noDelay = true // each reply is one complete record; don't hold its tail for ACKs
+            let parameters = NWParameters(tls: nil, tcp: tcp)
             parameters.includePeerToPeer = false
             let next = try NWListener(using: parameters, on: .any)
             listener = next; startingAt = ProcessInfo.processInfo.systemUptime

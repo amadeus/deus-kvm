@@ -18,6 +18,11 @@ final class FileNetworkReceiver: @unchecked Sendable {
     private var handle: FileHandle?
     private var temporary: URL?
     private var offset = 0
+    /// Waiting for each 256 KiB reply before asking again idles the link for a round trip
+    /// plus both ends' processing per block. Replies stay in request order on one connection.
+    private static let window = 4
+    private var requested = 0
+    private var expected: [Int] = []
     private var deadline: UInt64 = 0
     private var ended = false
     private var lastProgress: TimeInterval = 0
@@ -45,7 +50,9 @@ final class FileNetworkReceiver: @unchecked Sendable {
     private func startListener() {
         guard canAccess(), offer.valid else { finish("The copied file is no longer available. Copy it again."); return }
         do {
-            let server = try NWListener(using: .tcp, on: .any)
+            let tcp = NWProtocolTCP.Options()
+            tcp.noDelay = true // pipelined requests are complete records; don't hold them for ACKs
+            let server = try NWListener(using: NWParameters(tls: nil, tcp: tcp), on: .any)
             listener = server
             server.stateUpdateHandler = { [weak self, weak server] state in
                 guard let self, let server, !ended else { return }
@@ -106,26 +113,38 @@ final class FileNetworkReceiver: @unchecked Sendable {
             let server = FileNetworkCrypto.random()
             incoming = FileNetworkCrypto(secret: key, client: client, server: server, direction: "client")
             outgoing = FileNetworkCrypto(secret: key, client: client, server: server, direction: "server")
-            send(server) { [weak self] in self?.request() }
+            send(server) { [weak self] in self?.request(); self?.response() }
         }
+    }
+
+    /// An empty file still takes one request, answered by the status byte alone.
+    private var blocks: Int {
+        max(1, (offer.size + FileNetworkCrypto.maximumBlock - 1) / FileNetworkCrypto.maximumBlock)
     }
 
     private func request() {
         guard !ended, canAccess() else { finish("The copied file is no longer available."); return }
+        while expected.count < Self.window, requested < blocks {
+            let start = requested * FileNetworkCrypto.maximumBlock
+            let count = min(FileNetworkCrypto.maximumBlock, offer.size - start)
+            do {
+                let range = CompanionProtocol.u32(UInt32(max(1, count)))
+                let record = try outgoing!.seal(ClipboardTransfer.header(offer.epoch, offer.sequence, UInt32(start)) + range)
+                requested += 1; expected.append(count)
+                send(CompanionProtocol.u32(UInt32(record.count)) + record) {}
+            } catch { finish("The file transfer could not be authenticated."); return }
+        }
+    }
+
+    private func response() {
+        guard !ended, let count = expected.first else { return }
         timeout()
-        let count = min(FileNetworkCrypto.maximumBlock, offer.size - offset)
-        do {
-            let plain = ClipboardTransfer.header(offer.epoch, offer.sequence, UInt32(offset)) + CompanionProtocol.u32(UInt32(max(1, count)))
-            let record = try outgoing!.seal(plain)
-            send(CompanionProtocol.u32(UInt32(record.count)) + record) { [weak self] in
-                self?.receive(4) { [weak self] header in
-                    guard let self else { return }
-                    let length = Int(CompanionProtocol.read32(header, 0))
-                    guard length >= 17, length <= count + 17 else { finish("Invalid file response."); return }
-                    receive(length) { [weak self] data in self?.block(data, count: count) }
-                }
-            }
-        } catch { finish("The file transfer could not be authenticated.") }
+        receive(4) { [weak self] header in
+            guard let self else { return }
+            let length = Int(CompanionProtocol.read32(header, 0))
+            guard length >= 17, length <= count + 17 else { finish("Invalid file response."); return }
+            receive(length) { [weak self] data in self?.block(data, count: count) }
+        }
     }
 
     private func block(_ data: Data, count: Int) {
@@ -141,10 +160,11 @@ final class FileNetworkReceiver: @unchecked Sendable {
                 temporary = url; handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
             }
             try handle?.write(contentsOf: plain.dropFirst())
+            expected.removeFirst()
             offset += count
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastProgress >= 0.1 || offset == offer.size { lastProgress = now; progress(offset) }
-            if offset < offer.size { request(); return }
+            if offset < offer.size { request(); response(); return }
             try handle?.synchronize(); try handle?.close(); handle = nil
             guard canAccess(), let temporary else { finish("File transfer canceled."); return }
             // Exclusive rename is atomic and never overwrites an existing destination.
