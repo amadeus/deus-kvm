@@ -128,6 +128,31 @@ Capture health lines (one per second while controlling Windows) include the new
 backpressure counts: `log stream --predicate 'subsystem == "io.github.amadeus.deuskvm" && category == "Capture"'`.
 The installed apps on either machine were not replaced.
 
+## Real use, 2026-10-16 to 10-17
+
+From the installed test build's Capture logs: 707 one-second samples while
+controlling Windows and 58 crossings. Read them with `/usr/bin/log show`; zsh's
+`log` builtin shadows the system command.
+
+- 58 of 58 returns came through the Windows edge. Local restore took 2 ms
+  median (7 max); entry setup 3 ms median (9 max). Cursor hidden and parked in
+  every sample.
+- Bluetooth backpressure (`hidRejected`) appeared in 46% of seconds, mostly
+  during sparse input: 0.89 rejections per event below 20 events/s versus
+  0.004–0.017 above 50/s. 99 motion reports were merged that the old queue
+  would have dropped.
+- Input dispatch delay was 0 ms median. All 43 samples of 8 ms or more (25 ms
+  max) fell within two seconds after a crossing.
+
+Follow-ups suggested by this data (not implemented):
+
+- Each key event also sends a boot-protocol keyboard notification, and each
+  scroll step sends a trailing zero report; both came from BTRemote. Sparse
+  typing and scrolling is where the queue fills, so one notification per event
+  for report-protocol hosts should cut those stalls. Cached mouse reports would
+  need relative fields zeroed so a resubscription never replays motion.
+- The post-crossing spikes match the SwiftUI scene re-render under Not changed.
+
 ## Local verification
 
 All 98 Mac tests and 176 Windows core tests pass (2 CNG GCM tests skip off
