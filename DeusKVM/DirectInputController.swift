@@ -87,8 +87,9 @@ final class DirectInputController: ObservableObject {
             // Read on each scroll so settings changes apply during capture too.
             let vertical = defaults.bool(forKey: AppSettings.invertVerticalScrollKey) ? -wheel : wheel
             let horizontal = defaults.bool(forKey: AppSettings.invertHorizontalScrollKey) ? -pan : pan
+            // Wheel and pan are relative: one report per step. A trailing zero report doubled
+            // scroll traffic and filled CoreBluetooth's queue; reads never replay relative fields.
             sendMouse?(MouseReport(buttons: pressedMouseButtons, wheel: vertical, pan: horizontal))
-            sendMouse?(MouseReport(buttons: pressedMouseButtons))
         }
     }
 

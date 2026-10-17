@@ -23,6 +23,12 @@ struct MouseReport: Sendable, Equatable {
     var bootData: Data {
         Data([buttons.rawValue, UInt8(bitPattern: dX), UInt8(bitPattern: dY)])
     }
+
+    /// What a read or new subscription may see: X/Y, wheel and pan are relative and
+    /// must not be applied twice, so only the held buttons persist.
+    var held: MouseReport {
+        MouseReport(buttons: buttons)
+    }
 }
 
 struct MouseButtons: OptionSet, Sendable, Equatable {

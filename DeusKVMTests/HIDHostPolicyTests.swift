@@ -17,6 +17,12 @@ final class HIDHostPolicyTests: XCTestCase {
         XCTAssertEqual(policy.target, pc)
     }
 
+    func testBootKeyboardCopyOnlyForBootProtocolHosts() {
+        XCTAssertFalse(HIDHostPolicy.needsBootKeyboard([.mouse, .keyboard, .bootMouse, .bootKeyboard]))
+        XCTAssertFalse(HIDHostPolicy.needsBootKeyboard([.mouse, .keyboard]))
+        XCTAssertTrue(HIDHostPolicy.needsBootKeyboard([.bootMouse, .bootKeyboard]))
+    }
+
     func testReadyRequiresBothKeyboardAndMouseInTheSameProtocol() {
         XCTAssertFalse(HIDHostPolicy.inputReady([]))
         XCTAssertFalse(HIDHostPolicy.inputReady([.mouse]))

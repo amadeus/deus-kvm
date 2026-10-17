@@ -110,15 +110,16 @@ final class HIDPeripheral: NSObject, ObservableObject {
     }
 
     func sendMouse(_ report: MouseReport) {
-        cachedBootMouseReport = report.bootData
+        cachedBootMouseReport = report.held.bootData
         let sameButtons = report.buttons.rawValue == cachedReports[ReportID.mouse.rawValue]?.first
         let coalesceMotion = sameButtons && report.wheel == 0 && report.pan == 0
-        broadcast(report.data, reportID: .mouse, coalesceMotion: coalesceMotion)
+        broadcast(report.data, reportID: .mouse, cached: report.held.data, coalesceMotion: coalesceMotion)
     }
 
     func sendKeyboard(_ report: KeyboardReport) {
         broadcast(report.data, reportID: .keyboard)
-        // boot mode hosts read this characteristic instead
+        // boot-protocol hosts read this characteristic instead
+        guard let target = hostPolicy.target, HIDHostPolicy.needsBootKeyboard(inputSubscriptions[target] ?? []) else { return }
         bootKeyboardInputChar.map { _ = updateValue(report.data, for: $0) }
     }
 
@@ -354,9 +355,9 @@ final class HIDPeripheral: NSObject, ObservableObject {
         return char
     }
 
-    private func broadcast(_ data: Data, reportID: ReportID, coalesceMotion: Bool = false) {
+    private func broadcast(_ data: Data, reportID: ReportID, cached: Data? = nil, coalesceMotion: Bool = false) {
         guard isEnabled else { return }
-        cachedReports[reportID.rawValue] = data
+        cachedReports[reportID.rawValue] = cached ?? data
         guard let char = charsByReportID[reportID.rawValue] else { return }
         _ = updateValue(data, for: char, coalesceMotion: coalesceMotion)
     }

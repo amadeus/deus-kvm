@@ -18,10 +18,7 @@ final class ScrollPreferenceTests: XCTestCase {
         func scroll(expectedWheel: Int8, expectedPan: Int8) {
             reports.removeAll()
             controller.handle(DirectInputEvent(kind: .scroll(wheel: 127, pan: -127), modifiers: []))
-            XCTAssertEqual(reports, [
-                MouseReport(buttons: .left, wheel: expectedWheel, pan: expectedPan),
-                MouseReport(buttons: .left)
-            ])
+            XCTAssertEqual(reports, [MouseReport(buttons: .left, wheel: expectedWheel, pan: expectedPan)])
         }
 
         scroll(expectedWheel: 127, expectedPan: -127)

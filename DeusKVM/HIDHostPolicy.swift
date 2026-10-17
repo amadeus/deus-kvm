@@ -20,6 +20,12 @@ struct HIDHostPolicy: Equatable {
         inputs.isSuperset(of: [.mouse, .keyboard]) || inputs.isSuperset(of: [.bootMouse, .bootKeyboard])
     }
 
+    /// Report-protocol hosts (Windows) read the report keyboard; a boot copy would send
+    /// every key state twice. Only boot-protocol hosts need it.
+    static func needsBootKeyboard(_ inputs: Set<Input>) -> Bool {
+        !inputs.contains(.keyboard)
+    }
+
     mutating func reconcile(ready: Set<UUID>) {
         self.ready = ready
         let candidates = ready.intersection(allowed)
