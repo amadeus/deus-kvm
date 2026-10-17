@@ -287,7 +287,12 @@ final class EdgeSwitchCoordinator: ObservableObject {
                 reason: "capture lost: AX=\(permissionGranted) secure=\(secureInput) target=\(captureTarget == currentTarget)"
             )
         }
-        if isRemote { diagnostics.sample(parkingPoint: cursor.parkingPoint, companion: lowEnergy.companion.diagnosticState) }
+        if isRemote {
+            diagnostics.sample(
+                parkingPoint: cursor.parkingPoint,
+                companion: "\(lowEnergy.companion.diagnosticState) \(lowEnergy.takeNotificationDiagnostics())"
+            )
+        }
         if isEnabled, permissionGranted, !tapReady, !tapStarting {
             tapStarting = tap.start()
         }

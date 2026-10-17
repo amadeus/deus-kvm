@@ -49,6 +49,8 @@ final class HIDPeripheral: NSObject, ObservableObject {
     var cachedReports = HIDPeripheral.emptyReports
 
     var pendingBroadcasts = HIDNotificationQueue<CBMutableCharacteristic>()
+    /// aggregate backpressure counts since the last capture health sample
+    var rejectedNotifications = 0, mergedMotion = 0
     var releaseRecipients: [CBCentral] = []
     var releaseCallbacks: [() -> Void] = []
     var cachedBootMouseReport = MouseReport.zero.bootData
@@ -365,13 +367,14 @@ final class HIDPeripheral: NSObject, ObservableObject {
         let recipients = activeRecipients()
         guard !recipients.isEmpty else { return false }
         if !isReadyToSendNotification {
-            pendingBroadcasts.append(data, target: char, coalesceMotion: coalesceMotion)
+            if pendingBroadcasts.append(data, target: char, coalesceMotion: coalesceMotion) { mergedMotion += 1 }
             return false
         }
         let accepted = pManager.updateValue(data, for: char, onSubscribedCentrals: recipients)
         if !accepted {
             isReadyToSendNotification = false
-            pendingBroadcasts.append(data, target: char, coalesceMotion: coalesceMotion)
+            rejectedNotifications += 1
+            if pendingBroadcasts.append(data, target: char, coalesceMotion: coalesceMotion) { mergedMotion += 1 }
         }
         return accepted
     }

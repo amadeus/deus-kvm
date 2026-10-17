@@ -25,7 +25,7 @@ final class CaptureDiagnostics {
         maximumDelay = max(maximumDelay, ProcessInfo.processInfo.systemUptime - capturedAt)
     }
 
-    func sample(parkingPoint: CGPoint?, companion: String) {
+    func sample(parkingPoint: CGPoint?, companion: @autoclosure () -> String) {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastSample >= 1 else { return }
         lastSample = now
@@ -34,9 +34,10 @@ final class CaptureDiagnostics {
         let visible = cursorVisible?() ?? -1
         let delay = Int(maximumDelay * 1000)
         let count = events
+        let state = companion()
         log
             .notice(
-                "capture health: visible=\(visible) parked=\(parked) events=\(count) maxDispatchMs=\(delay) \(companion, privacy: .public)"
+                "capture health: visible=\(visible) parked=\(parked) events=\(count) maxDispatchMs=\(delay) \(state, privacy: .public)"
             )
         events = 0
         maximumDelay = 0

@@ -17,6 +17,27 @@ final class HIDNotificationQueueTests: XCTestCase {
         XCTAssertNil(queue.first)
     }
 
+    func testPendingMotionKeepsTravelWithinReportRange() {
+        var queue = HIDNotificationQueue<Int>()
+        XCTAssertFalse(queue.append(MouseReport(buttons: .left, dX: 3, dY: -2).data, target: 1, coalesceMotion: true))
+        XCTAssertTrue(queue.append(MouseReport(buttons: .left, dX: 4, dY: -5).data, target: 1, coalesceMotion: true))
+        XCTAssertEqual(queue.first?.data, MouseReport(buttons: .left, dX: 7, dY: -7).data)
+        XCTAssertEqual(queue.count, 1)
+        queue.append(MouseReport(buttons: .left, dX: 125, dY: -125).data, target: 1, coalesceMotion: true)
+        XCTAssertEqual(queue.first?.data, MouseReport(buttons: .left, dX: 127, dY: -127).data)
+        queue.append(MouseReport(buttons: .left, dX: -127, dY: 127).data, target: 1, coalesceMotion: true)
+        XCTAssertEqual(queue.first?.data, MouseReport(buttons: .left).data)
+        // A button change stays its own ordered report; later motion merges after it.
+        queue.append(MouseReport().data, target: 1)
+        queue.append(MouseReport(dX: 1).data, target: 1, coalesceMotion: true)
+        queue.append(MouseReport(dX: 1).data, target: 1, coalesceMotion: true)
+        XCTAssertEqual(queue.count, 3)
+        queue.removeFirst()
+        XCTAssertEqual(queue.first?.data, MouseReport().data)
+        queue.removeFirst()
+        XCTAssertEqual(queue.first?.data, MouseReport(dX: 2).data)
+    }
+
     func testCapsLockAndConsumerPulsesArePreservedInOrder() {
         var queue = HIDNotificationQueue<Int>()
         let packets: [(Int, Data)] = [

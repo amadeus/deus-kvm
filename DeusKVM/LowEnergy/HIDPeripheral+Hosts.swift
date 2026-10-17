@@ -167,4 +167,10 @@ extension HIDPeripheral {
     func afterInputRelease(_ completion: @escaping () -> Void) {
         if releaseRecipients.isEmpty { completion() } else { releaseCallbacks.append(completion) }
     }
+
+    /// Counts only; resets so each capture health line covers its own interval.
+    func takeNotificationDiagnostics() -> String {
+        defer { rejectedNotifications = 0; mergedMotion = 0 }
+        return "hidPending=\(pendingBroadcasts.count) hidRejected=\(rejectedNotifications) hidMerged=\(mergedMotion)"
+    }
 }
