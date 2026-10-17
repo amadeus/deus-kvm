@@ -90,6 +90,9 @@ Windows:
 
 ## Hardware checks (pending)
 
+2026-10-17: the user reports the test builds work in general use. The items
+below were not individually reported and remain open.
+
 - [ ] Both builds updated: time 20 KB and 64 KiB text in both directions; check
   typing and edge return stay responsive. One side older: text still crosses.
 - [ ] Fast movement while controlling Windows (trackpad and a high-rate mouse):
