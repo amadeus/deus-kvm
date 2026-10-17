@@ -162,6 +162,20 @@ Follow-ups from this data, implemented 2026-10-17 (Mac only):
   bar icon and menu observe the coordinator, so a crossing no longer
   re-evaluates every scene and rebuilds the menu from the App body.
 
+First minutes with the follow-up build (31 samples, 8 crossings):
+
+- Bluetooth rejections fell from 0.28 to 0.009 per input event overall, and
+  from 0.48 to 0.05 at 20–50 events/s. Little sparse typing/scrolling yet.
+- Remaining post-crossing spikes (16–22 ms on 3 of 6 crossings) occur with the
+  settings window open. A 10 s profile put about two-thirds of the main
+  thread's busy time in ControlsSettingsView re-rendering (it shows
+  Local/Remote) and AppKit re-measuring the whole form for
+  `.windowResizability(.contentSize)`; forwarding input was about a seventh.
+  The menu bar icon view re-rendered as expected. The user rarely keeps the
+  window open, so this is left as is; the fix would move remote state out of
+  the coordinator's publications. Profiling at 1 ms intervals itself stalled
+  input up to 431 ms, so avoid it during real use.
+
 ## Local verification
 
 All 98 Mac tests and 176 Windows core tests pass (2 CNG GCM tests skip off
