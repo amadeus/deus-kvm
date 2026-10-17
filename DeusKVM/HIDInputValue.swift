@@ -1,6 +1,6 @@
 import Foundation
 
-/// shares the active HID backend with input capture and status views
+/// the active HID backend for input capture
 struct HIDInput {
     let sendMouse: (MouseReport) -> Void
     let sendKeyboard: (KeyboardReport) -> Void

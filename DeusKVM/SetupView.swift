@@ -14,7 +14,9 @@ struct SetupView: View {
     @State private var selectedInfoID: UUID?
     @EnvironmentObject private var coordinator: EdgeSwitchCoordinator
 
-    @Environment(\.hid) private var hid
+    private var bluetoothError: String? {
+        lowEnergy.lastError ?? central.lastError
+    }
 
     var body: some View {
         NavigationStack {
@@ -31,12 +33,12 @@ struct SetupView: View {
             startupSection
             advancedSection
             if developerMode { diagnosticsSection }
-            if hid.activeError != nil || (hid.isActive && coordinator.lastError != nil) {
+            if bluetoothError != nil || (lowEnergy.isHIDServiceAdded && coordinator.lastError != nil) {
                 Section(header: Text(L10n.Section.lastError)) {
-                    if let lastError = hid.activeError {
+                    if let lastError = bluetoothError {
                         Text(verbatim: lastError).foregroundColor(.red).font(.caption)
                     }
-                    if hid.isActive, let lastError = coordinator.lastError {
+                    if lowEnergy.isHIDServiceAdded, let lastError = coordinator.lastError {
                         Text(verbatim: lastError).foregroundColor(.red).font(.caption)
                     }
                 }
