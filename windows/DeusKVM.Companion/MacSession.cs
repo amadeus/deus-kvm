@@ -75,7 +75,7 @@ internal sealed class MacSession : IDisposable
             if (disposed) { opened?.Dispose(); return; }
             session = opened;
             if (session is not null && session.CanMaintainConnection) session.MaintainConnection = true;
-            control = new BluetoothControl(value => { if (!disposed) detail(value); });
+            control = new BluetoothControl(value => { if (!disposed) detail(value); }, () => session?.MaxPduSize ?? 23);
             await control.Attach(services.First(service => service.Uuid == Protocol.Uuid(1)), CancellationToken.None);
         }
         catch (Exception error) { if (!disposed) Error = Describe(error); }

@@ -73,7 +73,8 @@ sharing preference/session. Windows then primes its desktop snapshot before
 handling a pending remote offer. This ordering prevents a first snapshot from
 cancelling an import that started during connection setup.
 
-All integers below are little-endian. Control messages fit one 20-byte frame.
+All integers below are little-endian. Control messages fit one 20-byte frame;
+bulk frames grow to the size both sides negotiate in HELLO (20–244 bytes).
 
 | Message | Stream | Payload |
 | --- | --- | --- |

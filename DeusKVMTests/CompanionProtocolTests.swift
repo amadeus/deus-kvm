@@ -7,6 +7,7 @@ final class CompanionProtocolTests: XCTestCase {
         let type: UInt8
         let payload: String
         let sequence: UInt8
+        let chunk: Int?
         let frames: [String]
     }
 
@@ -20,7 +21,7 @@ final class CompanionProtocolTests: XCTestCase {
             .appendingPathComponent("protocol/fixtures.json")
         for vector in try JSONDecoder().decode([Vector].self, from: Data(contentsOf: url)) {
             let packet = CompanionProtocol.Packet(stream: vector.stream, type: vector.type, payload: data(vector.payload))
-            var encoder = CompanionProtocol.Encoder(sequence: vector.sequence)
+            var encoder = CompanionProtocol.Encoder(sequence: vector.sequence, chunkSize: vector.chunk ?? CompanionProtocol.chunkSize)
             let frames = encoder.encode(packet)
             XCTAssertEqual(frames, vector.frames.map(data))
             var decoder = CompanionProtocol.Decoder()
@@ -46,6 +47,28 @@ final class CompanionProtocolTests: XCTestCase {
         decoder = CompanionProtocol.Decoder()
         XCTAssertThrowsError(try decoder.receive(Data([0, 0x13, 4, 1, 0, 1, 0])))
         XCTAssertThrowsError(try decoder.receive(Data([0, 0x17, 4, 0, 0, 0, 0])))
+    }
+
+    func testNegotiatedFramesStayWithinBothLimitsAndRoundTrip() throws {
+        XCTAssertEqual(CompanionProtocol.frameLimit(17), 20)
+        XCTAssertEqual(CompanionProtocol.frameLimit(182), 182)
+        XCTAssertEqual(CompanionProtocol.frameLimit(524), 244)
+        for chunk in [20, 64, 182, 244] {
+            for size in [0, 13, 14, chunk - 7, chunk - 6, 1036, 4096, 65536] {
+                let payload = Data((0 ..< size).map { UInt8(truncatingIfNeeded: $0 * 7) })
+                let packet = CompanionProtocol.Packet(stream: 1, type: 0x22, payload: payload)
+                var encoder = CompanionProtocol.Encoder(sequence: 250, chunkSize: chunk)
+                var decoder = CompanionProtocol.Decoder()
+                var result: CompanionProtocol.Packet?
+                for frame in encoder.encode(packet) {
+                    XCTAssertLessThanOrEqual(frame.count, chunk)
+                    result = try decoder.receive(frame)
+                }
+                XCTAssertEqual(result, packet, "chunk \(chunk) size \(size)")
+            }
+        }
+        var decoder = CompanionProtocol.Decoder()
+        XCTAssertThrowsError(try decoder.receive(Data([0, 0x13, 4, 0, 0, 0, 0]) + Data(count: 238)))
     }
 
     func testFragmentBoundariesAndSequenceWrap() throws {

@@ -4,7 +4,12 @@ namespace DeusKVM.Companion.Core;
 
 public static class Protocol
 {
-    public const int Version = 1, ChunkSize = 20, MaximumPayload = 65536;
+    // ChunkSize is the bootstrap/control frame; MaximumChunkSize is one LE Data Length
+    // Extension packet (251 bytes less the 4-byte L2CAP and 3-byte ATT headers).
+    public const int Version = 1, ChunkSize = 20, MaximumChunkSize = 244, MaximumPayload = 65536;
+    // HELLO `chunk` is what a side can receive. Bulk frames use the smaller of both
+    // sides' limits only after both HELLOs, so older peers that send 20 keep 20.
+    public static int FrameLimit(int attributeLength) => Math.Max(ChunkSize, Math.Min(attributeLength, MaximumChunkSize));
     public enum Message : byte
     {
         Hello = 1, Ping = 2, Pong = 3, Screens = 4, Config = 5,
@@ -27,9 +32,12 @@ public static class Protocol
     public sealed class Encoder
     {
         public byte Sequence { get; set; }
+        // Grows only for the bulk stream; control packets always fit the 20-byte floor.
+        public int ChunkSize { get; set; } = Protocol.ChunkSize;
         public List<byte[]> Encode(Packet packet)
         {
             if (packet.Payload.Length > MaximumPayload || packet.Stream > 1 || (packet.Stream == 0 && packet.Payload.Length > 13)) throw new InvalidDataException("Oversized packet");
+            if (ChunkSize is < Protocol.ChunkSize or > MaximumChunkSize) throw new InvalidDataException("Invalid frame size");
             var multi = packet.Payload.Length > ChunkSize - 7;
             var first = true;
             var offset = 0;
@@ -54,11 +62,12 @@ public static class Protocol
     public sealed class Decoder
     {
         private byte? expected;
+        // Payload is allocated at the declared length; `filled` bytes have arrived.
         private Packet? partial;
-        private int length;
+        private int length, filled;
         public Packet? Receive(byte[] frame)
         {
-            if (frame.Length is < 2 or > ChunkSize || (frame[1] & 0xCC) != 0) throw new InvalidDataException("Invalid frame");
+            if (frame.Length is < 2 or > MaximumChunkSize || (frame[1] & 0xCC) != 0) throw new InvalidDataException("Invalid frame");
             var first = (frame[1] & 1) != 0;
             var last = (frame[1] & 2) != 0;
             var stream = (byte)(frame[1] >> 4);
@@ -72,27 +81,28 @@ public static class Protocol
                 var declared = BinaryPrimitives.ReadUInt32LittleEndian(frame.AsSpan(3));
                 if (declared > MaximumPayload) throw new InvalidDataException("Oversized payload");
                 length = (int)declared;
-                var payload = frame.AsSpan(7).ToArray();
+                var payload = frame.AsSpan(7);
                 if (last)
                 {
                     if (payload.Length != length) throw new InvalidDataException("Invalid length");
-                    return new Packet(stream, frame[2], payload);
+                    return new Packet(stream, frame[2], payload.ToArray());
                 }
                 if (stream == 0 || payload.Length > length) throw new InvalidDataException("Invalid multipart frame");
-                partial = new Packet(stream, frame[2], payload); return null;
+                var buffer = new byte[length];
+                payload.CopyTo(buffer);
+                partial = new Packet(stream, frame[2], buffer); filled = payload.Length; return null;
             }
             if (partial is null || partial.Stream != stream || (last && frame.Length < 6)) throw new InvalidDataException("Missing first frame");
-            var combined = partial.Payload.Concat(frame.AsSpan(2, frame.Length - 2 - (last ? 4 : 0)).ToArray()).ToArray();
-            if (combined.Length > length) { partial = null; throw new InvalidDataException("Invalid length"); }
-            var packet = partial with { Payload = combined };
-            if (last)
-            {
-                partial = null;
-                if (combined.Length != length || Crc(combined) != BinaryPrimitives.ReadUInt32LittleEndian(frame.AsSpan(frame.Length - 4)))
-                    throw new InvalidDataException("Invalid checksum or length");
-                return packet;
-            }
-            partial = packet; return null;
+            var chunk = frame.AsSpan(2, frame.Length - 2 - (last ? 4 : 0));
+            if (filled + chunk.Length > length) { partial = null; throw new InvalidDataException("Invalid length"); }
+            chunk.CopyTo(partial.Payload.AsSpan(filled));
+            filled += chunk.Length;
+            if (!last) return null;
+            var packet = partial;
+            partial = null;
+            if (filled != length || Crc(packet.Payload) != BinaryPrimitives.ReadUInt32LittleEndian(frame.AsSpan(frame.Length - 4)))
+                throw new InvalidDataException("Invalid checksum or length");
+            return packet;
         }
     }
 }

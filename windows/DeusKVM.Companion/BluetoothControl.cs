@@ -8,7 +8,7 @@ using Windows.Storage.Streams;
 namespace DeusKVM.Companion;
 
 // Runs on the service's STA BLE worker. Desktop observations are requests; the Mac remains the routing authority.
-internal sealed partial class BluetoothControl(Action<string> status) : IDisposable
+internal sealed partial class BluetoothControl(Action<string> status, Func<int> maxPduSize) : IDisposable
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -148,7 +148,7 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
     private void Notification(GattCharacteristic sender, GattValueChangedEventArgs args)
     {
         using var reader = DataReader.FromBuffer(args.CharacteristicValue);
-        if (reader.UnconsumedBufferLength > Protocol.ChunkSize) { context.Post(_ => Fail("Oversized companion frame"), null); return; }
+        if (reader.UnconsumedBufferLength > Protocol.MaximumChunkSize) { context.Post(_ => Fail("Oversized companion frame"), null); return; }
         var bytes = new byte[reader.UnconsumedBufferLength];
         reader.ReadBytes(bytes);
         context.Post(_ => Receive(sender, bytes), null);
@@ -181,8 +181,11 @@ internal sealed partial class BluetoothControl(Action<string> status) : IDisposa
                     capability.TryGetInt32(out var clipboardVersion) && clipboardVersion == 1;
                 fileReceivePeer = hello.RootElement.TryGetProperty("fileReceive", out var reverseFiles) && reverseFiles.TryGetInt32(out var reverseVersion) && reverseVersion == 1;
                 filesPeer = hello.RootElement.TryGetProperty("files", out var files) && files.TryGetInt32(out var filesVersion) && filesVersion == 1;
+                var chunk = Protocol.FrameLimit(maxPduSize() - 3); // ATT write/notify value limit
                 SendJson(Protocol.Message.Hello, new { v = 1, role = "pc", name = "DeusKVM Companion",
-                    computerName = Environment.MachineName, chunk = 20, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, selection = 1, takeover = true });
+                    computerName = Environment.MachineName, chunk, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, selection = 1, takeover = true });
+                // HELLO itself stays at the 20-byte bootstrap size; later bulk frames fit both receive limits.
+                bulkEncoder.ChunkSize = Protocol.FrameLimit(Math.Min(chunk, hello.RootElement.GetProperty("chunk").GetInt32()));
                 UpdateClipboardSession(true);
                 if (active && monitors.Length > 0) SendScreens();
                 SetDetail("Companion connected; waiting for desktop status");

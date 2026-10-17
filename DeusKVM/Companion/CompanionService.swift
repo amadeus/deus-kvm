@@ -120,7 +120,8 @@ final class CompanionService: ObservableObject {
         if !subscribedHosts.contains(central.identifier) { subscribedHosts.insert(central.identifier) }
         if sendHello {
             sendJSON(CompanionHello(
-                v: 1, role: "mac", name: "DeusKVM", chunk: 20, clipboard: 1, files: 1, fileReceive: 1, fileNetwork: 1,
+                v: 1, role: "mac", name: "DeusKVM", chunk: CompanionProtocol.frameLimit(central.maximumUpdateValueLength),
+                clipboard: 1, files: 1, fileReceive: 1, fileNetwork: 1,
                 selection: 1, available: selection.available(to: central.identifier), availabilityEpoch: selection.epoch,
                 takeover: true, requestControl: wantsControl
             ), type: .hello, to: central.identifier)
@@ -240,6 +241,10 @@ final class CompanionService: ObservableObject {
         clients[id]?.supportsFileNetwork = hello.fileNetwork == 1
         clients[id]?.supportsSelection = hello.selection == 1
         clients[id]?.supportsTakeover = hello.takeover == true
+        if let central = clients[id]?.central {
+            // Our HELLO already went out at 20 bytes; later bulk frames fit both receive limits.
+            clients[id]?.bulkEncoder.chunkSize = CompanionProtocol.frameLimit(min(hello.chunk, central.maximumUpdateValueLength))
+        }
         selection.disconnect(id)
         if let name = hello.computerName { onComputerName?(id, name) }
         ready.insert(id)
