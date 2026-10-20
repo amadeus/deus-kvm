@@ -186,9 +186,10 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                     capability.TryGetInt32(out var clipboardVersion) && clipboardVersion == 1;
                 fileReceivePeer = hello.RootElement.TryGetProperty("fileReceive", out var reverseFiles) && reverseFiles.TryGetInt32(out var reverseVersion) && reverseVersion == 1;
                 filesPeer = hello.RootElement.TryGetProperty("files", out var files) && files.TryGetInt32(out var filesVersion) && filesVersion == 1;
+                imagesPeer = hello.RootElement.TryGetProperty("images", out var images) && images.TryGetInt32(out var imageVersion) && imageVersion == 1;
                 var chunk = Protocol.FrameLimit(maxPduSize() - 3); // ATT write/notify value limit
                 SendJson(Protocol.Message.Hello, new { v = 1, role = "pc", name = "DeusKVM Companion",
-                    computerName = Environment.MachineName, chunk, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, selection = 1, takeover = true });
+                    computerName = Environment.MachineName, chunk, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, images = 1, selection = 1, takeover = true });
                 // HELLO itself stays at the 20-byte bootstrap size; later bulk frames fit both receive limits.
                 bulkEncoder.ChunkSize = Protocol.FrameLimit(Math.Min(chunk, hello.RootElement.GetProperty("chunk").GetInt32()));
                 UpdateClipboardSession(true);

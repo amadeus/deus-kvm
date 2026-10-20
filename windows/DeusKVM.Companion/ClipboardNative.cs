@@ -5,7 +5,7 @@ using DeusKVM.Companion.Core;
 namespace DeusKVM.Companion;
 
 // Called only on the clipboard STA. No clipboard contents enter logs or files.
-internal static class ClipboardNative
+internal static partial class ClipboardNative
 {
     private const uint UnicodeText = 13, FileDrop = 15;
     private static readonly uint Own = RegisterClipboardFormat("DeusKVM.Clipboard");
@@ -32,6 +32,12 @@ internal static class ClipboardNative
                         if (DragQueryFile(drop, 0, path, (uint)path.Capacity) == length) file = ClipboardFileSource.Capture(path.ToString());
                     }
                 }
+                return revision == GetClipboardSequenceNumber();
+            }
+            if (IsClipboardFormatAvailable(Png) || IsClipboardFormatAvailable(BitmapFormat))
+            {
+                var png = ReadImage();
+                if (png is not null) file = ClipboardFileSource.FromPng(png);
                 return revision == GetClipboardSequenceNumber();
             }
             if (!IsClipboardFormatAvailable(UnicodeText)) return true;
@@ -67,27 +73,40 @@ internal static class ClipboardNative
     {
         revision = GetClipboardSequenceNumber();
         var decoded = ClipboardTransfer.Decode(text);
-        if (decoded is null || !OpenClipboard(window)) return false;
+        if (decoded is null) return false;
+        return WriteFormats(window, [(UnicodeText, Utf16.GetBytes(decoded.Replace("\n", "\r\n") + "\0"))],
+            expected, canAccess, out revision);
+    }
+    private static bool WriteFormats(IntPtr window, (uint Format, byte[] Bytes)[] formats, uint expected,
+        Func<bool> canAccess, out uint revision)
+    {
+        revision = GetClipboardSequenceNumber();
+        if (!OpenClipboard(window)) return false;
         try
         {
             if (GetClipboardSequenceNumber() != expected) return false;
-            var content = Utf16.GetBytes(decoded.Replace("\n", "\r\n") + "\0");
-            var block = Allocate(content); var marker = Allocate([1]); var cloud = Allocate([0, 0, 0, 0]);
+            var values = formats.Concat(new[] { (Own, new byte[] { 1 }),
+                (Flags[0], new byte[4]), (Flags[1], new byte[4]) }).ToArray();
+            var blocks = new IntPtr[values.Length];
             try
             {
-                if (block == IntPtr.Zero || marker == IntPtr.Zero || cloud == IntPtr.Zero || !canAccess() || !EmptyClipboard()) return false;
-                if (SetClipboardData(UnicodeText, block) == IntPtr.Zero) return false;
-                block = IntPtr.Zero;
-                if (SetClipboardData(Own, marker) != IntPtr.Zero) marker = IntPtr.Zero;
-                if (SetClipboardData(Flags[1], cloud) != IntPtr.Zero) cloud = IntPtr.Zero;
+                for (var i = 0; i < values.Length; i++)
+                {
+                    blocks[i] = Allocate(values[i].Item2);
+                    if (blocks[i] == IntPtr.Zero) return false;
+                }
+                if (!canAccess() || GetClipboardSequenceNumber() != expected || !EmptyClipboard()) return false;
+                for (var i = 0; i < values.Length; i++)
+                {
+                    if (SetClipboardData(values[i].Item1, blocks[i]) == IntPtr.Zero) return false;
+                    blocks[i] = IntPtr.Zero;
+                }
                 revision = GetClipboardSequenceNumber();
                 return true;
             }
             finally
             {
-                if (block != IntPtr.Zero) GlobalFree(block);
-                if (marker != IntPtr.Zero) GlobalFree(marker);
-                if (cloud != IntPtr.Zero) GlobalFree(cloud);
+                foreach (var block in blocks) if (block != IntPtr.Zero) GlobalFree(block);
             }
         }
         finally { CloseClipboard(); }

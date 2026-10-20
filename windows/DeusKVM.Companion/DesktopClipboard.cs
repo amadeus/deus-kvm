@@ -12,6 +12,7 @@ internal sealed class DesktopClipboard : IDisposable
     private volatile uint permittedEpoch;
     private volatile FileClipboardSession? fileSession;
     private volatile CancellationTokenSource? sending;
+    private volatile CancellationTokenSource? receivingImage;
     public DesktopClipboard(Action<DesktopMessage> send)
     {
         var thread = new Thread(() => Run(send)) { IsBackground = true, Name = "DeusKVM clipboard" };
@@ -21,17 +22,18 @@ internal sealed class DesktopClipboard : IDisposable
     public void Post(DesktopMessage message)
     {
         if (disposed) return;
-        if (message.Epoch == permittedEpoch && message.Kind is "clipboard-file-clear" or "clipboard-file-offer" or "clipboard-apply") fileSession?.Dispose();
+        if (message.Epoch == permittedEpoch && message.Kind is "clipboard-file-clear" or "clipboard-file-offer" or "clipboard-apply")
+        { receivingImage?.Cancel(); fileSession?.Dispose(); }
         if (message.Kind == "clipboard-start")
         {
-            fileSession?.Dispose(); sending?.Cancel();
+            receivingImage?.Cancel(); fileSession?.Dispose(); sending?.Cancel();
             permitted = false; permittedEpoch = message.Epoch; permitted = message.Ok;
             // A lifecycle command must never be lost behind obsolete copies.
             while (commands.Count >= 16 && commands.TryDequeue(out _)) { }
         }
         if (commands.Count < 16) commands.Enqueue(message);
     }
-    public void Dispose() { disposed = true; fileSession?.Dispose(); sending?.Cancel(); while (commands.TryDequeue(out _)) { } }
+    public void Dispose() { disposed = true; receivingImage?.Cancel(); fileSession?.Dispose(); sending?.Cancel(); while (commands.TryDequeue(out _)) { } }
     private void Run(Action<DesktopMessage> send)
     {
         Application.OleRequired();
@@ -44,12 +46,18 @@ internal sealed class DesktopClipboard : IDisposable
         uint epoch = 0;
         var versions = new ClipboardRevision();
         DesktopMessage? pending = null, pendingFile = null;
+        DesktopMessage? imageUpdate = null;
+        Task<byte[]?>? incomingImage = null;
+        long imageWriteDeadline = 0;
         VirtualFileClipboard? virtualFile = null;
         ClipboardFileSource? source = null;
         FileClipboardOffer? sourceOffer = null;
         void ClearFile(bool clearSource = false)
         {
             fileSession?.Dispose(); fileSession = null;
+            receivingImage?.Cancel(); receivingImage = null;
+            incomingImage = null; imageUpdate = null;
+            imageWriteDeadline = 0;
             if (clearSource) { sending?.Cancel(); source = null; sourceOffer = null; }
             if (virtualFile?.Revoke() == true) versions.Imported(ClipboardNative.GetClipboardSequenceNumber());
             virtualFile = null; pendingFile = null;
@@ -77,7 +85,8 @@ internal sealed class DesktopClipboard : IDisposable
                     if (message.Kind == "clipboard-file-send" && source is { } current && sourceOffer is { } offered && message.Clipboard is { } payload)
                     {
                         var request = FileClipboardOffer.Parse(payload);
-                        if (request.Epoch == offered.Epoch && request.Sequence == offered.Sequence && request.Size == offered.Size && request.Name == offered.Name)
+                        if (request.Epoch == offered.Epoch && request.Sequence == offered.Sequence && request.Size == offered.Size &&
+                            request.Name == offered.Name && request.ContentType == offered.ContentType)
                         {
                             sending?.Cancel(); var token = new CancellationTokenSource(); sending = token;
                             var fileEpoch = epoch; var fileRevision = offered.Sequence;
@@ -115,7 +124,7 @@ internal sealed class DesktopClipboard : IDisposable
                 versions.Capture(revision);
                 send(new DesktopMessage("clipboard-copy", Epoch: epoch, Revision: revision, Clipboard: bytes, Ok: !priming));
                 source = copiedFile;
-                sourceOffer = source is null ? null : new FileClipboardOffer(epoch, revision, source.Name, source.Size);
+                sourceOffer = source is null ? null : new FileClipboardOffer(epoch, revision, source.Name, source.Size, ContentType: source.ContentType);
                 if (sourceOffer is not null) send(new DesktopMessage("clipboard-file-copy", Epoch: epoch, Revision: revision,
                     Clipboard: JsonSerializer.SerializeToUtf8Bytes(sourceOffer), Ok: !priming));
                 priming = false;
@@ -132,11 +141,42 @@ internal sealed class DesktopClipboard : IDisposable
                 sending?.Cancel(); source = null; sourceOffer = null;
                 var fileEpoch = epoch;
                 var session = new FileClipboardSession(offer, FilePasteDiagnostics.Write);
+                if (offer.IsImage)
+                {
+                    fileSession = session; imageUpdate = fileUpdate; pendingFile = null;
+                    var token = new CancellationTokenSource(); receivingImage = token;
+                    var imageRevision = revision;
+                    incomingImage = Task.Run<byte[]?>(() => {
+                        try {
+                            return ClipboardImageContent.Read(session, () => !token.IsCancellationRequested && !disposed && permitted && permittedEpoch == fileEpoch &&
+                                ReferenceEquals(fileSession, session) && ClipboardNative.GetClipboardSequenceNumber() == imageRevision &&
+                                DesktopNative.IsDefaultDesktop());
+                        } catch (Exception error) when (error is IOException or System.Net.Sockets.SocketException or OperationCanceledException or
+                            System.Security.Cryptography.CryptographicException or ObjectDisposedException) { return null; }
+                        finally { session.Dispose(); }
+                    });
+                    return;
+                }
                 var dataObject = new VirtualFileClipboard(session, () => !disposed && permitted && permittedEpoch == fileEpoch &&
                     ReferenceEquals(fileSession, session) && DesktopNative.IsDefaultDesktop());
                 fileSession = session;
                 if (dataObject.Install()) { virtualFile = dataObject; versions.Imported(ClipboardNative.GetClipboardSequenceNumber()); pendingFile = null; }
                 else { session.Dispose(); fileSession = null; }
+                return;
+            }
+            if (incomingImage?.IsCompleted == true && imageUpdate is { } imageMessage)
+            {
+                var bytes = incomingImage.GetAwaiter().GetResult();
+                if (imageWriteDeadline == 0) imageWriteDeadline = RuntimeCompat.TickCount64 + 2000;
+                if (bytes is null || !versions.CanApply(imageMessage.Revision, revision) ||
+                    RuntimeCompat.TickCount64 > imageWriteDeadline) { ClearFile(); return; }
+                var token = receivingImage;
+                if (ClipboardNative.WriteImage(window.Handle, bytes, revision,
+                    () => CanAccess() && token is not null && !token.IsCancellationRequested && ReferenceEquals(receivingImage, token),
+                    out var writtenImage))
+                {
+                    versions.Imported(writtenImage); ClearFile();
+                }
                 return;
             }
             if (pending is not { } update) return;

@@ -5,7 +5,9 @@ import Network
 final class FileNetworkReceiver: @unchecked Sendable {
     private let queue = DispatchQueue(label: "DeusKVM.file-receive")
     private let offer: ClipboardFileOffer
-    private let destination: URL
+    private let destination: URL?
+    private let received: (@Sendable (Data) -> Void)?
+    private var image = Data()
     private let canAccess: @Sendable () -> Bool
     private let ready: @Sendable (ClipboardFileOffer) -> Void
     private let progress: @Sendable (Int) -> Void
@@ -29,14 +31,16 @@ final class FileNetworkReceiver: @unchecked Sendable {
 
     init(
         offer: ClipboardFileOffer,
-        destination: URL,
+        destination: URL?,
         canAccess: @escaping @Sendable () -> Bool,
         ready: @escaping @Sendable (ClipboardFileOffer) -> Void,
         progress: @escaping @Sendable (Int) -> Void,
-        completion: @escaping @Sendable (String?) -> Void
+        completion: @escaping @Sendable (String?) -> Void,
+        received: (@Sendable (Data) -> Void)? = nil
     ) {
         self.offer = offer; self.destination = destination; self.canAccess = canAccess
         self.ready = ready; self.progress = progress; self.completion = completion
+        self.received = received
     }
 
     func start() {
@@ -48,7 +52,9 @@ final class FileNetworkReceiver: @unchecked Sendable {
     }
 
     private func startListener() {
-        guard canAccess(), offer.valid else { finish("The copied file is no longer available. Copy it again."); return }
+        guard canAccess(), offer.valid, destination != nil || offer.isImage && received != nil else {
+            finish("The copied file is no longer available. Copy it again."); return
+        }
         do {
             let tcp = NWProtocolTCP.Options()
             tcp.noDelay = true // pipelined requests are complete records; don't hold them for ACKs
@@ -153,7 +159,9 @@ final class FileNetworkReceiver: @unchecked Sendable {
             guard plain.first == 0, plain.count == count + 1, canAccess() else {
                 finish("The source file changed or is no longer available. Copy it again."); return
             }
-            if handle == nil {
+            if destination == nil {
+                image.append(plain.dropFirst())
+            } else if handle == nil, let destination {
                 let url = destination.deletingLastPathComponent().appendingPathComponent(".deuskvm-\(UUID().uuidString).partial")
                 let descriptor = open(url.path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
                 guard descriptor >= 0 else { finish("Cannot create a file in this Finder folder."); return }
@@ -165,8 +173,12 @@ final class FileNetworkReceiver: @unchecked Sendable {
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastProgress >= 0.1 || offset == offer.size { lastProgress = now; progress(offset) }
             if offset < offer.size { request(); response(); return }
+            if destination == nil {
+                guard canAccess() else { finish("Image transfer canceled."); return }
+                received?(image); image = Data(); finish(nil); return
+            }
             try handle?.synchronize(); try handle?.close(); handle = nil
-            guard canAccess(), let temporary else { finish("File transfer canceled."); return }
+            guard canAccess(), let temporary, let destination else { finish("File transfer canceled."); return }
             // Exclusive rename is atomic and never overwrites an existing destination.
             guard renamex_np(temporary.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
                 finish("Cannot finish the paste. A file with that name may already exist, or the folder may be read-only."); return
@@ -178,6 +190,7 @@ final class FileNetworkReceiver: @unchecked Sendable {
     private func finish(_ error: String?) {
         guard !ended else { return }
         ended = true; listener?.cancel(); connection?.cancel(); listener = nil; connection = nil
+        image = Data()
         try? handle?.close(); handle = nil
         if let temporary { try? FileManager.default.removeItem(at: temporary) }
         completion(error)

@@ -21,7 +21,7 @@ when the tray window is closed. Keep the existing Bluetooth pairing.
    again. Test reconnect and lock/unlock with new text. The clipboard must not
    synchronize on the login/security screen.
 7. Using disposable test text, check a password manager that marks its clipboard
-   private. Confirm that private text, images and text over 64 KiB do not
+   private. Confirm that private text/images and text over 64 KiB do not
    replace the other machine's clipboard.
 
 The handoff-only Mac update is tested using isolated named pasteboards, including
@@ -33,17 +33,20 @@ hardware checks above. Automated tests do not establish live end-to-end behavior
 
 - Plain Unicode text crosses in both directions, up to **65,536 UTF-8 bytes after newline
   normalization**. Rich copies may supply their plain-text representation;
-  formatting and images are not transferred. File-list clipboards are excluded
+  formatting is not transferred. Screenshot images are supported separately
+  as described below. File-list clipboards are excluded
   from text sharing, even if they also contain a text representation.
 - Mac copies stay local until switching to Windows. At handoff, DeusKVM reads
-  the latest clipboard and offers its text/file metadata, including menu and
+  the latest clipboard and offers its text/file/image metadata, including menu and
   right-click copies. Connecting alone does not publish the Mac clipboard.
   Windows offers continue to arrive through the companion; text is fetched when
-  the Mac becomes active. File contents transfer only when pasted.
+  the Mac becomes active. File contents transfer only when pasted; clipboard
+  images download as soon as their offer is accepted.
 - Transfers run asynchronously; switching does not wait for the clipboard.
   The Mac has no repeating clipboard poll. It reads for initial session setup,
   handoff and validation of incoming writes; operation-specific retries stop
-  after at most two seconds. Large text may take time before a paste sees it.
+  after at most two seconds (network image transfer has its own timeouts).
+  Large text/images may take time before a paste sees them.
   Text over the cap is skipped rather than truncated.
 - Empty text is supported. Embedded NUL and malformed Unicode are rejected.
   Newlines are LF on the wire and CRLF when written to Windows.
@@ -55,7 +58,7 @@ hardware checks above. Automated tests do not establish live end-to-end behavior
   or secure input, and when the user disables it. Old-session pending payloads
   are discarded. Copy again after reconnect/unlock to establish a fresh offer.
 - Known private, transient and generated clipboard markers are inspected before
-  reading text. This is metadata filtering, not content classification:
+  reading text or images. This is metadata filtering, not content classification:
   **unmarked password text cannot be distinguished from ordinary text**.
 - DeusKVM does not log or persist clipboard contents. Windows imports also
   opt out of cloud clipboard upload. The OS and other installed clipboard tools
@@ -108,6 +111,38 @@ Privacy conventions: [NSPasteboard community types](https://nspasteboard.org/),
 [Windows clipboard formats](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats).
 Native memory ownership follows
 [SetClipboardData](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata).
+
+## Screenshot image clipboard
+
+Both apps advertise `images: 1` in HELLO. A clipboard image uses FILE_OFFER with
+`contentType: "image/png"` and the existing authenticated LAN transport. Older
+peers do not receive image offers. Install the updated Mac app and Windows
+companion; both computers need to be reachable on the local network.
+
+- Mac captures explicit PNG or TIFF clipboard data, including screenshots copied
+  by CleanShot, and converts it to PNG. Windows captures registered `PNG` data
+  or a native bitmap (including Windows' conversion from DIB/DIBV5).
+- The receiver downloads the image asynchronously into memory, then publishes
+  actual image formats: PNG and TIFF on macOS; registered PNG and CF_DIB on
+  Windows. PNG preserves transparency; the Windows DIB fallback uses a white
+  background. Chromium/Electron reads registered PNG before bitmap fallback
+  ([Chromium implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/ui/base/clipboard/clipboard_win.cc)).
+- Images are limited to **32 MiB of encoded data** and **40 million decoded
+  pixels**. The image must finish transferring before it can be pasted.
+  No screenshot files are saved, and no destination-app shortcut is intercepted.
+- The sharing preference, privacy markers, clipboard revisions, selected peer,
+  and session/lock checks also apply to images. A newer local copy or remote
+  offer invalidates an in-flight image. Unavailable LAN leaves the existing
+  destination clipboard in place; copy again to retry.
+- Copying a file in Finder/Explorer still uses the existing file-paste behavior.
+
+Hardware validation is pending: copy a CleanShot screenshot on Mac and paste
+into Discord on Windows; use Windows **Snipping Tool** to copy a screenshot and
+paste into Discord on Mac. Confirm each opens an image attachment preview
+(sending a message is unnecessary). Also test transparency, rapid successive
+copies, a local copy during download, clipboard sharing off, lock/reconnect,
+unavailable LAN, and existing text/Finder/Explorer paste. See
+[IMAGE_CLIPBOARD_PLAN.md](IMAGE_CLIPBOARD_PLAN.md) for the verification record.
 
 ## On-demand file paste
 

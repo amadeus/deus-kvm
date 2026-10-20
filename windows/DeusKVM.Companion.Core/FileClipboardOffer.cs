@@ -2,15 +2,19 @@ using System.Text.Json;
 
 namespace DeusKVM.Companion.Core;
 
-public sealed record FileClipboardOffer(uint Epoch, uint Sequence, string Name, int Size, uint ClipboardSequence = 0, FileNetworkOffer? Network = null)
+public sealed record FileClipboardOffer(uint Epoch, uint Sequence, string Name, int Size, uint ClipboardSequence = 0,
+    FileNetworkOffer? Network = null, string? ContentType = null)
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsImage => ContentType == "image/png";
     public static readonly JsonSerializerOptions WireJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     public const int MaximumBytes = 2_000_000_000;
     public static FileClipboardOffer Parse(byte[] data)
     {
         if (data.Length > 4096) throw new InvalidDataException("Oversized file offer");
         var offer = JsonSerializer.Deserialize<FileClipboardOffer>(data, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        if (offer is null || offer.Size is < 0 or > MaximumBytes || string.IsNullOrEmpty(offer.Name) || offer.Name.Length > 240 ||
+        if (offer is null || offer.ContentType is not null && (!offer.IsImage || offer.Size is <= 0 or > ClipboardImageContent.MaximumBytes) ||
+            offer.Size is < 0 or > MaximumBytes || string.IsNullOrEmpty(offer.Name) || offer.Name.Length > 240 ||
             offer.Name is "." or ".." || offer.Name.EndsWith(".", StringComparison.Ordinal) || offer.Name.EndsWith(" ", StringComparison.Ordinal) ||
             offer.Name.Any(c => c < 32 || "<>:\"/\\|?*".Contains(c)) ||
             new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",

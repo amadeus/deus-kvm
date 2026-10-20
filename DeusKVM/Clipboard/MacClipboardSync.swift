@@ -41,7 +41,8 @@ final class MacClipboardSync {
                 sequence: UInt32(truncatingIfNeeded: revision),
                 name: $0.url.lastPathComponent,
                 size: $0.size,
-                network: target.map { service.supportsFileNetwork($0) } == true ? snapshot.network : nil
+                network: target.map { service.supportsFileNetwork($0) } == true ? snapshot.network : nil,
+                contentType: $0.contentType
             ))
         }
         if !primed {
@@ -58,6 +59,8 @@ final class MacClipboardSync {
 
     private func offerFile() {
         if let target, enabled, service.supportsFiles(target), let fileOffer {
+            if let offer = try? JSONDecoder().decode(ClipboardFileOffer.self, from: fileOffer),
+               offer.isImage, !service.supportsImages(target) { return }
             service.sendClipboard(.fileOffer, payload: fileOffer, to: target)
         }
     }
@@ -65,6 +68,22 @@ final class MacClipboardSync {
     init(service: CompanionService) {
         self.service = service
         transfer.onDeadlineChanged = { [weak self] in self?.scheduleRetry() }
+        pasteboard.importedImage = { [weak self] revision, generation in
+            Task { @MainActor in
+                guard let self, self.enabled, self.generation == generation,
+                      NSPasteboard.general.changeCount == revision else { return }
+                self.fileOffer = nil; self.transfer.observe(nil, announce: false); self.finder.clear()
+            }
+        }
+        pasteboard.requestImage = { [weak self] request, generation in
+            Task { @MainActor in
+                guard let self, self.enabled, self.generation == generation,
+                      request.epoch == self.epoch, request.clipboardSequence == self.peerSequence,
+                      request.sequence == self.deliveredFile, let target = self.target,
+                      let data = try? JSONEncoder().encode(request) else { return }
+                self.service.sendClipboard(.fileAccept, payload: data, to: target)
+            }
+        }
         pasteboard.remoteFile = { [weak self] offer, revision, generation in
             Task { @MainActor in
                 guard let self, self.enabled, self.generation == generation, self.epoch == offer.epoch,
@@ -176,6 +195,7 @@ final class MacClipboardSync {
         } else if enabled, primed, type == .fileOffer {
             guard data.count <= 4096, let offer = try? JSONDecoder().decode(ClipboardFileOffer.self, from: data), offer.valid,
                   offer.epoch == epoch, offer.clipboardSequence == peerSequence, deliveredFile != offer.sequence else { return }
+            guard !offer.isImage || service.supportsImages(id) else { return }
             deliveredFile = offer.sequence
             pasteboard.writeFile(offer, revision: peerRevision)
         } else if type == .fileGet || type == .fileData {
@@ -185,6 +205,7 @@ final class MacClipboardSync {
             if type == .clipGrab, data.count == 12, CompanionProtocol.read32(data, 0) == epoch {
                 let incoming = CompanionProtocol.read32(data, 4)
                 if peerSequence != incoming {
+                    pasteboard.cancelImage()
                     peerSequence = incoming; peerRevision = revision; deliveredFile = nil; finder.clear()
                 }
             }

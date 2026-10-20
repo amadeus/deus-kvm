@@ -139,6 +139,7 @@ struct CompanionHello: Codable {
     var files: Int?
     var fileReceive: Int?
     var fileNetwork: Int?
+    var images: Int?
     var computerName: String?
     var selection: Int?
     var available: Bool?

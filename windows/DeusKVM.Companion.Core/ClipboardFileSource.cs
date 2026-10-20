@@ -3,6 +3,10 @@ namespace DeusKVM.Companion.Core;
 // Metadata only until paste; no held file handle or content prefetch on copy.
 public sealed record ClipboardFileSource(string Path, string Name, int Size, DateTime Modified, DateTime Created)
 {
+    private byte[]? image;
+    public string? ContentType => image is null ? null : "image/png";
+    public static ClipboardFileSource? FromPng(byte[] png) => ClipboardImageContent.HasSafeDimensions(png)
+        ? new("", "Screenshot.png", png.Length, default, default) { image = (byte[])png.Clone() } : null;
     public static ClipboardFileSource? Capture(string path)
     {
         try
@@ -17,6 +21,13 @@ public sealed record ClipboardFileSource(string Path, string Name, int Size, Dat
     }
     public byte[]? Read(uint offset, int count)
     {
+        if (image is not null)
+        {
+            if (offset > Size || count is <= 0 or > FileNetworkCrypto.MaximumBlock) return null;
+            var block = new byte[Math.Min(count, Size - (int)offset)];
+            Buffer.BlockCopy(image, (int)offset, block, 0, block.Length);
+            return block;
+        }
         if (offset > Size || count is <= 0 or > FileNetworkCrypto.MaximumBlock || Capture(Path) != this) return null;
         try
         {
