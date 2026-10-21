@@ -76,6 +76,52 @@ final class ClipboardImageTests: XCTestCase {
         ).valid)
     }
 
+    func testScreenshotImageTakesPrecedenceOverFileUrl() throws {
+        for type in [NSPasteboard.PasteboardType.png, .tiff] {
+            try assertFileAndImageSnapshot(type: type, concealed: false)
+        }
+    }
+
+    func testFileUrlAloneStaysAFileAndMixedPrivateImagesStayPrivate() throws {
+        try assertFileAndImageSnapshot(type: nil, concealed: false)
+        try assertFileAndImageSnapshot(type: .png, concealed: true)
+    }
+
+    private func assertFileAndImageSnapshot(type: NSPasteboard.PasteboardType?, concealed: Bool) throws {
+        let board = NSPasteboard(name: .init("DeusKVMTests.\(UUID().uuidString)"))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+        defer { board.releaseGlobally(); try? FileManager.default.removeItem(at: url) }
+        let bytes = try png()
+        try bytes.write(to: url)
+        let item = NSPasteboardItem()
+        item.setString(url.absoluteString, forType: .fileURL)
+        if let type {
+            let data = type == .png ? bytes : try XCTUnwrap(ClipboardImage.encode(
+                XCTUnwrap(ClipboardImage.decode(bytes)), type: .tiff
+            ))
+            item.setData(data, forType: type)
+        }
+        if concealed { item.setData(Data(), forType: .init("org.nspasteboard.ConcealedType")) }
+        XCTAssertTrue(board.writeObjects([item]))
+        let snapshot = expectation(description: "file/image classification")
+        let clipboard = ClipboardPasteboard(board: board, snapshot: { value in
+            XCTAssertNil(value.text)
+            if concealed {
+                XCTAssertNil(value.file)
+            } else if type != nil {
+                XCTAssertEqual(value.file?.contentType, "image/png")
+                XCTAssertNotNil(value.file.flatMap { $0.read(offset: 0) }.flatMap(ClipboardImage.decode))
+            } else {
+                XCTAssertEqual(value.file?.url, url)
+                XCTAssertNil(value.file?.contentType)
+            }
+            snapshot.fulfill()
+        }, yielded: { _, _ in })
+        clipboard.configure(epoch: 1, enabled: true)
+        wait(for: [snapshot], timeout: 3)
+        clipboard.configure(epoch: 1, enabled: false)
+    }
+
     func testImageOfferCannotReplaceANewerLocalCopy() {
         let board = NSPasteboard(name: .init("DeusKVMTests.\(UUID().uuidString)"))
         defer { board.releaseGlobally() }

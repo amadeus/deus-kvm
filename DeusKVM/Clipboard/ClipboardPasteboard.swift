@@ -187,7 +187,9 @@ final class ClipboardPasteboard: @unchecked Sendable {
             if types.contains("public.file-url"), types.isDisjoint(with: privateTypes),
                let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
                urls.count == 1 { file = ClipboardFile(urls[0]) }
-            if types.isDisjoint(with: Self.excludedTypes), let png = ClipboardImage.capture(board) {
+            // Screenshot apps can publish an image and its file URL together.
+            // Prefer explicit image data while retaining all privacy exclusions.
+            if types.isDisjoint(with: privateTypes), let png = ClipboardImage.capture(board) {
                 file = ClipboardFile(png: png)
             }
             if file == nil, types.isDisjoint(with: Self.excludedTypes),

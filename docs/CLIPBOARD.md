@@ -120,7 +120,8 @@ peers do not receive image offers. Install the updated Mac app and Windows
 companion; both computers need to be reachable on the local network.
 
 - Mac captures explicit PNG or TIFF clipboard data, including screenshots copied
-  by CleanShot, and converts it to PNG. Windows captures registered `PNG` data
+  by CleanShot, and converts it to PNG. Explicit image data takes precedence when
+  the same copy also offers a file URL, as CleanShot does. Windows captures registered `PNG` data
   or a native bitmap (including Windows' conversion from DIB/DIBV5).
 - The receiver downloads the image asynchronously into memory, then publishes
   actual image formats: PNG and TIFF on macOS; registered PNG and CF_DIB on
@@ -134,7 +135,8 @@ companion; both computers need to be reachable on the local network.
   and session/lock checks also apply to images. A newer local copy or remote
   offer invalidates an in-flight image. Unavailable LAN leaves the existing
   destination clipboard in place; copy again to retry.
-- Copying a file in Finder/Explorer still uses the existing file-paste behavior.
+- File-only copies in Finder/Explorer still use the existing file-paste behavior;
+  a Mac file URL alone is not converted into an image.
 
 Hardware validation is pending: copy a CleanShot screenshot on Mac and paste
 into Discord on Windows; use Windows **Snipping Tool** to copy a screenshot and

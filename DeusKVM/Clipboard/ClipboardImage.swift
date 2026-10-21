@@ -26,7 +26,7 @@ enum ClipboardImage {
 
     static func capture(_ board: NSPasteboard) -> Data? {
         for type in [NSPasteboard.PasteboardType.png, .tiff] {
-            if let bytes = board.data(forType: type), let image = decode(bytes),
+            if board.types?.contains(type) == true, let bytes = board.data(forType: type), let image = decode(bytes),
                let png = encode(image, type: .png) { return png }
         }
         return nil
