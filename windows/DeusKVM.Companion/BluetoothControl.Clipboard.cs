@@ -6,7 +6,7 @@ namespace DeusKVM.Companion;
 internal sealed partial class BluetoothControl
 {
     private ClipboardTransfer? clipboardTransfer;
-    private bool filesPeer, fileReceivePeer;
+    private bool filesPeer, fileReceivePeer, imagesPeer;
     private uint? peerClipboardSequence, peerClipboardRevision, deliveredFileSequence;
     private byte[]? pendingFileOffer;
     private ClipboardTransfer Clipboard => clipboardTransfer ??= new ClipboardTransfer(SendClipboard, ApplyClipboard);
@@ -91,6 +91,7 @@ internal sealed partial class BluetoothControl
         else if (message.Kind == "clipboard-file-copy" && fileReceivePeer && message.Ok && message.Revision == clipboardRevision && message.Clipboard is { } fileBytes)
         {
             var local = FileClipboardOffer.Parse(fileBytes);
+            if (local.IsImage && !imagesPeer) return;
             SendClipboard(Protocol.Message.FileOffer, JsonSerializer.SerializeToUtf8Bytes(local with { ClipboardSequence = Clipboard.Sequence }, FileClipboardOffer.WireJson));
         }
         else if (message.Kind == "clipboard-yield" && clipboardPrimed) Clipboard.Yield();
@@ -111,6 +112,7 @@ internal sealed partial class BluetoothControl
             FileClipboardOffer offer;
             try { offer = FileClipboardOffer.Parse(payload); }
             catch (InvalidDataException) { return; } // Unsupported names/sizes must not disconnect input.
+            if (offer.IsImage && !imagesPeer) return;
             if (offer.Epoch != clipboardEpoch || offer.ClipboardSequence != peerClipboardSequence) return;
             if (!clipboardPrimed) { pendingFileOffer = payload; return; }
             if (deliveredFileSequence == offer.Sequence) return;

@@ -44,6 +44,7 @@ final class CompanionService: ObservableObject {
         var supportsClipboard = false
         var supportsFiles = false
         var supportsFileNetwork = false
+        var supportsImages = false
         var supportsSelection = false
         var supportsTakeover = false
     }
@@ -118,7 +119,7 @@ final class CompanionService: ObservableObject {
         if sendHello {
             sendJSON(CompanionHello(
                 v: 1, role: "mac", name: "DeusKVM", chunk: CompanionProtocol.frameLimit(central.maximumUpdateValueLength),
-                clipboard: 1, files: 1, fileReceive: 1, fileNetwork: 1,
+                clipboard: 1, files: 1, fileReceive: 1, fileNetwork: 1, images: 1,
                 selection: 1, available: selection.available(to: central.identifier), availabilityEpoch: selection.epoch,
                 takeover: true, requestControl: wantsControl
             ), type: .hello, to: central.identifier)
@@ -237,6 +238,7 @@ final class CompanionService: ObservableObject {
         clients[id]?.supportsClipboard = hello.clipboard == 1
         clients[id]?.supportsFiles = hello.files == 1
         clients[id]?.supportsFileNetwork = hello.fileNetwork == 1
+        clients[id]?.supportsImages = hello.images == 1
         clients[id]?.supportsSelection = hello.selection == 1
         clients[id]?.supportsTakeover = hello.takeover == true
         if let central = clients[id]?.central {
@@ -281,6 +283,10 @@ final class CompanionService: ObservableObject {
 
     func supportsFileNetwork(_ id: UUID) -> Bool {
         supportsFiles(id) && clients[id]?.supportsFileNetwork == true
+    }
+
+    func supportsImages(_ id: UUID) -> Bool {
+        supportsFileNetwork(id) && clients[id]?.supportsImages == true
     }
 
     func allowsControl(_ id: UUID, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {

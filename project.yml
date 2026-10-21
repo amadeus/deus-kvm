@@ -84,6 +84,9 @@ targets:
       - DeusKVM/Clipboard/ClipboardTransfer.swift
       - DeusKVM/Clipboard/ClipboardRevision.swift
       - DeusKVM/Clipboard/ClipboardPasteboard.swift
+      - DeusKVM/Clipboard/ClipboardImage.swift
+      - DeusKVM/Clipboard/ClipboardImageFile.swift
+      - DeusKVM/Clipboard/FileNetworkReceiver.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

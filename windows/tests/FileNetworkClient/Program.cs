@@ -64,3 +64,18 @@ Check(File.ReadAllText(Path.Combine(folder, "reverse-result")) == "OK", "Reverse
 Check(File.ReadAllBytes(Path.Combine(folder, "reverse.bin")).SequenceEqual(bytes), "Reverse bytes differ");
 Check(!Directory.EnumerateFiles(folder, "*.partial").Any(), "Partial output leaked");
 Console.WriteLine("PASS: C# source -> Swift receiver, authenticated multi-block binary equality and partial-file cleanup");
+
+var imageOffer = FileClipboardOffer.Parse(File.ReadAllBytes(Path.Combine(folder, "image-offer.json")));
+using var imageSession = new FileClipboardSession(imageOffer);
+var image = ClipboardImageContent.Read(imageSession, () => true);
+var expectedImage = Convert.FromBase64String(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=").Concat(bytes).ToArray();
+Check(image.SequenceEqual(expectedImage), "Forward image bytes differ");
+var imageRequest = FileClipboardOffer.Parse(File.ReadAllBytes(Path.Combine(folder, "image-request.json")));
+var imageSource = ClipboardFileSource.FromPng(image)!;
+await NetworkFileSender.Send(imageRequest, imageSource.Read, timeout.Token);
+for (var i = 0; i < 100 && !File.Exists(Path.Combine(folder, "image-result")); i++) await Task.Delay(20);
+Check(File.ReadAllText(Path.Combine(folder, "image-result")) == "OK", "Reverse image bytes differ");
+Check(!File.Exists(Path.Combine(folder, "Screenshot.png")) && !Directory.EnumerateFiles(folder, "*.partial").Any(),
+    "Image transfer persisted clipboard content");
+Console.WriteLine("PASS: bidirectional in-memory image sources and receiver, multi-block byte equality, no image files");

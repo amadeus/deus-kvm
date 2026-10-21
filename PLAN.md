@@ -1541,3 +1541,11 @@ moved to a dedicated Bluetooth queue; the main thread keeps host policy,
 services, UI state and companion decoding (docs/PERFORMANCE_AUDIT.md). The
 local build, 105 Mac tests and lint pass, and the signed arm64 test build is in
 `releases/`. Its hardware checklist is pending.
+
+### Screenshot clipboard — 2026-10-19 (branch `rich-paste-test`)
+
+Added native screenshot image sharing in both directions, with PNG transported
+in memory over the existing encrypted LAN connection. Native image clipboard
+formats support attachment paste in applications such as Discord. Implementation,
+automated verification, packaging status, and outstanding CleanShot/Snipping
+Tool/Discord hardware checks are tracked in `docs/IMAGE_CLIPBOARD_PLAN.md`.

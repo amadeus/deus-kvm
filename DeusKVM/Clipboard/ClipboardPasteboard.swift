@@ -34,17 +34,22 @@ final class ClipboardPasteboard: @unchecked Sendable {
     private struct Pending {
         let text: Data?
         let file: ClipboardFileOffer?
+        var image: (offer: ClipboardFileOffer, bytes: Data)?
         let revision: Int
         let deadline: TimeInterval
     }
 
     private var pending: Pending?
     private var file: ClipboardFile?
+    private var imageReceiver: FileNetworkReceiver?
+    private var imageLease: ClipboardImageLease?
     private lazy var network = FileNetworkServer(queue: queue) { [weak self] epoch, sequence, offset, count in
         self?.fileBytes(epoch: epoch, sequence: sequence, offset: offset, count: count)
     }
 
     var remoteFile: (@Sendable (ClipboardFileOffer, Int, UInt64) -> Void)?
+    var requestImage: (@Sendable (ClipboardFileOffer, UInt64) -> Void)?
+    var importedImage: (@Sendable (ClipboardFileOffer, Data, Int, UInt64) -> Void)?
     private let snapshot: @Sendable (Snapshot) -> Void
     private let yielded: @Sendable (UInt32, UInt64) -> Void
 
@@ -64,6 +69,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
         }
         queue.async { [self] in
             generation = next
+            clearImage()
             self.epoch = epoch; self.enabled = enabled
             versions = ClipboardRevision(); pending = nil; file = nil; priming = true; pendingYield = false
             network.configure(enabled)
@@ -80,6 +86,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
     func write(_ text: Data, epoch: UInt32, revision: Int) {
         queue.async { [self] in
             guard enabled, self.epoch == epoch else { return }
+            clearImage()
             pending = Pending(text: text, file: nil, revision: revision, deadline: ProcessInfo.processInfo.systemUptime + 2)
             requestPoll()
         }
@@ -88,6 +95,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
     func writeFile(_ offer: ClipboardFileOffer, revision: Int) {
         queue.async { [self] in
             guard enabled, epoch == offer.epoch, offer.valid else { return }
+            clearImage()
             pending = Pending(text: nil, file: offer, revision: revision, deadline: ProcessInfo.processInfo.systemUptime + 2)
             requestPoll()
         }
@@ -105,6 +113,43 @@ final class ClipboardPasteboard: @unchecked Sendable {
 
     private var canAccess: Bool {
         gate.withLock { permitted && permittedGeneration == generation }
+    }
+
+    func cancelImage() {
+        queue.async { [self] in clearImage() }
+    }
+
+    private func clearImage() {
+        imageLease?.cancel(); imageReceiver?.cancel()
+        imageLease = nil; imageReceiver = nil
+    }
+
+    private func receiveImage(_ offer: ClipboardFileOffer, revision: Int, localRevision: Int) {
+        let token = ClipboardImageLease(), expected = generation
+        imageLease = token
+        let receiver = FileNetworkReceiver(offer: offer, destination: nil, canAccess: { [weak self] in
+            guard let self else { return false }
+            return token.valid && gate.withLock { permitted && permittedGeneration == expected } &&
+                !IsSecureEventInputEnabled() && board.changeCount == revision
+        }, ready: { [weak self] request in
+            guard token.valid else { return }
+            self?.requestImage?(request, expected)
+        }, progress: { _ in }, completion: { [weak self] _ in
+            self?.queue.async { [weak self] in
+                guard let self, imageLease === token else { return }
+                imageReceiver = nil; imageLease = nil
+            }
+        }, received: { [weak self] bytes in
+            self?.queue.async { [weak self] in
+                guard let self, token.valid, canAccess, generation == expected, board.changeCount == revision else { return }
+                pending = Pending(
+                    text: nil, file: nil, image: (offer, bytes), revision: localRevision,
+                    deadline: ProcessInfo.processInfo.systemUptime + 2
+                )
+                requestPoll()
+            }
+        })
+        imageReceiver = receiver; receiver.start()
     }
 
     /// Only initialization, handoff and incoming writes request a read. Retries are
@@ -133,6 +178,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
         let revision = board.changeCount
         if versions.observed != revision {
             guard !IsSecureEventInputEnabled() else { return }
+            clearImage()
             pending = nil
             let types = Set((board.types ?? []).map(\.rawValue))
             var bytes: Data?
@@ -141,7 +187,12 @@ final class ClipboardPasteboard: @unchecked Sendable {
             if types.contains("public.file-url"), types.isDisjoint(with: privateTypes),
                let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
                urls.count == 1 { file = ClipboardFile(urls[0]) }
-            if types.isDisjoint(with: Self.excludedTypes),
+            // Screenshot apps can publish an image and its file URL together.
+            // Prefer explicit image data while retaining all privacy exclusions.
+            if types.isDisjoint(with: privateTypes), let png = ClipboardImage.capture(board) {
+                file = ClipboardFile(png: png)
+            }
+            if file == nil, types.isDisjoint(with: Self.excludedTypes),
                let data = board.data(forType: .string), data.count <= ClipboardTransfer.maximumBytes * 2
             {
                 bytes = ClipboardTransfer.text(String(data: data, encoding: .utf8))
@@ -168,11 +219,22 @@ final class ClipboardPasteboard: @unchecked Sendable {
         guard !IsSecureEventInputEnabled() else { return }
         guard versions.canApply(expectedLocal: update.revision, current: revision),
               ProcessInfo.processInfo.systemUptime <= update.deadline else { pending = nil; return }
-        let item = NSPasteboardItem()
+        if let offer = update.file, offer.isImage {
+            pending = nil
+            receiveImage(offer, revision: revision, localRevision: update.revision)
+            return
+        }
+        let item: NSPasteboardItem
+        if let png = update.image {
+            guard let image = ClipboardImage.item(png.bytes) else { pending = nil; return }
+            item = image
+        } else {
+            item = NSPasteboardItem()
+        }
         if let offer = update.file {
             guard let metadata = try? JSONEncoder().encode(offer) else { pending = nil; return }
             item.setData(metadata, forType: NSPasteboard.PasteboardType("io.github.amadeus.deuskvm.remote-file"))
-        } else {
+        } else if update.image == nil {
             guard let bytes = update.text, let text = ClipboardTransfer.decode(bytes) else { pending = nil; return }
             item.setString(text, forType: .string)
         }
@@ -183,6 +245,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
         if board.writeObjects([item]) {
             versions.imported(board.changeCount); pending = nil; file = nil; network.revoke()
             if let offer = update.file { remoteFile?(offer, board.changeCount, generation) }
+            if let image = update.image { importedImage?(image.offer, image.bytes, board.changeCount, generation) }
         }
     }
 

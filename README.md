@@ -47,7 +47,9 @@ BLE. No LAN connection is required.
 - **Configuration → Input settings → Share clipboard with Windows** shares plain text in both
   directions, up to **64 KiB of UTF-8** per copy. Clipboard sharing pauses while
   locked or signed out and skips recognized private clipboard markers. See
-  [clipboard behavior and limits](docs/CLIPBOARD.md). The current prototype also
+  [clipboard behavior and limits](docs/CLIPBOARD.md). Screenshot images also cross
+  in both directions for pasting into apps such as Discord, using the local
+  network (both apps must be updated). The current prototype also
   supports [on-demand file paste in both directions](docs/FILE_PASTE_CHECKPOINT.md)
   for one regular file up to 2 GB, using networking only. Windows → Mac uses
   Finder Cmd+V with DeusKVM progress/cancel UI. Contents transfer only when pasted.
