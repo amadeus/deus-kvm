@@ -14,6 +14,12 @@ then paste an image attachment into Discord on the other machine.
   wire bounds, source immutability, transfer cancellation, and cross-language
   multiblock image transport without screenshot files.
 - [x] Package and verify signed Mac arm64-only app and Windows x64 executable.
+- [x] User acceptance: updated screenshot image/file paste reported working great
+  after installing the combined-format builds (2026-10-20).
+
+Detailed hardware coverage below was not individually enumerated in that report;
+retain these checks for broader validation, without discounting user acceptance.
+
 - [ ] Hardware: CleanShot → Windows Discord attachment preview.
 - [ ] Hardware: Snipping Tool → Mac Discord attachment preview.
 - [ ] Hardware: same CleanShot copy → Windows Discord and Explorer, in either order.
@@ -106,3 +112,12 @@ remaining hardware items complete.
 - Verified fresh packages: extracted Mac app is arm64-only and passes deep/strict
   signature verification; Windows x64 launcher, embedded archive/hash, and 14
   runtime files pass the bundle verifier. Current hashes are in the table above.
+
+## User acceptance — 2026-10-20
+
+After the combined-format update (`1536149`), the user reported: "sick, this works
+great". The requested workflow is accepted; no further functional defect was
+reported. The exact per-direction/app/order matrix and failure-mode checks were
+not individually confirmed, so those remain listed for broader validation. The
+Windows-only native OLE tests also still need execution on Windows. Earlier
+failure/retest notes above describe historical checkpoints before this acceptance.
