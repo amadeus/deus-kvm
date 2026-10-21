@@ -34,7 +34,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
     private struct Pending {
         let text: Data?
         let file: ClipboardFileOffer?
-        var image: Data?
+        var image: (offer: ClipboardFileOffer, bytes: Data)?
         let revision: Int
         let deadline: TimeInterval
     }
@@ -49,7 +49,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
 
     var remoteFile: (@Sendable (ClipboardFileOffer, Int, UInt64) -> Void)?
     var requestImage: (@Sendable (ClipboardFileOffer, UInt64) -> Void)?
-    var importedImage: (@Sendable (Int, UInt64) -> Void)?
+    var importedImage: (@Sendable (ClipboardFileOffer, Data, Int, UInt64) -> Void)?
     private let snapshot: @Sendable (Snapshot) -> Void
     private let yielded: @Sendable (UInt32, UInt64) -> Void
 
@@ -143,7 +143,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
             self?.queue.async { [weak self] in
                 guard let self, token.valid, canAccess, generation == expected, board.changeCount == revision else { return }
                 pending = Pending(
-                    text: nil, file: nil, image: bytes, revision: localRevision,
+                    text: nil, file: nil, image: (offer, bytes), revision: localRevision,
                     deadline: ProcessInfo.processInfo.systemUptime + 2
                 )
                 requestPoll()
@@ -226,7 +226,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
         }
         let item: NSPasteboardItem
         if let png = update.image {
-            guard let image = ClipboardImage.item(png) else { pending = nil; return }
+            guard let image = ClipboardImage.item(png.bytes) else { pending = nil; return }
             item = image
         } else {
             item = NSPasteboardItem()
@@ -245,7 +245,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
         if board.writeObjects([item]) {
             versions.imported(board.changeCount); pending = nil; file = nil; network.revoke()
             if let offer = update.file { remoteFile?(offer, board.changeCount, generation) }
-            if update.image != nil { importedImage?(board.changeCount, generation) }
+            if let image = update.image { importedImage?(image.offer, image.bytes, board.changeCount, generation) }
         }
     }
 

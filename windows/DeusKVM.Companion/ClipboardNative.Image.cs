@@ -1,3 +1,4 @@
+using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using DeusKVM.Companion.Core;
@@ -6,7 +7,7 @@ namespace DeusKVM.Companion;
 
 internal static partial class ClipboardNative
 {
-    private const uint BitmapFormat = 2, DibFormat = 8;
+    private const uint BitmapFormat = 2;
     private static readonly uint Png = RegisterClipboardFormat("PNG");
 
     private static byte[]? ReadImage()
@@ -33,10 +34,9 @@ internal static partial class ClipboardNative
         catch (Exception error) when (error is ArgumentException or ExternalException or OutOfMemoryException) { return null; }
     }
 
-    public static bool WriteImage(IntPtr window, byte[] png, uint expected, Func<bool> canAccess, out uint revision)
+    public static byte[]? ImageDib(byte[] png)
     {
-        revision = GetClipboardSequenceNumber();
-        if (!ClipboardImageContent.HasSafeDimensions(png)) return false;
+        if (!ClipboardImageContent.HasSafeDimensions(png)) return null;
         try
         {
             using var input = new MemoryStream(png, false);
@@ -53,9 +53,9 @@ internal static partial class ClipboardNative
             var bmp = output.ToArray();
             var dib = new byte[bmp.Length - 14];
             Buffer.BlockCopy(bmp, 14, dib, 0, dib.Length);
-            return WriteFormats(window, [(Png, png), (DibFormat, dib)], expected, canAccess, out revision);
+            return dib;
         }
-        catch (Exception error) when (error is ArgumentException or ExternalException or OutOfMemoryException) { return false; }
+        catch (Exception error) when (error is ArgumentException or ExternalException or OutOfMemoryException) { return null; }
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -16,6 +16,8 @@ then paste an image attachment into Discord on the other machine.
 - [x] Package and verify signed Mac arm64-only app and Windows x64 executable.
 - [ ] Hardware: CleanShot → Windows Discord attachment preview.
 - [ ] Hardware: Snipping Tool → Mac Discord attachment preview.
+- [ ] Hardware: same CleanShot copy → Windows Discord and Explorer, in either order.
+- [ ] Hardware: same Snipping Tool copy → Mac Discord and Finder Cmd+V, in either order.
 - [ ] Hardware: transparency, rapid copies, new local copy while downloading,
   unavailable LAN, lock/reconnect, sharing disabled, text and file regression checks.
 
@@ -24,7 +26,8 @@ Implementation and constraints:
 - Screenshots download when their offer is accepted, so native paste works in
   applications without an app-specific key hook. Files retain on-demand transfer.
 - Encoded images are capped at 32 MiB and decoded images at 40 million pixels.
-  Clipboard content is not persisted to disk. Image transfer requires reachable
+  Clipboard content is not cached on disk; file output starts only on paste.
+  Image transfer requires reachable
   LAN; no large-image fallback over Bluetooth.
 - Mac supplies PNG/TIFF; Windows supplies PNG plus a white-backed CF_DIB fallback.
   Registered PNG retains transparency for Chromium/Electron.
@@ -33,10 +36,11 @@ Implementation and constraints:
 
 Local verification:
 
-- Mac arm64 Debug build and 111 XCTest cases passed, including PNG/TIFF
+- Mac arm64 Debug build and 113 XCTest cases passed, including PNG/TIFF
   transparency, native named-pasteboard capture/privacy, and stale image offers.
 - Windows Release solution builds for net48/net10.0 with zero warnings/errors.
-  Portable tests: 180 passed, 2 Windows CNG tests skipped on macOS.
+  Portable tests: 182 passed, 2 Windows CNG tests skipped on macOS. The added
+  net48 native OLE format tests compile but require a Windows test run.
 - `scripts/test-file-network.sh` passed existing file regressions and new
   bidirectional multiblock in-memory image byte equality/no-file checks.
 - SwiftLint strict, repository SwiftFormat, and whitespace checks passed.
@@ -48,8 +52,8 @@ Test builds (both must be installed):
 
 | Artifact | SHA-256 |
 | --- | --- |
-| `releases/DeusKVM-mac-arm64.zip` | `df681a3897ead0e0b47b3ac453cabcca8ca93473f10d17eacfa0fc64e84d7fc2` |
-| `releases/DeusKVM-Companion-win-x64-2026-10-19.exe` | `6232f3f41454bf31411de830b47e88a0ef807cf089a6bfb82e6634666591200c` |
+| `releases/DeusKVM-mac-arm64.zip` | `e16caa8deaeb93bcdf1787a89570ea6f4fae0e8e751b31e17f0cbd3ee7d6540e` |
+| `releases/DeusKVM-Companion-win-x64-2026-10-20.exe` | `72d731a8bd6b85b1e6de58c97da5e6950b57ce7d8bb87828e341ff4be48b96ff` |
 
 Automated checks do not establish Windows native clipboard behavior, screenshot
 producer compatibility, Discord UI behavior, Bluetooth handoffs, or hardware
@@ -75,3 +79,30 @@ remaining hardware items complete.
 - Only the Mac app changes for this correction. Keep the Windows image-capable
   companion from the first build. Actual corrected CleanShot → Discord attachment
   preview still needs a hardware retest.
+
+## Preserve image and file paste together — 2026-10-20
+
+- User reported that Explorer paste stopped after the image-precedence fix,
+  and requested the same image-or-file choice for Windows screenshots on Mac.
+- Windows now publishes one OLE data object with PNG, CF_DIB, file descriptor,
+  and file stream formats. File reads use the downloaded PNG in memory; regular
+  file offers retain their existing network-backed behavior. Clipboard ownership,
+  session revocation, and privacy markers cover both representations.
+- Mac keeps the imported PNG/TIFF clipboard and installs the cached image with
+  the existing Finder Cmd+V handler. File output uses an exclusive private partial
+  in the chosen destination folder and an exclusive atomic rename. Cancellation
+  removes the partial and filename collisions preserve the existing file.
+- New portable tests cover repeated cached-image file reads, seeks/clones,
+  disconnected-source independence, metadata validation, and revocation. Mac tests
+  verify repeated file pastes preserve the native image clipboard, private file
+  permissions, collision protection, and canceled-write cleanup.
+- Windows-specific tests check the actual OLE object's combined image/file format
+  enumeration and descriptor, and verify ordinary file objects remain file-only.
+  They are compiled locally and scheduled by the existing Windows CI net48 test
+  target; they have not been executed on this Mac.
+- Both apps need this update for the complete two-direction behavior. All four
+  hardware destination checks above remain open; do not mark them passed from
+  unit tests or packaging.
+- Verified fresh packages: extracted Mac app is arm64-only and passes deep/strict
+  signature verification; Windows x64 launcher, embedded archive/hash, and 14
+  runtime files pass the bundle verifier. Current hashes are in the table above.

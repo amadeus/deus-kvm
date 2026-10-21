@@ -18,6 +18,7 @@ private final class FilePasteLease: @unchecked Sendable {
 @MainActor
 final class FinderFilePaste: NSObject {
     private var offer: ClipboardFileOffer?
+    private var image: Data?
     private var revision = 0
     /// While remote, this main-thread key tap would sit ahead of InputTap for every
     /// forwarded key; keep it disabled until the user is back on the Mac.
@@ -39,8 +40,8 @@ final class FinderFilePaste: NSObject {
     private var bar: NSProgressIndicator?
     private var status: NSTextField?
 
-    func install(_ value: ClipboardFileOffer?, revision: Int = 0) {
-        clear(); offer = value; self.revision = revision
+    func install(_ value: ClipboardFileOffer?, revision: Int = 0, image: Data? = nil) {
+        clear(); offer = value; self.revision = revision; self.image = image
         guard value != nil, tap == nil else { return }
         let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
         tap = CGEvent.tapCreate(
@@ -66,7 +67,7 @@ final class FinderFilePaste: NSObject {
     }
 
     func clear() {
-        offer = nil; lease?.revoke(); receiver?.cancel(); receiver = nil; lease = nil
+        offer = nil; image = nil; lease?.revoke(); receiver?.cancel(); receiver = nil; lease = nil
         panel?.close(); panel = nil
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         if let tap { CFMachPortInvalidate(tap) }
@@ -89,7 +90,7 @@ final class FinderFilePaste: NSObject {
               ),
               !Self.editingText(app.processIdentifier) else { return false }
         swallowed = true
-        if receiver == nil, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+        if lease == nil, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
             // Suppress the native key immediately; folder lookup/download never block the event tap.
             DispatchQueue.main.async { [weak self] in self?.paste(offer) }
         }
@@ -112,7 +113,7 @@ final class FinderFilePaste: NSObject {
     }
 
     private func paste(_ copied: ClipboardFileOffer) {
-        guard local, receiver == nil, offer?.sequence == copied.sequence, NSPasteboard.general.changeCount == revision,
+        guard local, lease == nil, offer?.sequence == copied.sequence, NSPasteboard.general.changeCount == revision,
               NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else { return }
         var error: NSDictionary?
         let script = NSAppleScript(source: "tell application id \"com.apple.finder\" to POSIX path of (insertion location as alias)")
@@ -131,6 +132,16 @@ final class FinderFilePaste: NSObject {
         let token = FilePasteLease(), expected = revision
         lease = token
         showProgress(copied)
+        if let image {
+            status?.stringValue = "Saving screenshot…"
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let message = ClipboardImageFile.write(image, to: destination) {
+                    token.valid && !IsSecureEventInputEnabled() && NSPasteboard.general.changeCount == expected
+                }
+                Task { @MainActor in self?.finishPaste(token, message: message) }
+            }
+            return
+        }
         let next = FileNetworkReceiver(offer: copied, destination: destination, canAccess: {
             token.valid && !IsSecureEventInputEnabled() && NSPasteboard.general.changeCount == expected
         }, ready: { [weak self] request in
@@ -145,13 +156,15 @@ final class FinderFilePaste: NSObject {
                     ByteCountFormatter.string(fromByteCount: Int64(copied.size), countStyle: .file)
             }
         }, completion: { [weak self] message in
-            Task { @MainActor in
-                guard token.valid, let self else { return }
-                self.receiver = nil; self.lease = nil; self.panel?.close(); self.panel = nil
-                if let message { self.showError(message) }
-            }
+            Task { @MainActor in self?.finishPaste(token, message: message) }
         })
         receiver = next; next.start()
+    }
+
+    private func finishPaste(_ token: FilePasteLease, message: String?) {
+        guard token.valid else { return }
+        receiver = nil; lease = nil; panel?.close(); panel = nil
+        if let message { showError(message) }
     }
 
     private func showProgress(_ file: ClipboardFileOffer) {

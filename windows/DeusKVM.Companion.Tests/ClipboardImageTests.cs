@@ -70,4 +70,52 @@ public sealed class ClipboardImageTests
         public byte[] Read(uint offset) => bytes.Skip((int)offset).Take(FileNetworkCrypto.MaximumBlock).ToArray();
         public void Dispose() { }
     }
+
+    [Fact]
+    public void DownloadedImageCanBePastedAsAFileRepeatedlyWithoutTheNetworkSource()
+    {
+        var png = new byte[FileNetworkCrypto.MaximumBlock + 37];
+        Png().CopyTo(png, 0);
+        var expected = (byte[])png.Clone();
+        var offer = new FileClipboardOffer(1, 2, "Screenshot.png", png.Length, ContentType: "image/png",
+            Network: new FileNetworkOffer(["127.0.0.1"], 1, Convert.ToBase64String(new byte[32])));
+        using var session = ClipboardImageContent.CreateFileSession(offer, png);
+        Assert.Null(session.Offer.Network);
+        png[0] = 0; // The cached file owns its bytes, independently of the caller.
+        var operation = new FileClipboardOperation(() => true, () => true, session.Dispose, _ => { });
+        for (var paste = 0; paste < 2; paste++)
+        {
+            operation.Start();
+            var stream = new RemoteFileStream(session, operation.CheckRead);
+            stream.Stat(out var stat, 0);
+            Assert.Equal("Screenshot.png", stat.pwcsName);
+            Assert.Equal(expected.Length, stat.cbSize);
+            var result = new byte[expected.Length];
+            stream.Read(result, result.Length, IntPtr.Zero);
+            Assert.Equal(expected, result);
+            stream.Seek(FileNetworkCrypto.MaximumBlock - 5, 0, IntPtr.Zero);
+            stream.Clone(out var clone);
+            var tail = new byte[42]; clone.Read(tail, tail.Length, IntPtr.Zero);
+            Assert.Equal(expected.Skip(FileNetworkCrypto.MaximumBlock - 5), tail);
+            operation.End(0);
+        }
+        session.Dispose();
+        Assert.Throws<IOException>(() => new RemoteFileStream(session, () => { }).Read(new byte[1], 1, IntPtr.Zero));
+    }
+
+    [Fact]
+    public void CachedImageFileRejectsWrongMetadataAndRespectsClipboardReplacement()
+    {
+        var png = Png();
+        var offer = new FileClipboardOffer(1, 2, "Screenshot.png", png.Length, ContentType: "image/png");
+        Assert.Throws<InvalidDataException>(() => ClipboardImageContent.CreateFileSession(offer with { Size = png.Length + 1 }, png));
+        Assert.Throws<InvalidDataException>(() => ClipboardImageContent.CreateFileSession(offer with { ContentType = null }, png));
+        using var session = ClipboardImageContent.CreateFileSession(offer, png);
+        var owns = true;
+        var operation = new FileClipboardOperation(() => true, () => owns, session.Dispose, _ => { });
+        var stream = new RemoteFileStream(session, operation.CheckRead);
+        stream.Read(new byte[1], 1, IntPtr.Zero);
+        owns = false;
+        Assert.Throws<System.Runtime.InteropServices.COMException>(() => stream.Read(new byte[1], 1, IntPtr.Zero));
+    }
 }

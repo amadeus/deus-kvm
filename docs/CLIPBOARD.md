@@ -128,19 +128,30 @@ companion; both computers need to be reachable on the local network.
   Windows. PNG preserves transparency; the Windows DIB fallback uses a white
   background. Chromium/Electron reads registered PNG before bitmap fallback
   ([Chromium implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/ui/base/clipboard/clipboard_win.cc)).
+- Windows also offers the same downloaded PNG through its existing virtual-file
+  data object, so Explorer can paste `Screenshot.png` from the same copy.
+  PNG/DIB and the [Shell file formats](https://learn.microsoft.com/en-us/windows/win32/shell/clipboard)
+  coexist; file paste reads the cached bytes without another network transfer.
+- On Mac, Finder **Cmd+V** saves the cached screenshot in the current folder via
+  the existing Finder paste handler. Native PNG/TIFF remain on the clipboard for
+  Discord and other image apps. Finder Automation permission is required, as for
+  ordinary file paste; Finder menu/right-click paste is not added. An existing
+  destination filename is never overwritten.
 - Images are limited to **32 MiB of encoded data** and **40 million decoded
   pixels**. The image must finish transferring before it can be pasted.
-  No screenshot files are saved, and no destination-app shortcut is intercepted.
+  No screenshot file is saved until a file paste is requested. Image paste into
+  applications uses the native clipboard; Finder Cmd+V uses the handler above.
 - The sharing preference, privacy markers, clipboard revisions, selected peer,
   and session/lock checks also apply to images. A newer local copy or remote
-  offer invalidates an in-flight image. Unavailable LAN leaves the existing
-  destination clipboard in place; copy again to retry.
+  offer invalidates an in-flight image. Unavailable LAN never publishes a partial
+  image; copy again to retry.
 - File-only copies in Finder/Explorer still use the existing file-paste behavior;
   a Mac file URL alone is not converted into an image.
 
 Hardware validation is pending: copy a CleanShot screenshot on Mac and paste
-into Discord on Windows; use Windows **Snipping Tool** to copy a screenshot and
-paste into Discord on Mac. Confirm each opens an image attachment preview
+into both Discord and Explorer on Windows; use Windows **Snipping Tool** to copy
+a screenshot and paste into both Discord and Finder (Cmd+V) on Mac.
+Confirm each Discord paste opens an image attachment preview
 (sending a message is unnecessary). Also test transparency, rapid successive
 copies, a local copy during download, clipboard sharing off, lock/reconnect,
 unavailable LAN, and existing text/Finder/Explorer paste. See

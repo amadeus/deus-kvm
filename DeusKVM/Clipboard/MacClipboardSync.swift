@@ -68,11 +68,13 @@ final class MacClipboardSync {
     init(service: CompanionService) {
         self.service = service
         transfer.onDeadlineChanged = { [weak self] in self?.scheduleRetry() }
-        pasteboard.importedImage = { [weak self] revision, generation in
+        pasteboard.importedImage = { [weak self] offer, bytes, revision, generation in
             Task { @MainActor in
-                guard let self, self.enabled, self.generation == generation,
+                guard let self, self.enabled, self.generation == generation, self.epoch == offer.epoch,
+                      self.peerSequence == offer.clipboardSequence, self.deliveredFile == offer.sequence,
                       NSPasteboard.general.changeCount == revision else { return }
-                self.fileOffer = nil; self.transfer.observe(nil, announce: false); self.finder.clear()
+                self.fileOffer = nil; self.transfer.observe(nil, announce: false)
+                self.finder.install(offer, revision: revision, image: bytes)
             }
         }
         pasteboard.requestImage = { [weak self] request, generation in

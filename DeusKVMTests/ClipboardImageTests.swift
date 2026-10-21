@@ -145,4 +145,43 @@ final class ClipboardImageTests: XCTestCase {
         XCTAssertEqual(board.string(forType: .string), "new local copy")
         clipboard.configure(epoch: 1, enabled: false)
     }
+
+    func testCachedScreenshotPastesAsAFileWithoutChangingTheNativeImageClipboard() throws {
+        let board = NSPasteboard(name: .init("DeusKVMTests.\(UUID().uuidString)"))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { board.releaseGlobally(); try? FileManager.default.removeItem(at: folder) }
+        let bytes = try png()
+        XCTAssertTrue(try board.writeObjects([XCTUnwrap(ClipboardImage.item(bytes))]))
+        let revision = board.changeCount
+        for name in ["Screenshot.png", "Second paste.png"] {
+            let destination = folder.appendingPathComponent(name)
+            XCTAssertNil(ClipboardImageFile.write(bytes, to: destination) { board.changeCount == revision })
+            XCTAssertEqual(try Data(contentsOf: destination), bytes)
+            let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+            XCTAssertEqual((attributes[.posixPermissions] as? Int).map { $0 & 0o777 }, 0o600)
+        }
+        XCTAssertEqual(board.changeCount, revision)
+        XCTAssertEqual(board.data(forType: .png), bytes)
+        XCTAssertNotNil(board.data(forType: .tiff))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).count, 2)
+    }
+
+    func testCachedScreenshotFilePasteDoesNotOverwriteAndCleansUpCanceledWrites() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let destination = folder.appendingPathComponent("Screenshot.png")
+        let original = Data("existing user file".utf8), bytes = try png()
+        try original.write(to: destination)
+        XCTAssertNotNil(ClipboardImageFile.write(bytes, to: destination) { true })
+        XCTAssertEqual(try Data(contentsOf: destination), original)
+        try FileManager.default.removeItem(at: destination)
+        var checks = 0
+        XCTAssertNotNil(ClipboardImageFile.write(bytes, to: destination) { checks += 1; return checks == 1 })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
+        XCTAssertNotNil(ClipboardImageFile.write(bytes, to: destination) { false })
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
+    }
 }

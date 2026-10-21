@@ -6,6 +6,12 @@
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <Reference Include="System.IO.Compression" />
+    <Reference Include="System.Drawing" />
+    <Compile Include="../DeusKVM.Companion/VirtualFileClipboard.cs" Link="VirtualFileClipboard.cs" />
+    <Compile Include="../DeusKVM.Companion/ClipboardNative.cs" Link="ClipboardNative.cs" />
+    <Compile Include="../DeusKVM.Companion/ClipboardNative.Image.cs" Link="ClipboardNative.Image.cs" />
+    <Compile Include="../DeusKVM.Companion/FilePasteDiagnostics.cs" Link="FilePasteDiagnostics.cs" />
+    <Compile Include="../DeusKVM.Companion/GlobalUsings.cs" Link="GlobalUsings.cs" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../DeusKVM.Bootstrap/BundlePayload.cs" Link="BundlePayload.cs" />

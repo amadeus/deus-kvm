@@ -23,8 +23,11 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
     private static readonly short Descriptor = Format("FileGroupDescriptorW"), Contents = Format("FileContents");
     private static readonly short Effect = Format("Preferred DropEffect"), Own = Format("DeusKVM.Clipboard");
     private static readonly short History = Format("CanIncludeInClipboardHistory"), Cloud = Format("CanUploadToCloudClipboard");
+    private static readonly short Png = Format("PNG");
+    private const short Dib = 8;
     private readonly FileClipboardSession session;
     private readonly FileClipboardOperation operation;
+    private readonly byte[]? png, dib;
     private bool asyncMode = true;
     private IntPtr ownerWindow;
     public VirtualFileClipboard(FileClipboardSession session, Func<bool> permitted)
@@ -33,6 +36,11 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
         operation = new FileClipboardOperation(permitted,
             () => Volatile.Read(ref ownerWindow) != IntPtr.Zero && GetClipboardOwner() == Volatile.Read(ref ownerWindow),
             session.Dispose, FilePasteDiagnostics.Write);
+    }
+    internal VirtualFileClipboard(FileClipboardSession session, Func<bool> permitted, byte[] png, byte[] dib)
+        : this(session, permitted)
+    {
+        this.png = png; this.dib = dib;
     }
     // OLE identity checks stay on the clipboard STA. Stream callbacks may run
     // on another COM thread, where we check the published HWND instead.
@@ -56,8 +64,10 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
     public void InOperation(out bool value) => value = operation.Operating;
     public void EndOperation(int result, IntPtr reserved, uint effects) => operation.End(result);
     private static FORMATETC Entry(short id, TYMED medium, int index = -1) => new() { cfFormat = id, dwAspect = DVASPECT.DVASPECT_CONTENT, lindex = index, tymed = medium };
-    private static FORMATETC[] Formats => [Entry(Descriptor, TYMED.TYMED_HGLOBAL), Entry(Contents, TYMED.TYMED_ISTREAM, 0),
+    private static FORMATETC[] FileFormats => [Entry(Descriptor, TYMED.TYMED_HGLOBAL), Entry(Contents, TYMED.TYMED_ISTREAM, 0),
         Entry(Effect, TYMED.TYMED_HGLOBAL), Entry(Own, TYMED.TYMED_HGLOBAL), Entry(History, TYMED.TYMED_HGLOBAL), Entry(Cloud, TYMED.TYMED_HGLOBAL)];
+    private FORMATETC[] Formats => png is null ? FileFormats :
+        [Entry(Png, TYMED.TYMED_HGLOBAL), Entry(Dib, TYMED.TYMED_HGLOBAL), .. FileFormats];
     public int QueryGetData(ref FORMATETC format)
     {
         var requested = format;
@@ -77,7 +87,12 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
             return;
         }
         byte[] bytes;
-        if (format.cfFormat == Descriptor)
+        if (format.cfFormat == Png || format.cfFormat == Dib)
+        {
+            operation.CheckRead();
+            bytes = format.cfFormat == Png ? png! : dib!;
+        }
+        else if (format.cfFormat == Descriptor)
         {
             bytes = new byte[4 + 592]; // FILEGROUPDESCRIPTORW with one FILEDESCRIPTORW.
             BitConverter.GetBytes(1).CopyTo(bytes, 0);

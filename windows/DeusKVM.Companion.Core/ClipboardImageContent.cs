@@ -34,4 +34,20 @@ public static class ClipboardImageContent
         if (!HasSafeDimensions(bytes)) throw new InvalidDataException("Invalid clipboard PNG");
         return bytes;
     }
+
+    // Explorer consumes the already-downloaded PNG as a virtual file. It must not
+    // reopen the network source or require a temporary screenshot on disk.
+    public static FileClipboardSession CreateFileSession(FileClipboardOffer offer, byte[] png)
+    {
+        if (!offer.IsImage || offer.Size != png.Length || ClipboardFileSource.FromPng(png) is not { } source)
+            throw new InvalidDataException("Invalid cached clipboard image");
+        return new FileClipboardSession(offer with { Network = null }, new CachedImageReader(source));
+    }
+
+    private sealed class CachedImageReader(ClipboardFileSource source) : IFileBlockReader
+    {
+        public byte[] Read(uint offset) => source.Read(offset, FileNetworkCrypto.MaximumBlock)
+            ?? throw new IOException("Invalid image position");
+        public void Dispose() { }
+    }
 }

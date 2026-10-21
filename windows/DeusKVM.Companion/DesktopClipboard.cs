@@ -171,12 +171,21 @@ internal sealed class DesktopClipboard : IDisposable
                 if (bytes is null || !versions.CanApply(imageMessage.Revision, revision) ||
                     RuntimeCompat.TickCount64 > imageWriteDeadline) { ClearFile(); return; }
                 var token = receivingImage;
-                if (ClipboardNative.WriteImage(window.Handle, bytes, revision,
-                    () => CanAccess() && token is not null && !token.IsCancellationRequested && ReferenceEquals(receivingImage, token),
-                    out var writtenImage))
+                if (token is null || token.IsCancellationRequested) { ClearFile(); return; }
+                var dib = ClipboardNative.ImageDib(bytes);
+                if (dib is null) { ClearFile(); return; }
+                var imageSession = ClipboardImageContent.CreateFileSession(FileClipboardOffer.Parse(imageMessage.Clipboard!), bytes);
+                var imageEpoch = epoch;
+                var dataObject = new VirtualFileClipboard(imageSession,
+                    () => !disposed && permitted && permittedEpoch == imageEpoch && !token.IsCancellationRequested &&
+                        ReferenceEquals(fileSession, imageSession) && DesktopNative.IsDefaultDesktop(), bytes, dib);
+                fileSession = imageSession;
+                if (CanAccess() && !token.IsCancellationRequested && ClipboardNative.GetClipboardSequenceNumber() == revision && dataObject.Install())
                 {
-                    versions.Imported(writtenImage); ClearFile();
+                    virtualFile = dataObject; versions.Imported(ClipboardNative.GetClipboardSequenceNumber());
+                    incomingImage = null; imageUpdate = null; imageWriteDeadline = 0;
                 }
+                else { imageSession.Dispose(); fileSession = null; }
                 return;
             }
             if (pending is not { } update) return;
