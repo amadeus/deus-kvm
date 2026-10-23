@@ -49,6 +49,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
     @Published private(set) var keyboardMonitoringReady = false
     @Published private(set) var permissionGranted = false
     @Published private(set) var secureInput = false
+    /// The app macOS holds responsible for Secure Input, so the menu can name what to close.
+    @Published private(set) var secureInputHolder: String?
     @Published private(set) var displays: [EdgeDisplay] = []
     @Published private(set) var lastError: String?
     @Published private(set) var canSwitch = false
@@ -452,7 +454,7 @@ extension EdgeSwitchCoordinator {
     private func _refreshConnectionState() {
         let companion = lowEnergy.companion
         let state = StatusBarConnectionState.resolve(
-            enabled: isEnabled, bluetooth: lowEnergy.state,
+            enabled: isEnabled, bluetooth: lowEnergy.state, secureInput: secureInput,
             link: .init(
                 target: lowEnergy.hostPolicy.target,
                 subscribers: Set(lowEnergy.subscribedCentrals.keys).union(companion.subscribedHosts),
@@ -461,6 +463,8 @@ extension EdgeSwitchCoordinator {
             ), now: ProcessInfo.processInfo.systemUptime
         )
         if connectionState != state { connectionState = state }
+        let holder = secureInput ? SecureInputHolder.name() : nil
+        if secureInputHolder != holder { secureInputHolder = holder }
     }
 
     private func scheduleChecks() {

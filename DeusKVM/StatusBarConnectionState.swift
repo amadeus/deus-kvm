@@ -3,7 +3,7 @@ import Foundation
 
 /// Connection readiness, independent of whether input is currently on Mac or PC.
 enum StatusBarConnectionState: Equatable {
-    case disabled, unavailable, searching, connecting, waiting, ready
+    case disabled, unavailable, secureInput, searching, connecting, waiting, ready
 
     struct Link {
         var target: UUID?
@@ -15,10 +15,12 @@ enum StatusBarConnectionState: Equatable {
     }
 
     static func resolve(
-        enabled: Bool, bluetooth: CBManagerState, link: Link, now: TimeInterval
+        enabled: Bool, bluetooth: CBManagerState, secureInput: Bool = false, link: Link, now: TimeInterval
     ) -> Self {
         guard enabled else { return .disabled }
         guard bluetooth == .poweredOn else { return .unavailable }
+        // Secure Input blocks capture whatever the link is doing; showing it as connecting hides the cause.
+        if secureInput { return .secureInput }
         if link.waiting { return .waiting }
         if let target = link.target, link.companions.contains(target), let seen = link.lastSeen[target], now - seen < 10 {
             return link.captureReady ? .ready : .connecting
@@ -30,6 +32,7 @@ enum StatusBarConnectionState: Equatable {
         switch self {
         case .disabled: "pause.circle"
         case .unavailable: "antenna.radiowaves.left.and.right.slash"
+        case .secureInput: "lock.shield"
         case .searching: "antenna.radiowaves.left.and.right"
         case .connecting: "arrow.triangle.2.circlepath"
         case .waiting: "clock"
@@ -41,6 +44,7 @@ enum StatusBarConnectionState: Equatable {
         switch self {
         case .disabled: "DeusKVM disabled"
         case .unavailable: "DeusKVM — Bluetooth unavailable"
+        case .secureInput: "DeusKVM — Secure Input is blocking switching"
         case .searching: "DeusKVM — searching for a PC"
         case .connecting: "DeusKVM — connecting to PC"
         case .waiting: "DeusKVM — waiting for Windows control"
