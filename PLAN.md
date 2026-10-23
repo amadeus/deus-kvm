@@ -1549,3 +1549,18 @@ in memory over the existing encrypted LAN connection. Native image clipboard
 formats support attachment paste in applications such as Discord. Implementation,
 automated verification, packaging status, and outstanding CleanShot/Snipping
 Tool/Discord hardware checks are tracked in `docs/IMAGE_CLIPBOARD_PLAN.md`.
+
+### Secure Input menu bar state — 2026-10-22 (branch `secure-input`)
+
+Secure Input used to fall through to the menu bar's `connecting` icon (the
+circular arrows), which looked like a link problem. It now has its own
+`secureInput` state with a `lock.shield` icon. It takes priority over
+link progress but not over disabled or Bluetooth unavailable. The menu names
+the app macOS holds responsible (`kCGSSessionSecureInputPID` in the CG session
+dictionary, resolved to the app name), for example a browser with a focused
+password field. A standalone probe confirmed the key reports the responsible
+app rather than the calling helper process. Validation: 114 Mac tests, strict
+SwiftLint and SwiftFormat pass, and the Debug build succeeds. Pending manual
+check: with a browser password field holding Secure Input, the icon shows the
+lock and the menu names the browser. The icon should return once the field
+loses focus.

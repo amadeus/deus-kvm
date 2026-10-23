@@ -65,6 +65,9 @@ private struct StatusMenu: View {
 
     var body: some View {
         Text(verbatim: coordinator.connectionState.label)
+        if coordinator.connectionState == .secureInput, let holder = coordinator.secureInputHolder {
+            Text(verbatim: "Held by \(holder)")
+        }
         if coordinator.isEnabled {
             Text(coordinator.isRemote ? L10n.Layout.remote : L10n.Layout.local)
             Text(verbatim: coordinator.companionStatus)

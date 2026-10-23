@@ -41,6 +41,25 @@ final class StatusBarConnectionStateTests: XCTestCase {
         XCTAssertEqual(state(), .searching)
     }
 
+    func testSecureInputOverridesLinkProgressButNotDisabledOrBluetooth() {
+        let pc = UUID()
+        let ready = StatusBarConnectionState.Link(target: pc, subscribers: [pc], companions: [pc], lastSeen: [pc: 100])
+        for link in [StatusBarConnectionState.Link(), ready, .init(target: pc, captureReady: false, waiting: true)] {
+            XCTAssertEqual(StatusBarConnectionState.resolve(
+                enabled: true, bluetooth: .poweredOn, secureInput: true, link: link, now: 100
+            ), .secureInput)
+        }
+        XCTAssertEqual(StatusBarConnectionState.resolve(
+            enabled: false, bluetooth: .poweredOn, secureInput: true, link: ready, now: 100
+        ), .disabled)
+        XCTAssertEqual(StatusBarConnectionState.resolve(
+            enabled: true, bluetooth: .poweredOff, secureInput: true, link: ready, now: 100
+        ), .unavailable)
+        XCTAssertEqual(StatusBarConnectionState.resolve(
+            enabled: true, bluetooth: .poweredOn, secureInput: false, link: ready, now: 100
+        ), .ready)
+    }
+
     func testUnrelatedCompanionCannotMakeSelectedPCReady() {
         let pc = UUID(), other = UUID()
         XCTAssertEqual(StatusBarConnectionState.resolve(
