@@ -7,11 +7,15 @@ struct RawKeyboardState {
 
     static let aliases: [Keycode: UInt16] = [
         .printScreen: 0x69, .f13: 0x69, .scrollLock: 0x6B, .f14: 0x6B, .pause: 0x71, .f15: 0x71,
-        .backslash: 0x2A, .nonUSHash: 0x2A, .insert: 0x72, .help: 0x72
+        .insert: 0x72, .help: 0x72
     ]
     static let quartzAliases = Set(aliases.values)
     static let ambiguousKeys = Set(aliases.keys)
-    private static let quartzKeys = Set(Keycode.macVirtualKeys.values)
+    /// Both backslash usages become Quartz 0x2A and Windows scan code 0x2B.
+    /// Keep them on Quartz so QMK's KC_PIPE carries Shift from the same event.
+    /// Raw callbacks can precede the session modifier update (or be unavailable
+    /// for a particular device even when the manager opened successfully).
+    private static let quartzKeys = Set(Keycode.macVirtualKeys.values).union([.nonUSHash])
 
     static func key(usagePage: UInt32, usage: UInt32) -> Keycode? {
         // Same range as the existing keyboard report descriptor; modifiers stay

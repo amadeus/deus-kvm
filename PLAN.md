@@ -1,5 +1,31 @@
 # DeusKVM: implementation plan
 
+### QMK key coverage correction — 2026-10-26
+
+- Audited the linked DUO layout and Cloud/Dimple R3/Kradlex at QMK PR #2 revision
+  `553e845e9a7038eb89be48fa5fe7199973b7b514`. The checked-in fixture covers all
+  111 host-facing keycodes and explicitly classifies 13 firmware controls.
+- Backslash/Pipe now uses Quartz's event-local modifier flags instead of a raw
+  callback plus a global modifier snapshot. Non-US hash normalizes to the same
+  Windows scan code; Print Screen/Scroll Lock/Pause retain raw identity.
+- Translate QMK Keyboard Menu to Windows Application/context-menu at report
+  generation; track physical sources separately to avoid premature releases.
+- Added an inventory checker for future keymap changes, press/release coverage
+  for the entire fixture, pipe/repeat/backslash and overlapping-menu regressions.
+- Validation: 118 Mac tests passed, including the 111-key fixture; SwiftFormat
+  and strict SwiftLint passed. An isolated regression harness reports three
+  failures against the previous routing/report code and zero with these fixes.
+  The inventory checker passes all four pinned/current layouts and rejects an
+  injected unknown custom key. Signed Release build succeeded; refreshed
+  `releases/DeusKVM.app` and `releases/DeusKVM.zip` both pass strict signature
+  verification, and every Mach-O binary in the app and extracted ZIP is arm64.
+  The updated app has not been launched as part of this work.
+- Physical callback timing and typing/switching on both computers remain
+  **pending**, including pipe/backslash, all layers, both modifier sides, PC/media
+  keys, display brightness, held-key handoff and reconnect. See
+  [keyboard coverage](docs/KEYBOARD_COVERAGE.md) for the checklist and OS/firmware
+  boundaries. No hardware pass is implied by the automated tests or commit.
+
 Current follow-up: [automatic Mac selection on Windows](docs/AUTOMATIC_MAC_PLAN.md)
 tracks the 2026-09-21 implementation and user hardware checkpoints.
 

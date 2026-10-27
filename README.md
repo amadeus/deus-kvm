@@ -41,6 +41,8 @@ BLE. No LAN connection is required.
 
 - Edge crossings place the cursor at the corresponding position on the other
   display. Release held keys and mouse buttons before switching.
+- Keyboard forwarding, audited QMK layouts, and remaining physical checks are
+  documented in [keyboard coverage](docs/KEYBOARD_COVERAGE.md).
 - **Switch to PC**, including the hotkey, centers the pointer on the selected
   Windows display. The default toggle is **Fn + Escape**; record your own in
   **Configuration**. The Mac hotkey remains the way back if Windows cannot return.

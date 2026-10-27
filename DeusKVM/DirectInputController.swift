@@ -94,6 +94,10 @@ final class DirectInputController {
     }
 
     private func sendKeyboardReport() {
-        sendKeyboard?(KeyboardReport(modifiers: modifiers, keys: pressedKeys.sorted { $0.rawValue < $1.rawValue }))
+        // QMK KC_MENU is Keyboard Menu (0x76), not KC_APP (0x65). Windows
+        // supports the latter as its context-menu key. Keep physical identities
+        // in pressedKeys so releasing either source cannot release the other.
+        let keys = Set(pressedKeys.map { $0 == .menu ? .application : $0 })
+        sendKeyboard?(KeyboardReport(modifiers: modifiers, keys: keys.sorted { $0.rawValue < $1.rawValue }))
     }
 }

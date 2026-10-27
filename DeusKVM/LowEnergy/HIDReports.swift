@@ -142,6 +142,7 @@ struct Keycode: RawRepresentable, Sendable, Equatable, Hashable {
     static let rightBracket = Keycode(rawValue: 0x30)
     static let nonUSHash = Keycode(rawValue: 0x32)
     static let help = Keycode(rawValue: 0x75)
+    static let menu = Keycode(rawValue: 0x76)
     static let backslash = Keycode(rawValue: 0x31)
     static let semicolon = Keycode(rawValue: 0x33)
     static let quote = Keycode(rawValue: 0x34)

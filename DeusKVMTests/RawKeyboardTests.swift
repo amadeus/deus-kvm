@@ -7,7 +7,17 @@ final class RawKeyboardTests: XCTestCase {
             XCTAssertEqual(RawKeyboardState.key(usagePage: 7, usage: usage), key)
         }
         XCTAssertEqual(Set(expected.values).count, 6)
-        XCTAssertEqual(RawKeyboardState.quartzAliases, [0x2A, 0x69, 0x6B, 0x71, 0x72])
+        XCTAssertEqual(RawKeyboardState.quartzAliases, [0x69, 0x6B, 0x71, 0x72])
+    }
+
+    func testBackslashAndNonUSHashUseQuartzWithEventModifiers() {
+        // A successful IOHIDManager open must not suppress the only usable pipe
+        // event or send a raw press with a stale session Shift snapshot.
+        XCTAssertFalse(RawKeyboardState.quartzAliases.contains(0x2A))
+        for usage: UInt32 in [0x31, 0x32] {
+            XCTAssertNil(RawKeyboardState.key(usagePage: 7, usage: usage))
+        }
+        XCTAssertEqual(Keycode(macVirtualKey: 0x2A), .backslash)
     }
 
     func testUnrepresentedKeysUseRawPathButOrdinaryKeysAreNotDuplicated() {
