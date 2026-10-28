@@ -1,5 +1,37 @@
 # DeusKVM: implementation plan
 
+### Keyboard capture with and without remappers — 2026-10-27
+
+- Reproduced `kIOReturnExclusiveAccess` from the old aggregate keyboard-manager
+  open. It discarded every input stream when even one keyboard was seized.
+  The live conflict was the built-in Apple keyboard; the Cloud keyboards and
+  Karabiner virtual keyboard were available.
+- Open and track keyboards independently. A seized device no longer discards
+  successful physical or virtual streams. Keep the raw special-key path and
+  the complete-capture gate; no reduced-keyboard fallback was introduced.
+- Retry failed devices every five seconds only while local with all tracked
+  input released. Preserve active streams during retries, handle arrival/removal,
+  release removed-device keys, and stop the timer when no device needs a retry.
+- Distinguish missing Input Monitoring permission, no keyboard, exclusive access,
+  and other open failures in Configuration/Setup instead of reporting them all
+  as missing permissions.
+- Validation: signed Debug build and all 123 Mac tests passed, including mixed
+  physical/virtual availability, removal/recovery, permission/error distinctions,
+  and the existing 111-key QMK fixture. Strict SwiftLint and formatting of all
+  changed Swift files passed. The newly installed SwiftFormat reports existing
+  issues in seven unrelated files, each verified byte-identical to HEAD.
+- Signed arm64 Release ZIP built; the extracted signature and every Mach-O
+  architecture were verified. Installed the fix in `/Applications/DeusKVM.app`,
+  retaining the prior app in `.build/DeusKVM-before-keyboard-fix.app`.
+- Live validation with Karabiner still running: both Cloud interfaces and the
+  Karabiner virtual keyboard opened successfully despite the built-in keyboard's
+  exclusive-access error. Capture reported ready, Configuration showed an enabled
+  Switch to PC button, and the incorrect permission warning disappeared.
+- **Pending physical validation:** Windows typing and raw PC/F-key identities,
+  held-key handoff, sleep/wake and reconnect, Karabiner quit/restart recovery,
+  and operation on a Mac without Karabiner. Automated tests and the live startup
+  check do not constitute those hardware passes.
+
 ### QMK key coverage correction — 2026-10-26
 
 - Audited the linked DUO layout and Cloud/Dimple R3/Kradlex at QMK PR #2 revision

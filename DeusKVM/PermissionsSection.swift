@@ -33,7 +33,7 @@ struct PermissionsSection: View {
             .accessibilityValue(Text(isExpanded ? L10n.SettingsOrganization.expanded : L10n.SettingsOrganization.collapsed))
             if isExpanded {
                 permissionRows
-                if !accessibilityGranted || !keyboardGranted || (coordinator.isEnabled && !coordinator.keyboardMonitoringReady) {
+                if !accessibilityGranted || !keyboardGranted || (coordinator.isEnabled && !coordinator.keyboardMonitoringStatus.isReady) {
                     permissionHelp
                 }
             }
@@ -41,6 +41,7 @@ struct PermissionsSection: View {
         .onAppear(perform: refreshPermissions)
         .onChange(of: allGranted) { isExpanded = !$0 }
         .onChange(of: coordinator.permissionGranted) { _ in refreshPermissions() }
+        .onChange(of: coordinator.keyboardMonitoringStatus) { _ in refreshPermissions() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in
             refreshPermissions()
         }
@@ -91,8 +92,8 @@ struct PermissionsSection: View {
                     NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
                 }
             }
-            if coordinator.isEnabled, keyboardGranted, accessibilityGranted, !coordinator.keyboardMonitoringReady {
-                Text("Quit and reopen DeusKVM to activate keyboard access.")
+            if coordinator.isEnabled, keyboardGranted, accessibilityGranted, let message = coordinator.keyboardMonitoringStatus.message {
+                Text(verbatim: message)
             }
         }
         .font(.caption)

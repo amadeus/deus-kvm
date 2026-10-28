@@ -46,7 +46,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     @Published private(set) var connectionState = StatusBarConnectionState.searching
     @Published private(set) var isRemote = false
     @Published private(set) var targetAvailable = false
-    @Published private(set) var keyboardMonitoringReady = false
+    @Published private(set) var keyboardMonitoringStatus = KeyboardMonitoringStatus.waitingForDevice
     @Published private(set) var permissionGranted = false
     @Published private(set) var secureInput = false
     /// The app macOS holds responsible for Secure Input, so the menu can name what to close.
@@ -198,7 +198,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         isEnabled = value
         UserDefaults.standard.set(value, forKey: AppSettings.enabledKey)
         if !value {
-            tap.stop(); tapReady = false; tapStarting = false; keyboardMonitoringReady = false
+            tap.stop(); tapReady = false; tapStarting = false; keyboardMonitoringStatus = .waitingForDevice
         }
         central.setEnabled(value)
         if value { lowEnergy.companion.prepareControlRequest() }
@@ -396,9 +396,9 @@ final class EdgeSwitchCoordinator: ObservableObject {
 
     private func _receive(_ event: TapOutput) {
         switch event {
-        case let .keyboardMonitoring(token, ready):
+        case let .keyboardMonitoring(token, status):
             guard isEnabled, tap.isCurrentRun(token) else { return }
-            keyboardMonitoringReady = ready
+            keyboardMonitoringStatus = status
             _refresh()
         case let .installed(token, success):
             guard isEnabled, tap.isCurrentRun(token) else { return }
@@ -499,7 +499,7 @@ extension EdgeSwitchCoordinator {
         let companion = lowEnergy.companion
         let state = CaptureReadiness(
             enabled: isEnabled, target: targetAvailable, accessibility: permissionGranted,
-            keyboardMonitoring: keyboardMonitoringReady, tap: tapReady, display: geometry != nil,
+            keyboardMonitoring: keyboardMonitoringStatus, tap: tapReady, display: geometry != nil,
             secureInput: secureInput, granted: currentTarget.map { companion.allowsControl($0) } ?? false,
             waiting: currentTarget.map { companion.isWaiting($0) } ?? false
         )

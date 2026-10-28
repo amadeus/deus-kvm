@@ -60,6 +60,8 @@ targets:
       - DeusKVM/DirectInputEvent.swift
       - DeusKVM/MacKeyboardMapping.swift
       - DeusKVM/RawKeyboardState.swift
+      - DeusKVM/KeyboardMonitoringState.swift
+      - DeusKVM/L10n+KeyboardMonitoring.swift
       - DeusKVM/MediaKeyEvent.swift
       - DeusKVM/DirectInputController.swift
       - DeusKVM/InputGate.swift

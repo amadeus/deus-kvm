@@ -24,6 +24,13 @@ aliases. The fixture records input/output usages, modifiers, and Quartz/NX codes
 
 ## Corrections
 
+Raw monitoring opens each keyboard independently, including virtual keyboards
+provided by remappers such as Karabiner. An exclusive-access failure on one
+physical keyboard no longer shuts down the other streams. Failed devices retry
+while control is local and input is released; raw special-key routing remains
+enabled for the available streams. See `PLAN.md` for the remaining physical
+keyboard and remapper lifecycle checks.
+
 Backslash used to be diverted to the raw supplement whenever its manager opened,
 suppressing Quartz `0x2A`. That depended on a second callback being available for
 the keyboard and paired the press with a separately sampled session modifier

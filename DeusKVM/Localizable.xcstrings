@@ -1,6 +1,50 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "keyboard_monitoring.waiting": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for an available keyboard."
+          }
+        }
+      }
+    },
+    "keyboard_monitoring.permission": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow Input Monitoring in Setup to capture the keyboard."
+          }
+        }
+      }
+    },
+    "keyboard_monitoring.exclusive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keyboard capture is unavailable because another app has exclusive access. DeusKVM will retry automatically."
+          }
+        }
+      }
+    },
+    "keyboard_monitoring.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keyboard capture could not start. DeusKVM will retry automatically; if this continues, quit and reopen DeusKVM."
+          }
+        }
+      }
+    },
     "device_popover.rename": {
       "extractionState": "manual",
       "localizations": {

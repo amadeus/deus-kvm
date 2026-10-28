@@ -20,12 +20,9 @@ struct ControlsSettingsView: View {
                 if !coordinator.isEnabled {
                     Text(L10n.SettingsOrganization.disabled).foregroundStyle(.secondary)
                 }
-                if coordinator.isEnabled, !coordinator.targetAvailable { Text(L10n.Layout.noTarget).foregroundStyle(.orange) }
-                if coordinator.isEnabled, !coordinator.permissionGranted || !coordinator.keyboardMonitoringReady {
-                    Text("Finish granting permissions in Setup to enable complete keyboard and mouse control.")
-                        .font(.caption).foregroundStyle(.orange)
+                if coordinator.isEnabled, let blocker = coordinator.captureBlocker {
+                    Text(verbatim: blocker).font(.caption).foregroundStyle(.orange)
                 }
-                if coordinator.secureInput { Text(L10n.Layout.secureInput).foregroundStyle(.orange) }
                 if let error = coordinator.lastError { Text(verbatim: error).foregroundStyle(.red) }
             } header: {
                 HStack(alignment: .firstTextBaseline) {

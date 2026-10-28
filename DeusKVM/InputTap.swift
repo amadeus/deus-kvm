@@ -11,7 +11,7 @@ struct TapConfiguration: Equatable, Sendable {
 
 enum TapOutput: Sendable {
     case installed(Int, Bool)
-    case keyboardMonitoring(Int, Bool)
+    case keyboardMonitoring(Int, KeyboardMonitoringStatus)
     case begin(Int, CGPoint, fromEdge: Bool)
     case end(Int)
     case disabled
@@ -172,10 +172,20 @@ final class InputTap: @unchecked Sendable {
                 return CGEventSource.buttonState(.combinedSessionState, button: cgButton) ? Int64(button) : nil
             })
         }
-        let keyboard = RawKeyboardMonitor { [weak self] key, down in self?._rawKey(key, down: down) }
-        let keyboardReady = keyboard.start(on: loop)
-        lock.withLock { rawKeyboardReady = keyboardReady }
-        _emit(.keyboardMonitoring(token, keyboardReady))
+        lock.withLock { rawKeyboardReady = false }
+        let keyboard = RawKeyboardMonitor(
+            changed: { [weak self] key, down in self?._rawKey(key, down: down) },
+            statusChanged: { [weak self] status in
+                guard let self else { return }
+                lock.withLock { rawKeyboardReady = status.isReady }
+                _emit(.keyboardMonitoring(token, status))
+            },
+            canRetry: { [weak self] in
+                guard let self else { return false }
+                return lock.withLock { runState.isRunning && !remote && handoff.isReleased }
+            }
+        )
+        keyboard.start(on: loop)
         CFRunLoopAddSource(loop, source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         _emit(.installed(token, true))

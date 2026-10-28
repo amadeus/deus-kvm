@@ -6,7 +6,7 @@ final class CaptureReadinessTests: XCTestCase {
             enabled: true,
             target: true,
             accessibility: true,
-            keyboardMonitoring: true,
+            keyboardMonitoring: .ready,
             tap: true,
             display: true,
             secureInput: false,
@@ -16,7 +16,7 @@ final class CaptureReadinessTests: XCTestCase {
 
     func testConnectedMacCannotOfferANonfunctionalSwitchButton() {
         XCTAssertTrue(ready.canSwitch)
-        for key in [\CaptureReadiness.enabled, \.target, \.accessibility, \.keyboardMonitoring, \.tap, \.display, \.granted] {
+        for key in [\CaptureReadiness.enabled, \.target, \.accessibility, \.tap, \.display, \.granted] {
             var state = ready
             state[keyPath: key] = false
             XCTAssertFalse(state.canSwitch)
@@ -25,6 +25,20 @@ final class CaptureReadinessTests: XCTestCase {
         var state = ready
         state.secureInput = true
         XCTAssertFalse(state.canSwitch)
+    }
+
+    func testKeyboardFailureRemainsBlockedWithoutMisreportingPermission() {
+        var state = ready
+        state.keyboardMonitoring = .unavailable(-536_870_203)
+        XCTAssertFalse(state.canSwitch)
+        XCTAssertEqual(state.blocker, KeyboardMonitoringStatus.unavailable(-536_870_203).message)
+        XCTAssertNotEqual(state.blocker, KeyboardMonitoringStatus.permissionRequired.message)
+        state.keyboardMonitoring = .permissionRequired
+        XCTAssertFalse(state.canSwitch)
+        XCTAssertEqual(state.blocker, KeyboardMonitoringStatus.permissionRequired.message)
+        state.keyboardMonitoring = .ready
+        XCTAssertTrue(state.canSwitch)
+        XCTAssertNil(state.blocker)
     }
 
     func testWaitingAndCaptureFailureExplainWhyEntryIsBlocked() {

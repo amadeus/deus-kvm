@@ -5,7 +5,7 @@ struct CaptureReadiness {
     var enabled = false
     var target = false
     var accessibility = false
-    var keyboardMonitoring = false
+    var keyboardMonitoring = KeyboardMonitoringStatus.waitingForDevice
     var tap = false
     var display = false
     var secureInput = false
@@ -19,8 +19,8 @@ struct CaptureReadiness {
     var blocker: String? {
         if !enabled { return "DeusKVM is disabled" }
         if !accessibility { return "Allow Accessibility in Setup to control Windows" }
-        if !keyboardMonitoring { return "Allow Input Monitoring in Setup, then quit and reopen DeusKVM" }
         if !tap { return "Input capture is not ready; check permissions in Setup" }
+        if let message = keyboardMonitoring.message { return message }
         if !display { return "Choose an available Mac display in Layout" }
         if secureInput { return "Secure Input is active on this Mac" }
         if !target { return "Waiting for the allowed PC's keyboard and mouse connection" }
