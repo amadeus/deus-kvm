@@ -14,8 +14,12 @@ User-reported intermittent issues, root-caused from source and this Mac's logs:
    a crossing is blocked only by held input; log corrections. Not implemented.
 2. **Finder file copy sends its icon.** Confirmed: `ClipboardPasteboard` prefers
    image data over a file URL (`6fcbce6`, for CleanShot), and Finder copies carry
-   the icon as `public.tiff`. **Planned:** image wins only when the pasteboard is
-   not a Finder file copy. Not implemented.
+   the icon as `public.tiff`. **Implemented:** image data wins only when the
+   pasteboard carries no file-manager icon marker (`com.apple.icns`,
+   `com.apple.finder.noderef`). A Finder-shaped regression test (URL + TIFF +
+   marker) failed before the change and passes after; CleanShot tests still pass.
+   **Pending (hardware):** Finder file → Explorer pastes the real file; CleanShot
+   → Discord still pastes the image.
 3. **Occasional lag under fast pointer movement** (and possibly repeated
    letters) that persists until the Mac app restarts. Ruled out by the user:
    Windows-wide (PC's own mouse is fine) and per-crossing state (crossing again

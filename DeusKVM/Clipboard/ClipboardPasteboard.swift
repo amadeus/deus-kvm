@@ -18,6 +18,9 @@ final class ClipboardPasteboard: @unchecked Sendable {
         "de.petermaurer.TransientPasteboardType", "com.typeit4me.clipping", "Pasteboard generator type",
         "com.agilebits.onepassword", "public.file-url", ownType.rawValue
     ]
+    /// File managers publish the copied item's icon as image data next to its file URL. That
+    /// image is a picture of the icon, not the file, so these copies always stay files.
+    static let fileIconTypes: Set<String> = ["com.apple.icns", "com.apple.finder.noderef"]
     private let gate = NSLock()
     private var permittedGeneration: UInt64 = 0
     private var generation: UInt64 = 0
@@ -188,8 +191,11 @@ final class ClipboardPasteboard: @unchecked Sendable {
                let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
                urls.count == 1 { file = ClipboardFile(urls[0]) }
             // Screenshot apps can publish an image and its file URL together.
-            // Prefer explicit image data while retaining all privacy exclusions.
-            if types.isDisjoint(with: privateTypes), let png = ClipboardImage.capture(board) {
+            // Prefer explicit image data while retaining all privacy exclusions,
+            // except for a file manager's copy, whose image is only the file's icon.
+            if types.isDisjoint(with: privateTypes), types.isDisjoint(with: Self.fileIconTypes),
+               let png = ClipboardImage.capture(board)
+            {
                 file = ClipboardFile(png: png)
             }
             if file == nil, types.isDisjoint(with: Self.excludedTypes),
