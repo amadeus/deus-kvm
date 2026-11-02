@@ -36,6 +36,9 @@ final class InputTap: @unchecked Sendable {
     /// Tap thread only, while the tap runs.
     private var keyboard: RawKeyboardMonitor?
     private var resyncGate = ResyncGate()
+    private var dockSwipe = DockSwipeRecognizer()
+    /// Gesture types already noted in the diagnostics log this launch.
+    private var notedGestureTypes: Set<UInt32> = []
     private var eventTap: CFMachPort?
     private var runLoop: CFRunLoop?
     private var deferredTimer: CFRunLoopTimer?
@@ -162,7 +165,7 @@ final class InputTap: @unchecked Sendable {
             CGEventType.keyDown, .keyUp, .flagsChanged, .mouseMoved, .leftMouseDown, .leftMouseUp,
             .leftMouseDragged, .rightMouseDown, .rightMouseUp, .rightMouseDragged,
             .otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel, MediaKeyEvent.eventType
-        ].reduce(CGEventMask(0)) { $0 | CGEventMask(1) << CGEventMask($1.rawValue) }
+        ].reduce(TrackpadGesture.eventMask) { $0 | CGEventMask(1) << CGEventMask($1.rawValue) }
         let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
@@ -316,6 +319,7 @@ final class InputTap: @unchecked Sendable {
                 _emit(.disabled)
                 return false
             }
+            if TrackpadGesture.eventTypes.contains(type.rawValue) { return _gesture(type: type, event: event) }
             return _handleInput(type: type, event: event)
         }
     }
@@ -446,5 +450,30 @@ final class InputTap: @unchecked Sendable {
         guard let userInfo else { return Unmanaged.passUnretained(event) }
         let owner = Unmanaged<InputTap>.fromOpaque(userInfo).takeUnretainedValue()
         return owner._handle(type: type, event: event) ? nil : Unmanaged.passUnretained(event)
+    }
+}
+
+extension InputTap {
+    /// Called with the tap lock held. Gestures pass through on the Mac; while remote they are
+    /// swallowed, and the system Spaces/Mission Control swipe becomes a Windows shortcut.
+    private func _gesture(type: CGEventType, event: CGEvent) -> Bool {
+        guard remote else { return false }
+        if notedGestureTypes.insert(type.rawValue).inserted {
+            _note("gesture events suppressed while controlling Windows: type \(type.rawValue)")
+        }
+        guard let sample = DockSwipeSample(event: event), let result = dockSwipe.observe(sample) else { return true }
+        _note(result.summary)
+        if let shortcut = result.shortcut {
+            let capsLock = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift)
+            for input in shortcut.events(capsLock: capsLock) {
+                forward(generation, input, ProcessInfo.processInfo.systemUptime)
+            }
+        }
+        return true
+    }
+
+    private func _note(_ message: String) {
+        log.notice("\(message, privacy: .public)")
+        _emit(.note(message))
     }
 }

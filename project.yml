@@ -91,6 +91,7 @@ targets:
       - DeusKVM/LinkHealth.swift
       - DeusKVM/BluetoothLinkLog.swift
       - DeusKVM/LowEnergy/TransportStats.swift
+      - DeusKVM/TrackpadGesture.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

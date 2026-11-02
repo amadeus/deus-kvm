@@ -79,6 +79,19 @@ User-reported intermittent issues, root-caused from source and this Mac's logs:
    - **Pending (hardware):** with both apps updated, Report Problem Now shows a
      `windows companion report:` section with the worker history.
 
+5. **Trackpad gestures reached macOS while controlling Windows** (four-finger
+   swipes ran Mission Control/Spaces behind the PC). **Implemented:** gesture
+   event types (rotate, begin/end, gesture, magnify/Dock control, swipe, smart
+   magnify, quick look, pressure) are in the tap mask and swallowed while
+   remote. The system Spaces/Mission Control swipe (undocumented Dock-swipe
+   fields) maps to Windows shortcuts: up → Win+Tab, down → Win+D, horizontal →
+   Ctrl+Win+←/→ (direction follows the Mac: fingers left = next desktop). Each
+   swipe logs its raw motion/progress/velocity and chosen shortcut, and each
+   gesture type is noted once per launch, so a reversed sign is a one-line fix.
+   **Pending (hardware):** whether a session tap stops the Dock's swipes on this
+   macOS; each swipe's Windows action and direction; pinch/rotate do nothing on
+   the Mac while on the PC.
+
 Lag diagnostics (Mac only; no protocol or Windows change):
 
 - `~/Library/Logs/DeusKVM/diagnostics.log`: app start/stop, system sleep/wake,
