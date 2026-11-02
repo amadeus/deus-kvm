@@ -58,7 +58,7 @@ final class DiagnosticsLog: @unchecked Sendable {
         }
     }
 
-    /// Buffers a block that the user asked for (a lag report) and writes it at once.
+    /// Buffers a block that the user asked for (a problem report) and writes it at once.
     /// It bypasses the per-minute budget but not the size cap.
     func writeReport(_ lines: [String]) {
         let date = now()

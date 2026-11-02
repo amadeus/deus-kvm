@@ -34,7 +34,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private var switchID: UInt8 = 0
     private var companionCapture = false
     private var lastReturnRejection: TimeInterval = 0
-    @Published private(set) var reportingLag = false
+    @Published private(set) var reportingProblem = false
     @Published private(set) var pcMonitors: [PCMonitor] = []
     @Published private(set) var companionStatus = "Waiting for Windows companion"
     /// Settings bindings (the corner slider especially) can repeat unchanged values; only
@@ -109,7 +109,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         guard !started else { return }
         started = true
         diagnostics.started(enabled: isEnabled)
-        observeUnlock()
+        wireDiagnostics()
         lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion(); self?._refresh() }
         lowEnergy.companion.onActivity = { [weak self] id in
             guard let self, started, isEnabled, id == currentTarget else { return }
@@ -519,6 +519,11 @@ extension EdgeSwitchCoordinator {
         secureInput = secure
     }
 
+    private func wireDiagnostics() {
+        lowEnergy.companion.onReport = { [weak self] _, token, text in self?.diagnostics.receiveWindowsReport(token: token, text: text) }
+        observeUnlock()
+    }
+
     /// Unlocking is the usual end of a ⌃⌘Q lock, whose Q release the tap never saw.
     private func observeUnlock() {
         observers.append(DistributedNotificationCenter.default().addObserver(
@@ -534,11 +539,12 @@ extension EdgeSwitchCoordinator {
         diagnostics.began("remote capture began setupMs=\(setupMs)")
     }
 
-    /// Writes what the app knows right now, the recent per-second samples and bluetoothd's
-    /// recent link-parameter lines, then calls `completion` with the file it wrote.
-    func reportLag(completion: @escaping @MainActor @Sendable (URL) -> Void) {
-        guard !reportingLag else { return }
-        reportingLag = true
+    /// Writes what the app knows right now, the recent per-second samples, the Windows
+    /// companion's report and bluetoothd's recent link-parameter lines, then calls `completion`
+    /// with the file it wrote. Used for lag, early returns or anything else that misbehaves.
+    func reportProblem(completion: @escaping @MainActor @Sendable (URL) -> Void) {
+        guard !reportingProblem else { return }
+        reportingProblem = true
         let now = ProcessInfo.processInfo.systemUptime
         let companion = lowEnergy.companion
         let seen = currentTarget.flatMap { companion.lastSeen[$0] }.map { String(Int((now - $0) * 1000)) } ?? "none"
@@ -553,14 +559,16 @@ extension EdgeSwitchCoordinator {
             "lastSeenAgeMs=\(seen)", "pingOutstandingMs=\(ping)", "blind=\(companion.blind.values.sorted())"
         ]
         let context = [
-            "=== lag report === \(CaptureDiagnostics.version) uptimeS=\(Int(now))",
+            "=== problem report === \(CaptureDiagnostics.version) uptimeS=\(Int(now))",
             "state: " + state.joined(separator: " "),
             "companion: " + link.joined(separator: " "),
             "bluetooth: state=\(lowEnergy.state.rawValue) advertising=\(lowEnergy.isAdvertising) " +
                 "subscribed=\(lowEnergy.subscribedCentrals.count) connected=\(lowEnergy.connectedCentrals.count)"
         ]
-        diagnostics.writeLagReport(context: context, transport: lowEnergy.transport) { [weak self] url in
-            self?.reportingLag = false
+        diagnostics.writeProblemReport(
+            context: context, transport: lowEnergy.transport, companion: companion, target: currentTarget
+        ) { [weak self] url in
+            self?.reportingProblem = false
             completion(url)
         }
     }

@@ -8,7 +8,7 @@ import os
 /// Aggregate capture health only; never logs input contents or pointer coordinates.
 ///
 /// Each per-second sample goes to the unified log (as before), to an in-memory history
-/// for lag reports, and to a per-minute summary in the durable diagnostics file. Only
+/// for problem reports, and to a per-minute summary in the durable diagnostics file. Only
 /// the summaries and transitions reach the disk unless the user asks for a report.
 @MainActor
 final class CaptureDiagnostics {
@@ -21,13 +21,15 @@ final class CaptureDiagnostics {
     private let cursorVisible: CursorVisible? = dlopen(nil, RTLD_LAZY)
         .flatMap { dlsym($0, "CGCursorIsVisible") }.map { unsafeBitCast($0, to: CursorVisible.self) }
     private var lastSample: TimeInterval = 0
-    /// Ten minutes of remote samples, written only by a lag report.
+    /// Ten minutes of remote samples, written only by a problem report.
     private var history = HealthHistory(capacity: 600)
     private var summary = HealthSummary()
     private var summaryStarted: TimeInterval?
     /// Last link states written to the file, so only changes are recorded.
     private var logged: LinkState?
     private var observers: [NSObjectProtocol] = []
+    private var windowsReport = WindowsReportRequest()
+    private var windowsReportDone: (@MainActor ([String]) -> Void)?
     private struct LinkState {
         let bluetooth: CBManagerState
         let target: Bool
@@ -159,9 +161,11 @@ final class CaptureDiagnostics {
     }
 
     /// Writes the context, the Bluetooth queue state and the recent per-second samples at once,
-    /// then appends bluetoothd's recent link lines (a few seconds later) and calls `completion`.
-    func writeLagReport(
-        context: [String], transport: BluetoothTransport, completion: @escaping @MainActor @Sendable (URL) -> Void
+    /// then the Windows companion's report (when it supports one) and bluetoothd's recent link
+    /// lines, and calls `completion` with the file it wrote.
+    func writeProblemReport(
+        context: [String], transport: BluetoothTransport, companion: CompanionService, target: UUID?,
+        completion: @escaping @MainActor @Sendable (URL) -> Void
     ) {
         transport.snapshot { state in
             DispatchQueue.main.async {
@@ -172,13 +176,45 @@ final class CaptureDiagnostics {
                     lines.append("recent samples: \(samples.count) (oldest first)")
                     lines += samples.map { "sample \(clock.string(from: $0.date)) \($0.line)" }
                     file.writeReport(lines)
-                    BluetoothLinkLog.capture { [file] lines in
-                        file.writeReport(lines + ["=== end lag report ==="])
-                        DispatchQueue.main.async { MainActor.assumeIsolated { completion(file.url) } }
+                    requestWindowsReport(companion: companion, target: target) { [file] windows in
+                        file.writeReport(windows)
+                        BluetoothLinkLog.capture { lines in
+                            file.writeReport(lines + ["=== end problem report ==="])
+                            DispatchQueue.main.async { MainActor.assumeIsolated { completion(file.url) } }
+                        }
                     }
                 }
             }
         }
+    }
+
+    func receiveWindowsReport(token: UInt32, text: String) {
+        finishWindowsReport(token, lines: WindowsReportRequest.lines(text))
+    }
+
+    private func requestWindowsReport(
+        companion: CompanionService, target: UUID?, completion: @escaping @MainActor ([String]) -> Void
+    ) {
+        guard let target, companion.supportsReport(target) else {
+            let reason = target == nil ? "no PC connected" : "this Windows companion cannot send reports; update it"
+            completion(["windows companion report: unavailable (\(reason))"])
+            return
+        }
+        let token = windowsReport.begin()
+        windowsReportDone = completion
+        companion.requestReport(target, token: token)
+        // Reports travel as acknowledged bulk writes beside live input; allow a busy link time.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.finishWindowsReport(token, lines: ["windows companion report: no answer within 15 s"])
+            }
+        }
+    }
+
+    private func finishWindowsReport(_ token: UInt32, lines: [String]) {
+        guard windowsReport.finish(token), let done = windowsReportDone else { return }
+        windowsReportDone = nil
+        done(lines)
     }
 
     private func writeSummary() {

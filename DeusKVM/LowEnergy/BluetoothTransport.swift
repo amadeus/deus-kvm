@@ -521,7 +521,7 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
 }
 
 extension BluetoothTransport {
-    /// One line of queue state for a lag report; the completion runs on the Bluetooth queue.
+    /// One line of queue state for a problem report; the completion runs on the Bluetooth queue.
     func snapshot(_ completion: @escaping @Sendable (String) -> Void) {
         queue.async { [self] in
             let stall: String = stats.stallAge(now: ProcessInfo.processInfo.systemUptime).map { String(Int($0 * 1000)) } ?? "none"

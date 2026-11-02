@@ -161,6 +161,9 @@ internal sealed class DesktopWorker : ApplicationContext
                     history.Add($"resume: switch={message.SwitchId}");
                 }
                 break;
+            case "report-request":
+                Send(new DesktopMessage("report", Epoch: message.Epoch, Report: BuildReport()));
+                break;
             case "enter":
                 cursor.Reveal();
                 handoff.Exit();
@@ -276,6 +279,29 @@ internal sealed class DesktopWorker : ApplicationContext
     private static double Fraction(MonitorInfo? monitor, int x) => monitor is null || monitor.W <= 0 ? -1 : (x - monitor.X) / (double)monitor.W;
     private static string Describe(MonitorInfo? monitor) => monitor is null ? "none" : $"{monitor.W}x{monitor.H}@{monitor.Dpi}";
     private static string Describe(IReadOnlyList<MonitorInfo> list) => list.Count == 0 ? "none" : string.Join(",", list.Select(Describe));
+
+    // Answers a problem report requested from the Mac. Sizes, fractions and counts only.
+    private string BuildReport()
+    {
+        var configured = monitors.FirstOrDefault(item => item.Id == config?.Monitor);
+        var cursorLine = DesktopNative.GetCursorPos(out var point)
+            ? $"cursor: x={Fraction(configured, point.X):0.000} live={Describe(DesktopNative.MonitorAt(point.X, point.Y))} " +
+              $"physical={(DesktopNative.GetPhysicalCursorPos(out var real) ? real.X == point.X && real.Y == point.Y ? "same" : "differs" : "unavailable")}"
+            : "cursor: unavailable";
+        var lines = new List<string>
+        {
+            $"desktop worker: awareness={DesktopNative.DpiAwareness()} blind={blind} mouse={devices.HasMatch} handoff={handoff.Active is not null} " +
+                $"hidden={cursor.Hidden} edge={config?.Edge} configured={Describe(configured)}",
+            $"cached layout: {Describe(monitors)}",
+            $"live layout: {Describe(DesktopNative.Monitors())}",
+            cursorLine,
+            $"since last health line: selected={selectedMotion} other={otherMotion} held={heldMotion} clipped={clippedMotion} " +
+                $"leave={leaveRequests} rejected={rejectedLeaves}",
+            $"history ({history.Count}, oldest first):"
+        };
+        lines.AddRange(history.Lines().Select(line => "  " + line));
+        return string.Join("\n", lines);
+    }
 
     private void ReportEdgeHealth()
     {

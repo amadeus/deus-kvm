@@ -34,6 +34,15 @@ final class CompanionProtocolTests: XCTestCase {
         XCTAssertEqual(CompanionProtocol.crc(Data("123456789".utf8)), 0xE306_9283)
     }
 
+    func testProblemReportMessagesAndHelloCapability() throws {
+        XCTAssertEqual(CompanionProtocol.Message(rawValue: 0x30), .reportRequest)
+        XCTAssertEqual(CompanionProtocol.Message(rawValue: 0x31), .report)
+        let current = #"{"v":1,"role":"pc","name":"DeusKVM Companion","chunk":244,"report":1}"#
+        let older = #"{"v":1,"role":"pc","name":"DeusKVM Companion","chunk":244}"#
+        XCTAssertEqual(try JSONDecoder().decode(CompanionHello.self, from: Data(current.utf8)).report, 1)
+        XCTAssertNil(try JSONDecoder().decode(CompanionHello.self, from: Data(older.utf8)).report)
+    }
+
     func testCorruptionSequenceGapAndOversizeAreRejected() throws {
         var encoder = CompanionProtocol.Encoder()
         var frames = encoder.encode(.init(stream: 1, type: 4, payload: Data(0 ..< 40)))

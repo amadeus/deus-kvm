@@ -231,7 +231,31 @@ struct HealthSummary {
     }
 }
 
-/// The most recent samples, kept only in memory and written out by a lag report.
+/// The Windows section of a problem report: one request at a time, matched by token, with a
+/// deadline, since an older companion or a busy link may never answer.
+struct WindowsReportRequest {
+    private var token: UInt32 = 0
+    private(set) var waiting: UInt32?
+
+    mutating func begin() -> UInt32 {
+        token &+= 1
+        waiting = token
+        return token
+    }
+
+    /// True once for the awaited token, whether it answered or timed out.
+    mutating func finish(_ value: UInt32) -> Bool {
+        guard waiting == value else { return false }
+        waiting = nil
+        return true
+    }
+
+    static func lines(_ text: String) -> [String] {
+        ["windows companion report:"] + text.split(separator: "\n", omittingEmptySubsequences: false).map { "windows: \($0)" }
+    }
+}
+
+/// The most recent samples, kept only in memory and written out by a problem report.
 struct HealthHistory {
     let capacity: Int
     private var storage: [HealthSample] = []

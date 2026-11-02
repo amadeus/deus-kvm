@@ -89,7 +89,7 @@ final class TransportStats: @unchecked Sendable {
         lock.withLock { (companionQueued, companionBlocked) }
     }
 
-    /// The current stall's age, for a lag report.
+    /// The current stall's age, for a problem report.
     func stallAge(now: TimeInterval) -> TimeInterval? {
         lock.withLock { stallOrigin.map { now - $0 } }
     }

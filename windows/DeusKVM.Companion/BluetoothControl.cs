@@ -19,6 +19,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     private readonly Queue<(GattCharacteristic Characteristic, byte[] Data, bool HelloEnd)> controls = new(), bulk = new();
     private readonly CompanionHandoff handoff = new();
     private readonly StateReporter stateReport = new();
+    private (uint Token, string[] Service)? pendingReport;
     private Protocol.Encoder controlEncoder = new(), bulkEncoder = new();
     private Protocol.Decoder controlDecoder = new(), bulkDecoder = new();
     private GattCharacteristic? controlRead, controlWrite, bulkRead, bulkWrite;
@@ -192,7 +193,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 imagesPeer = hello.RootElement.TryGetProperty("images", out var images) && images.TryGetInt32(out var imageVersion) && imageVersion == 1;
                 var chunk = Protocol.FrameLimit(maxPduSize() - 3); // ATT write/notify value limit
                 SendJson(Protocol.Message.Hello, new { v = 1, role = "pc", name = "DeusKVM Companion",
-                    computerName = Environment.MachineName, chunk, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, images = 1, selection = 1, takeover = true });
+                    computerName = Environment.MachineName, chunk, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, images = 1, selection = 1, takeover = true, report = 1 });
                 // HELLO itself stays at the 20-byte bootstrap size; later bulk frames fit both receive limits.
                 bulkEncoder.ChunkSize = Protocol.FrameLimit(Math.Min(chunk, hello.RootElement.GetProperty("chunk").GetInt32()));
                 UpdateClipboardSession(true);
@@ -233,6 +234,12 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         {
             if (!SupportsTakeover || payload.Length != 4) throw new InvalidDataException("Invalid control request");
             if (BinaryPrimitives.ReadUInt32LittleEndian(payload) == availability.Epoch) RequestOwnership();
+            return;
+        }
+        if (type == Protocol.Message.ReportRequest)
+        {
+            if (payload.Length != 4) throw new InvalidDataException("Invalid report request");
+            BeginReport(BinaryPrimitives.ReadUInt32LittleEndian(payload));
             return;
         }
         if (type == Protocol.Message.ReleaseAck)
@@ -313,10 +320,47 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 ack[6] = message.Blind;
                 Send(Protocol.Message.EnterAck, ack);
                 break;
+            case "report" when pendingReport?.Token == message.Epoch:
+                FinishReport(message.Epoch, message.Report);
+                break;
             case "leave" when handoff.Accept(message.SwitchId) && message.Edge == config?.Edge && blind == 0:
                 Send(Protocol.Message.Leave, [message.SwitchId, message.Edge, (byte)message.Fraction, (byte)(message.Fraction >> 8)]);
                 break;
         }
+    }
+
+    // Service state now; the desktop worker adds its edge history if it answers within 3 s.
+    private void BeginReport(uint token)
+    {
+        var age = lastSeen == 0 ? -1 : RuntimeCompat.TickCount64 - lastSeen;
+        var service = new[]
+        {
+            $"windows companion: version={typeof(BluetoothControl).Assembly.GetName().Version} uptimeS={RuntimeCompat.TickCount64 / 1000}",
+            $"link: ready={ready} active={active} blind={blind} queue={controls.Count}/{bulk.Count} writing={writing} lastSeenAgoMs={age} detail=\"{Detail}\"",
+            $"desktop: connected={desktop?.Connected == true} detail=\"{desktop?.Detail}\" monitors={string.Join(",", monitors.Select(item => $"{item.W}x{item.H}@{item.Dpi}"))} edge={config?.Edge}",
+            $"clipboard: peer={clipboardPeer} offered={clipboardOffered} enabled={clipboardEnabled} desktop={clipboardDefaultDesktop}/{clipboardDesktopAvailable}"
+        };
+        if (desktop?.Connected != true) { pendingReport = null; SendReport(token, service, "desktop worker: not connected"); return; }
+        pendingReport = (token, service);
+        desktop.Send(new DesktopMessage("report-request", Epoch: token));
+        _ = Task.Delay(3000).ContinueWith(_ => context.Post(_ => FinishReport(token, null), null), TaskScheduler.Default);
+    }
+
+    private void FinishReport(uint token, string? worker)
+    {
+        if (pendingReport is not { } pending || pending.Token != token) return;
+        pendingReport = null;
+        SendReport(token, pending.Service, worker ?? "desktop worker: no answer within 3 s");
+    }
+
+    private void SendReport(uint token, string[] service, string worker)
+    {
+        if (!ready || disposed) return;
+        var text = System.Text.Encoding.UTF8.GetBytes(string.Join("\n", service.Append(worker)));
+        var payload = new byte[4 + Math.Min(text.Length, 60000)];
+        BinaryPrimitives.WriteUInt32LittleEndian(payload, token);
+        Array.Copy(text, 0, payload, 4, payload.Length - 4);
+        Enqueue(Protocol.Message.Report, 1, payload);
     }
 
     private void ResumeDesktop()

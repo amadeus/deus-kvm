@@ -68,6 +68,16 @@ User-reported intermittent issues, root-caused from source and this Mac's logs:
      policy has portable tests; the listener itself is Windows-only.
    - **Pending (hardware):** text, image and file clipboard both ways, including
      right after the PC locks/unlocks; Task Manager shows the desktop worker idle.
+   - **4d, implemented:** **Report Problem Now** (renamed from Report Lag Now)
+     also asks the Windows companion for its state over the existing link
+     (`REPORT_REQUEST` 0x30 / `REPORT` 0x31, offered via HELLO `report: 1`;
+     older companions are noted as unable to report). The service adds link,
+     desktop and clipboard state; the desktop worker adds its scaling mode,
+     cached vs live layout, cursor position, counters and decision history.
+     Everything lands in the Mac's diagnostics file for an agent to read.
+     Both apps must be updated. Shared framing fixtures cover both messages.
+   - **Pending (hardware):** with both apps updated, Report Problem Now shows a
+     `windows companion report:` section with the worker history.
 
 Lag diagnostics (Mac only; no protocol or Windows change):
 
@@ -82,16 +92,17 @@ Lag diagnostics (Mac only; no protocol or Windows change):
   time its transmit queue stayed full (`stallMs`, `stallMaxMs`), companion frames
   and bytes in each direction, and PING/PONG round trip every 2 s (every Windows
   companion already answers PING).
-- **Report Lag Now** in the menu bar writes the app/link state, the Bluetooth
-  queue state, the last 10 minutes of per-second samples (kept only in memory)
-  and bluetoothd's recent link-parameter lines, then confirms with a dialog.
+- **Report Problem Now** in the menu bar writes the app/link state, the Bluetooth
+  queue state, the last 10 minutes of per-second samples (kept only in memory),
+  the Windows companion's report (4d) and bluetoothd's recent link-parameter
+  lines, then confirms with a dialog.
 - Validation: 128 Mac tests passed (10 new: event-lag units, tap/ping/transport
   accounting, summaries, history, rotation, flush and line budget); SwiftFormat
   and strict SwiftLint passed; Debug build succeeded. The bluetoothd predicate
   was checked against this Mac's live log. The app was not launched or installed.
 - **Pending (hardware):** install the build, confirm the per-minute summaries
-  and a Report Lag Now entry look right, then use it at the next lag occurrence
-  before restarting.
+  and a Report Problem Now entry look right, then use it at the next lag or
+  early-return occurrence before restarting.
 
 ### QMK key coverage correction — 2026-10-26
 

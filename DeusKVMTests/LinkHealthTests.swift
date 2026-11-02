@@ -117,6 +117,21 @@ final class LinkHealthTests: XCTestCase {
         XCTAssertEqual(history.samples.map(\.transport.events), [3, 4, 5])
     }
 
+    func testWindowsReportMatchesOnlyTheAwaitedTokenOnce() {
+        var request = WindowsReportRequest()
+        let first = request.begin()
+        XCTAssertFalse(request.finish(first &+ 1), "a stale or foreign token is ignored")
+        XCTAssertTrue(request.finish(first))
+        XCTAssertFalse(request.finish(first), "the answer and the timeout cannot both complete it")
+        let second = request.begin()
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(request.waiting, second)
+        XCTAssertEqual(
+            WindowsReportRequest.lines("link: ready=True\nhistory (0, oldest first):"),
+            ["windows companion report:", "windows: link: ready=True", "windows: history (0, oldest first):"]
+        )
+    }
+
     func testBluetoothLinkLinesDropHeadersAndKeepTheNewest() {
         let output = "Timestamp               Ty Process[PID:TID]\nline 1\nline 2\nline 3\n"
         XCTAssertEqual(
