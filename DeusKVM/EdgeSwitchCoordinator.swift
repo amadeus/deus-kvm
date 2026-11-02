@@ -20,7 +20,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     /// returns and tap lifecycle events come here.
     private lazy var tap = InputTap(output: { [weak self] event in self?._receive(event) }, forward: { [transport = lowEnergy.transport] in
         transport.input($1, generation: $0, capturedAt: $2)
-    })
+    }, stats: diagnostics.tapStats)
     private var timer: Timer?
     private var companionDeadlineTimer: Timer?
     private var started = false
@@ -34,6 +34,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private var switchID: UInt8 = 0
     private var companionCapture = false
     private var lastReturnRejection: TimeInterval = 0
+    @Published private(set) var reportingLag = false
     @Published private(set) var pcMonitors: [PCMonitor] = []
     @Published private(set) var companionStatus = "Waiting for Windows companion"
     /// Settings bindings (the corner slider especially) can repeat unchanged values; only
@@ -107,6 +108,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        diagnostics.started(enabled: isEnabled)
         lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion(); self?._refresh() }
         lowEnergy.companion.onActivity = { [weak self] id in
             guard let self, started, isEnabled, id == currentTarget else { return }
@@ -153,7 +155,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         })
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.returnLocal() }
+                Task { @MainActor in self?.returnLocal(); self?.diagnostics.system(name) }
             })
         }
         for name in [
@@ -162,7 +164,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
             NSWorkspace.didActivateApplicationNotification
         ] {
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?._refresh() }
+                Task { @MainActor in self?.diagnostics.system(name); self?._refresh() }
             })
         }
         for name in [NSApplication.didBecomeActiveNotification, UserDefaults.didChangeNotification] {
@@ -190,12 +192,14 @@ final class EdgeSwitchCoordinator: ObservableObject {
         tapReady = false
         tapStarting = false
         lowEnergy.transport.flush()
+        diagnostics.stopping()
     }
 
     func setEnabled(_ value: Bool) {
         guard value != isEnabled else { return }
         if !value { returnLocal(reason: "DeusKVM disabled") }
         isEnabled = value
+        diagnostics.note(value ? "DeusKVM enabled" : "DeusKVM disabled")
         UserDefaults.standard.set(value, forKey: AppSettings.enabledKey)
         if !value {
             tap.stop(); tapReady = false; tapStarting = false; keyboardMonitoringReady = false
@@ -238,7 +242,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         scheduleChecks()
         if wasRemote {
             let duration = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
-            diagnostics.transition("return: \(reason) localRestoreMs=\(duration)")
+            diagnostics.ended("return: \(reason) localRestoreMs=\(duration)")
         }
     }
 
@@ -299,12 +303,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
                 reason: "capture lost: AX=\(permissionGranted) secure=\(secureInput) target=\(captureTarget == currentTarget)"
             )
         }
-        if isRemote {
-            diagnostics.sample(
-                parkingPoint: cursor.parkingPoint,
-                companion: "\(lowEnergy.companion.diagnosticState) \(lowEnergy.takeNotificationDiagnostics())"
-            )
-        }
+        recordDiagnostics()
         if isEnabled, permissionGranted, !tapReady, !tapStarting {
             tapStarting = tap.start()
         }
@@ -387,7 +386,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastReturnRejection >= 1 {
                 lastReturnRejection = now
-                diagnostics.transition("Windows edge deferred: \(tap.returnDiagnostic)")
+                diagnostics.note("Windows edge deferred: \(tap.returnDiagnostic)")
             }
             return
         }
@@ -425,7 +424,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
             scheduleChecks()
             refreshClipboard()
             let setupMs = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
-            diagnostics.transition("remote capture began setupMs=\(setupMs)")
+            beginDiagnostics(setupMs: setupMs)
             switchID &+= 1
             companionCapture = currentTarget.map { lowEnergy.companion.ready.contains($0) } ?? false
             if let target = currentTarget {
@@ -492,6 +491,58 @@ extension EdgeSwitchCoordinator {
                 self?.companionDeadlineTimer = nil
                 self?._refresh()
             }
+        }
+    }
+
+    /// Each refresh: link changes; while remote, a diagnostic ping and the per-second sample.
+    private func recordDiagnostics() {
+        if isRemote {
+            if let captureTarget { lowEnergy.companion.ping(captureTarget) }
+            let companion = lowEnergy.companion
+            diagnostics.sample(parkingPoint: cursor.parkingPoint, blind: companion.blind.values.sorted(), pings: companion.takePings())
+        }
+        let companion = currentTarget.map { id in
+            lowEnergy.companion.ready.contains(id) && lowEnergy.companion.lastSeen[id].map {
+                ProcessInfo.processInfo.systemUptime - $0 < 10
+            } == true
+        } ?? false
+        diagnostics.link(bluetooth: lowEnergy.state, target: targetAvailable, companion: companion)
+    }
+
+    private func beginDiagnostics(setupMs: Int) {
+        lowEnergy.companion.cancelPing()
+        _ = lowEnergy.companion.takePings()
+        diagnostics.began("remote capture began setupMs=\(setupMs)")
+    }
+
+    /// Writes what the app knows right now, the recent per-second samples and bluetoothd's
+    /// recent link-parameter lines, then calls `completion` with the file it wrote.
+    func reportLag(completion: @escaping @MainActor @Sendable (URL) -> Void) {
+        guard !reportingLag else { return }
+        reportingLag = true
+        let now = ProcessInfo.processInfo.systemUptime
+        let companion = lowEnergy.companion
+        let seen = currentTarget.flatMap { companion.lastSeen[$0] }.map { String(Int((now - $0) * 1000)) } ?? "none"
+        let ping = companion.pingOutstandingAge(now: now).map { String(Int($0 * 1000)) } ?? "none"
+        let state: [String] = [
+            "enabled=\(isEnabled)", "remote=\(isRemote)", "connection=\(connectionState)", "canSwitch=\(canSwitch)",
+            "secureInput=\(secureInput)", "target=\(currentTarget != nil)", "captureTarget=\(captureTarget != nil)",
+            "companionCapture=\(companionCapture)"
+        ]
+        let link: [String] = [
+            "status=\(companionStatus)", "ready=\(currentTarget.map { companion.ready.contains($0) } ?? false)",
+            "lastSeenAgeMs=\(seen)", "pingOutstandingMs=\(ping)", "blind=\(companion.blind.values.sorted())"
+        ]
+        let context = [
+            "=== lag report === \(CaptureDiagnostics.version) uptimeS=\(Int(now))",
+            "state: " + state.joined(separator: " "),
+            "companion: " + link.joined(separator: " "),
+            "bluetooth: state=\(lowEnergy.state.rawValue) advertising=\(lowEnergy.isAdvertising) " +
+                "subscribed=\(lowEnergy.subscribedCentrals.count) connected=\(lowEnergy.connectedCentrals.count)"
+        ]
+        diagnostics.writeLagReport(context: context, transport: lowEnergy.transport) { [weak self] url in
+            self?.reportingLag = false
+            completion(url)
         }
     }
 

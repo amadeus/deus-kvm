@@ -24,11 +24,8 @@ final class CompanionService: ObservableObject {
     var onDisableRequested: ((Bool, @escaping () -> Void) -> Void)?
     private var wantsControl = false
     private var chars: [CBMutableCharacteristic] = []
-    var diagnosticState: String {
-        let link = transport?.stats.companionState ?? (queued: 0, blocked: false)
-        return "queued=\(link.queued) blocked=\(link.blocked) blind=\(blind.values.sorted())"
-    }
-
+    /// Link round trips while controlling Windows; diagnostics only.
+    private var pings = PingTracker()
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "Companion")
 
     private struct Client {
@@ -132,7 +129,7 @@ final class CompanionService: ObservableObject {
 
     private func disconnect(_ id: UUID) {
         selection.disconnect(id)
-        if ready.contains(id) { log.notice("companion disconnected") }
+        if ready.contains(id) { log.notice("companion disconnected"); pings.cancel() }
         subscribedHosts.remove(id)
         clients.removeValue(forKey: id); ready.remove(id); monitors.removeValue(forKey: id)
         blind.removeValue(forKey: id); lastSeen.removeValue(forKey: id)
@@ -201,7 +198,8 @@ final class CompanionService: ObservableObject {
         case .enterAck:
             guard payload.count == 7 else { throw CompanionProtocol.Failure.malformed }
             if blind[id] != payload[6] { blind[id] = payload[6] }
-        case .pong: break
+        case .pong:
+            if payload.count == 4 { pings.receive(CompanionProtocol.read32(payload, 0), now: ProcessInfo.processInfo.systemUptime) }
         default: throw CompanionProtocol.Failure.malformed
         }
     }
@@ -263,6 +261,24 @@ final class CompanionService: ObservableObject {
               Set(screens.map(\.id)).count == screens.count else { throw CompanionProtocol.Failure.malformed }
         monitors[id] = screens
         onReady?(id)
+    }
+
+    /// Sends a diagnostic PING when one is due. Every companion version answers PONG.
+    func ping(_ id: UUID, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard ready.contains(id), let token = pings.next(now: now) else { return }
+        send(.ping, payload: CompanionProtocol.u32(token), to: id)
+    }
+
+    func takePings() -> PingTracker.Interval {
+        pings.take()
+    }
+
+    func cancelPing() {
+        pings.cancel()
+    }
+
+    func pingOutstandingAge(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> TimeInterval? {
+        pings.outstandingAge(now: now)
     }
 
     func supportsResume(_ id: UUID) -> Bool {

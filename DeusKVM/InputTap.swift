@@ -40,13 +40,16 @@ final class InputTap: @unchecked Sendable {
     private let output: @MainActor @Sendable (TapOutput) -> Void
     /// Remote input skips the main thread; the receiver orders it by generation.
     private let forward: @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
+    private let stats: TapStats
 
     init(
         output: @escaping @MainActor @Sendable (TapOutput) -> Void,
-        forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
+        forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void,
+        stats: TapStats = TapStats()
     ) {
         self.output = output
         self.forward = forward
+        self.stats = stats
     }
 
     func configure(_ value: TapConfiguration) {
@@ -312,13 +315,17 @@ final class InputTap: @unchecked Sendable {
         } else if motion {
             if let point = configuration.geometry?.parkingPoint,
                TapWorkSchedule.needsCursorCorrection(location: event.location, parkingPoint: point)
-            { CGWarpMouseCursorPosition(point) }
+            {
+                CGWarpMouseCursorPosition(point)
+                stats.warp()
+            }
             if dropNextMotion {
                 dropNextMotion = false
                 return true
             }
         }
         if wasRemote, let input = DirectInputEvent(type: type, event: event) {
+            stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
             forward(generation, input, ProcessInfo.processInfo.systemUptime)
         }
         return wasRemote
@@ -359,6 +366,7 @@ final class InputTap: @unchecked Sendable {
             handoff.heldMediaKeys.remove(media.key.rawValue)
         }
         if remote, let input = DirectInputEvent(type: MediaKeyEvent.eventType, event: event) {
+            stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
             forward(generation, input, ProcessInfo.processInfo.systemUptime)
         }
         return remote

@@ -1,5 +1,59 @@
 # DeusKVM: implementation plan
 
+### Reliability investigation and lag diagnostics — 2026-11-01
+
+User-reported intermittent issues, root-caused from source and this Mac's logs:
+
+1. **No crossing after wake** (Disable/Enable fixes it). Tonight's logs: lock at
+   16:00:35 (`kAELockScreenEvent`, user active), display on 21:33:02, PC link
+   21:33:36, no capture until the tap restarted at 21:34:11; the BLE link was
+   untouched. The user locks with ⌃⌘Q: the tap sees Q down, Secure Input hides
+   Q up, and `HandoffState.isReleased` blocks edge and hotkey forever while the
+   icon shows ready. **Planned:** re-read held state from macOS when Secure
+   Input turns off, on unlock and on tap re-enable; reconcile against macOS when
+   a crossing is blocked only by held input; log corrections. Not implemented.
+2. **Finder file copy sends its icon.** Confirmed: `ClipboardPasteboard` prefers
+   image data over a file URL (`6fcbce6`, for CleanShot), and Finder copies carry
+   the icon as `public.tiff`. **Planned:** image wins only when the pasteboard is
+   not a Finder file copy. Not implemented.
+3. **Occasional lag under fast pointer movement** (and possibly repeated
+   letters) that persists until the Mac app restarts. Ruled out by the user:
+   Windows-wide (PC's own mouse is fine) and per-crossing state (crossing again
+   does not help). The PC link runs at 15 ms (macOS widens Windows' 7.5 ms
+   request; `.low` latency changes nothing) and shares the radio with a
+   Bluetooth trackpad. Unified-log retention (~12 h) held no past incident, so
+   diagnostics were added first (below). Adaptive motion pacing is optional
+   polish, not the fix.
+4. **Return to the Mac partway across the PC screen.** Candidates: Windows edge
+   test using `Screen.AllScreens` cached during monitor sleep/wake (≈50% if a
+   fallback mode, ≈80% if scaled vs physical at 125%), or Mac-side returns
+   (Secure Input, heartbeat expiry). **Planned:** live monitor bounds and a
+   live-bounds check before LEAVE on Windows, with a rejection log. Not implemented.
+
+Lag diagnostics (Mac only; no protocol or Windows change):
+
+- `~/Library/Logs/DeusKVM/diagnostics.log`: app start/stop, system sleep/wake,
+  display sleep/wake, screen lock/unlock, enable/disable, link and companion ready/lost, crossings and return reasons,
+  and one summary per minute while controlling Windows. Counts and timings only.
+- Bounded writes: buffered in memory and written every 5 minutes (or at 32 KiB,
+  sleep, quit, or a report); at most 120 lines per minute with a suppressed count;
+  rotation at 2 MB to one `.previous` file (≈4 MB maximum).
+- New per-second fields (unified log and summaries): tap delivery lag from event
+  timestamps, corrective cursor warps, notifications accepted by CoreBluetooth,
+  time its transmit queue stayed full (`stallMs`, `stallMaxMs`), companion frames
+  and bytes in each direction, and PING/PONG round trip every 2 s (every Windows
+  companion already answers PING).
+- **Report Lag Now** in the menu bar writes the app/link state, the Bluetooth
+  queue state, the last 10 minutes of per-second samples (kept only in memory)
+  and bluetoothd's recent link-parameter lines, then confirms with a dialog.
+- Validation: 128 Mac tests passed (10 new: event-lag units, tap/ping/transport
+  accounting, summaries, history, rotation, flush and line budget); SwiftFormat
+  and strict SwiftLint passed; Debug build succeeded. The bluetoothd predicate
+  was checked against this Mac's live log. The app was not launched or installed.
+- **Pending (hardware):** install the build, confirm the per-minute summaries
+  and a Report Lag Now entry look right, then use it at the next lag occurrence
+  before restarting.
+
 ### QMK key coverage correction — 2026-10-26
 
 - Audited the linked DUO layout and Cloud/Dimple R3/Kradlex at QMK PR #2 revision

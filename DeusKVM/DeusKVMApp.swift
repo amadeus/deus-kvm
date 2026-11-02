@@ -81,10 +81,31 @@ private struct StatusMenu: View {
             .disabled(!coordinator.isRemote && !coordinator.canSwitch)
         Toggle(L10n.Layout.lock, isOn: $coordinator.locked)
         Divider()
+        // Before restarting for lag: keeps the recent connection details for diagnosis.
+        Button(coordinator.reportingLag ? "Saving Lag Report…" : "Report Lag Now") {
+            coordinator.reportLag { LagReportAlert.show($0) }
+        }
+        .disabled(coordinator.reportingLag)
         Button(coordinator.isEnabled ? "Disable DeusKVM" : "Enable DeusKVM") {
             coordinator.setEnabled(!coordinator.isEnabled)
         }
         Button(L10n.Layout.quit) { NSApp.terminate(nil) }
+    }
+}
+
+@MainActor
+private enum LagReportAlert {
+    static func show(_ url: URL) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Lag report saved"
+        let path = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        alert.informativeText = "Recent connection details were added to \(path). You can restart DeusKVM now."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Show in Finder")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
     }
 }
 
