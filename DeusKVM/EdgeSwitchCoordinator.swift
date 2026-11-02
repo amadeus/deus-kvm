@@ -109,6 +109,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         guard !started else { return }
         started = true
         diagnostics.started(enabled: isEnabled)
+        observeUnlock()
         lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion(); self?._refresh() }
         lowEnergy.companion.onActivity = { [weak self] id in
             guard let self, started, isEnabled, id == currentTarget else { return }
@@ -186,6 +187,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            DistributedNotificationCenter.default().removeObserver(observer)
         }
         observers.removeAll(); subscriptions.removeAll()
         tap.stop()
@@ -286,7 +288,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         let permission = AccessibilityPermission.isTrusted
         let secure = IsSecureEventInputEnabled()
         if permissionGranted != permission { permissionGranted = permission }
-        if secureInput != secure { secureInput = secure }
+        if secureInput != secure { secureInputChanged(to: secure) }
         let nextTarget = isEnabled && lowEnergy.state == .poweredOn ? lowEnergy.hostPolicy.target : nil
         if nextTarget != currentTarget {
             companionDeadlineTimer?.invalidate(); companionDeadlineTimer = nil
@@ -379,20 +381,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
         }
     }
 
-    private func _returnFromPC(target: UUID, switchID: UInt8, edge: UInt8, fraction: UInt16) {
-        guard isRemote, !locked, !recordingShortcut, target == captureTarget, switchID == self.switchID,
-              edge == self.edge.opposite.wireValue, let geometry else { return }
-        guard tap.acceptCompanionReturn() else {
-            let now = ProcessInfo.processInfo.systemUptime
-            if now - lastReturnRejection >= 1 {
-                lastReturnRejection = now
-                diagnostics.note("Windows edge deferred: \(tap.returnDiagnostic)")
-            }
-            return
-        }
-        _returnLocal(at: geometry.entryPoint(fraction: fraction), reason: "Windows edge")
-    }
-
     private func _receive(_ event: TapOutput) {
         switch event {
         case let .keyboardMonitoring(token, ready):
@@ -445,6 +433,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
         case .disabled:
             returnLocal(reason: "event tap disabled")
             tap.reenable()
+        case let .note(message):
+            diagnostics.note(message)
         }
     }
 }
@@ -507,6 +497,35 @@ extension EdgeSwitchCoordinator {
             } == true
         } ?? false
         diagnostics.link(bluetooth: lowEnergy.state, target: targetAvailable, companion: companion)
+    }
+
+    private func _returnFromPC(target: UUID, switchID: UInt8, edge: UInt8, fraction: UInt16) {
+        guard isRemote, !locked, !recordingShortcut, target == captureTarget, switchID == self.switchID,
+              edge == self.edge.opposite.wireValue, let geometry else { return }
+        guard tap.acceptCompanionReturn() else {
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastReturnRejection >= 1 {
+                lastReturnRejection = now
+                diagnostics.note("Windows edge deferred: \(tap.returnDiagnostic)")
+            }
+            return
+        }
+        _returnLocal(at: geometry.entryPoint(fraction: fraction), reason: "Windows edge")
+    }
+
+    /// Secure Input hides key releases from the tap; once it ends, held state is re-read.
+    private func secureInputChanged(to secure: Bool) {
+        if !secure { tap.resyncHeldInput("Secure Input ended") }
+        secureInput = secure
+    }
+
+    /// Unlocking is the usual end of a ⌃⌘Q lock, whose Q release the tap never saw.
+    private func observeUnlock() {
+        observers.append(DistributedNotificationCenter.default().addObserver(
+            forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.tap.resyncHeldInput("screen unlocked") }
+        })
     }
 
     private func beginDiagnostics(setupMs: Int) {

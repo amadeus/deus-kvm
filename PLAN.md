@@ -9,9 +9,16 @@ User-reported intermittent issues, root-caused from source and this Mac's logs:
    21:33:36, no capture until the tap restarted at 21:34:11; the BLE link was
    untouched. The user locks with ⌃⌘Q: the tap sees Q down, Secure Input hides
    Q up, and `HandoffState.isReleased` blocks edge and hotkey forever while the
-   icon shows ready. **Planned:** re-read held state from macOS when Secure
-   Input turns off, on unlock and on tap re-enable; reconcile against macOS when
-   a crossing is blocked only by held input; log corrections. Not implemented.
+   icon shows ready. **Implemented:** the tap re-reads held keys, buttons and
+   raw-keyboard values from macOS (media keys clear) when Secure Input turns off,
+   on screen unlock and on tap re-enable; pushing against the edge or releasing a
+   key with the hotkey pending while held input blocks the crossing triggers the
+   same resync (at most every 0.5 s). Corrections are logged as counts. Unit tests
+   cover the ⌃⌘Q case, keys really held, modifiers, buttons, media keys, a stale
+   consumed shortcut key and the throttle.
+   **Pending (hardware):** lock with ⌃⌘Q, let the display sleep, wake, unlock
+   and cross immediately (edge and hotkey) without Disable/Enable; the
+   diagnostics file shows `held input corrected (screen unlocked): keys=1`.
 2. **Finder file copy sends its icon.** Confirmed: `ClipboardPasteboard` prefers
    image data over a file URL (`6fcbce6`, for CleanShot), and Finder copies carry
    the icon as `public.tiff`. **Implemented:** image data wins only when the
