@@ -59,6 +59,15 @@ User-reported intermittent issues, root-caused from source and this Mac's logs:
      owns control or a return was decided, not for the PC's own mouse.
    - **Pending (hardware):** Mac menu status still tracks Windows desktop/lock
      changes promptly; `edge-return.log` stays quiet while only the PC's mouse is used.
+   - **4c, implemented:** the clipboard thread is event-driven: clipboard changes
+     (`AddClipboardFormatListener`), commands from the service and session
+     lock/unlock (`WTSRegisterSessionNotification`) wake it; a 1 s timer keeps the
+     desktop check (was 200 ms), and the 200 ms retry runs only while a read,
+     write, file or image is pending. Re-entrant wake-ups queue one more pass.
+     If the listener cannot register, the previous 200 ms poll is used. The retry
+     policy has portable tests; the listener itself is Windows-only.
+   - **Pending (hardware):** text, image and file clipboard both ways, including
+     right after the PC locks/unlocks; Task Manager shows the desktop worker idle.
 
 Lag diagnostics (Mac only; no protocol or Windows change):
 
