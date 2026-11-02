@@ -70,6 +70,13 @@ public static class EdgeDetector
 
 public enum EdgeVerdict { Leave, StaleLayout, OtherMonitor, Unavailable }
 
+public static class EdgeHealth
+{
+    // The five-second health line is written only while the Mac owns control or a return was
+    // decided; moving the PC's own mouse alone no longer appends to the log.
+    public static bool ShouldWrite(bool macOwnsControl, int leaves, int rejected) => macOwnsControl || leaves + rejected > 0;
+}
+
 // A desktop restart/EXIT invalidates its previous handoff; later placement or edge messages cannot revive it.
 public sealed class HandoffSession
 {

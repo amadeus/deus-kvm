@@ -52,6 +52,13 @@ User-reported intermittent issues, root-caused from source and this Mac's logs:
      monitor, and the history bounds.
    - **Pending (hardware):** after the PC and its monitor sleep and wake, returns
      happen only at the real right edge and entry lands at the right place.
+   - **4b, implemented:** desktop `state` still reaches the service every second
+     over the local pipe (its keep-alive), but is forwarded to the Mac over
+     Bluetooth only when it changes, plus a 30 s refresh (it was one message per
+     second). The 5 s `edge-return.log` health line is written only while the Mac
+     owns control or a return was decided, not for the PC's own mouse.
+   - **Pending (hardware):** Mac menu status still tracks Windows desktop/lock
+     changes promptly; `edge-return.log` stays quiet while only the PC's mouse is used.
 
 Lag diagnostics (Mac only; no protocol or Windows change):
 

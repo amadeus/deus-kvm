@@ -282,7 +282,7 @@ internal sealed class DesktopWorker : ApplicationContext
         var now = RuntimeCompat.TickCount64;
         if (now - lastEdgeReport < 5000) return;
         lastEdgeReport = now;
-        if (handoff.Active is not null || selectedMotion + otherMotion != 0)
+        if (EdgeHealth.ShouldWrite(handoff.Active is not null, leaveRequests, rejectedLeaves))
         {
             var value = $"edge health: active={handoff.Active is not null} blind={blind} configured={config is not null} " +
                 $"mouse={devices.HasMatch} selected={selectedMotion} other={otherMotion} held={heldMotion} clipped={clippedMotion} leave={leaveRequests} rejected={rejectedLeaves}";

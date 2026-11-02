@@ -18,6 +18,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     private readonly SynchronizationContext context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
     private readonly Queue<(GattCharacteristic Characteristic, byte[] Data, bool HelloEnd)> controls = new(), bulk = new();
     private readonly CompanionHandoff handoff = new();
+    private readonly StateReporter stateReport = new();
     private Protocol.Encoder controlEncoder = new(), bulkEncoder = new();
     private Protocol.Decoder controlDecoder = new(), bulkDecoder = new();
     private GattCharacteristic? controlRead, controlWrite, bulkRead, bulkWrite;
@@ -98,7 +99,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
             BinaryPrimitives.WriteUInt32LittleEndian(payload, unchecked((uint)RuntimeCompat.TickCount64));
             Send(Protocol.Message.Ping, payload);
             AdvertiseClipboard();
-            if (active && desktop?.Connected != true) { blind = 4; Send(Protocol.Message.State, [4, 2, 0]); SetDetail(desktop?.Detail ?? "Waiting for desktop"); }
+            if (active && desktop?.Connected != true) { blind = 4; SendState([4, 2, 0]); SetDetail(desktop?.Detail ?? "Waiting for desktop"); }
         }
     }
 
@@ -121,6 +122,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         value = value && Available;
         if (active == value) return;
         active = value;
+        stateReport.Reset();
         if (!value)
         {
             desktopGeneration++;
@@ -176,6 +178,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                     hello.RootElement.GetProperty("role").GetString() != "mac" ||
                     hello.RootElement.GetProperty("chunk").GetInt32() < 20) throw new InvalidDataException("Invalid HELLO");
                 ready = true;
+                stateReport.Reset();
                 var selected = hello.RootElement.TryGetProperty("selection", out var selection) && selection.TryGetInt32(out var version) && version == 1;
                 var epoch = selected ? hello.RootElement.GetProperty("availabilityEpoch").GetUInt32() : 0;
                 var enabled = !selected || hello.RootElement.GetProperty("available").GetBoolean();
@@ -289,7 +292,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
             case "disconnected":
                 handoff.DesktopChanged(); blind = 4;
                 clipboardDesktopAvailable = clipboardDefaultDesktop = false; UpdateClipboardSession(true);
-                if (ready) Send(Protocol.Message.State, [4, 2, 0]);
+                SendState([4, 2, 0]);
                 break;
             case "screens":
                 if (message.Monitors is not { Length: > 0 and <= 32 } screens ||
@@ -300,7 +303,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
             case "state":
                 clipboardDefaultDesktop = message.Desktop == 0; UpdateClipboardSession();
                 blind = message.Blind;
-                if (ready) Send(Protocol.Message.State, [blind, message.Desktop, (byte)(message.MousePresent ? 1 : 0)]);
+                SendState([blind, message.Desktop, (byte)(message.MousePresent ? 1 : 0)]);
                 SetDetail(message.Detail ?? "Desktop status received");
                 break;
             case "ack" when handoff.Accept(message.SwitchId):
@@ -324,6 +327,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     private void SendScreens() => SendJson(Protocol.Message.Screens, new { monitors });
     private void SendJson(Protocol.Message type, object value) => Enqueue(type, 1, JsonSerializer.SerializeToUtf8Bytes(value, Json));
     private void Send(Protocol.Message type, byte[] payload) { if (ready) Enqueue(type, 0, payload); }
+    private void SendState(byte[] state) { if (ready && stateReport.ShouldSend(state, RuntimeCompat.TickCount64)) Send(Protocol.Message.State, state); }
     private void Enqueue(Protocol.Message type, byte stream, byte[] payload)
     {
         var characteristic = stream == 0 ? controlWrite : bulkWrite;
@@ -373,6 +377,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         controls.Clear(); bulk.Clear(); controlEncoder = new(); bulkEncoder = new(); controlDecoder = new(); bulkDecoder = new();
         ready = subscribing = NeedsReconnect = helloSent = false;
         availability = new();
+        stateReport.Reset();
         SupportsTakeover = false; RequestSerial = 0; requestedEpoch = disabledEpoch = ReleaseAcknowledged = null;
         handoff.Reset(); UpdateClipboardSession(true); clipboardPeer = false; desktop?.Send(new DesktopMessage("reset"));
     }
