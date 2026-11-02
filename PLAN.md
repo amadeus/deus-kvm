@@ -83,14 +83,14 @@ User-reported intermittent issues, root-caused from source and this Mac's logs:
    swipes ran Mission Control/Spaces behind the PC). **Implemented:** gesture
    event types (rotate, begin/end, gesture, magnify/Dock control, swipe, smart
    magnify, quick look, pressure) are in the tap mask and swallowed while
-   remote. The system Spaces/Mission Control swipe (undocumented Dock-swipe
-   fields) maps to Windows shortcuts: up → Win+Tab, down → Win+D, horizontal →
-   Ctrl+Win+←/→ (direction follows the Mac: fingers left = next desktop). Each
-   swipe logs its raw motion/progress/velocity and chosen shortcut, and each
-   gesture type is noted once per launch, so a reversed sign is a one-line fix.
+   remote; each type is noted once per launch in the diagnostics file.
+   A mapping of the Spaces/Mission Control swipe to Win+Tab, Win+D and
+   Ctrl+Win+←/→ was tried and removed at the user's request: each swipe arrived
+   twice (shortcuts fired twice), and the undocumented Dock-swipe fields did not
+   match the published layout (motion came through as 2/3, not 1/2; the two
+   velocity fields mirrored each other).
    **Pending (hardware):** whether a session tap stops the Dock's swipes on this
-   macOS; each swipe's Windows action and direction; pinch/rotate do nothing on
-   the Mac while on the PC.
+   macOS; pinch/rotate do nothing on the Mac while on the PC.
 
 Lag diagnostics (Mac only; no protocol or Windows change):
 

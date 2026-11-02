@@ -36,7 +36,6 @@ final class InputTap: @unchecked Sendable {
     /// Tap thread only, while the tap runs.
     private var keyboard: RawKeyboardMonitor?
     private var resyncGate = ResyncGate()
-    private var dockSwipe = DockSwipeRecognizer()
     /// Gesture types already noted in the diagnostics log this launch.
     private var notedGestureTypes: Set<UInt32> = []
     private var eventTap: CFMachPort?
@@ -454,20 +453,12 @@ final class InputTap: @unchecked Sendable {
 }
 
 extension InputTap {
-    /// Called with the tap lock held. Gestures pass through on the Mac; while remote they are
-    /// swallowed, and the system Spaces/Mission Control swipe becomes a Windows shortcut.
-    private func _gesture(type: CGEventType, event: CGEvent) -> Bool {
+    /// Called with the tap lock held. Gestures pass through on the Mac and are swallowed while
+    /// controlling Windows.
+    private func _gesture(type: CGEventType, event _: CGEvent) -> Bool {
         guard remote else { return false }
         if notedGestureTypes.insert(type.rawValue).inserted {
             _note("gesture events suppressed while controlling Windows: type \(type.rawValue)")
-        }
-        guard let sample = DockSwipeSample(event: event), let result = dockSwipe.observe(sample) else { return true }
-        _note(result.summary)
-        if let shortcut = result.shortcut {
-            let capsLock = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift)
-            for input in shortcut.events(capsLock: capsLock) {
-                forward(generation, input, ProcessInfo.processInfo.systemUptime)
-            }
         }
         return true
     }
