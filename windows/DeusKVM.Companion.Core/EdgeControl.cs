@@ -53,7 +53,22 @@ public static class EdgeDetector
             return false;
         return true;
     }
+
+    // A return is about to be sent from the cached layout. Repeat the test against the
+    // monitor Windows reports under the cursor right now, read in the same coordinate space
+    // as the cursor itself: a layout cached while the display slept or reconnected, or in
+    // scaled rather than physical pixels, must not end control partway across the screen.
+    public static EdgeVerdict Confirm(MonitorInfo cached, MonitorInfo? live, IReadOnlyList<MonitorInfo> monitors,
+        EdgeConfiguration config, int x, int y, int dx, int dy)
+    {
+        if (live is null) return EdgeVerdict.Unavailable;
+        if (live.Id != cached.Id) return EdgeVerdict.OtherMonitor;
+        var current = monitors.Where(item => item.Id != live.Id).Append(live).ToList();
+        return Observe(live, current, config, x, y, dx, dy, false, false) ? EdgeVerdict.Leave : EdgeVerdict.StaleLayout;
+    }
 }
+
+public enum EdgeVerdict { Leave, StaleLayout, OtherMonitor, Unavailable }
 
 // A desktop restart/EXIT invalidates its previous handoff; later placement or edge messages cannot revive it.
 public sealed class HandoffSession

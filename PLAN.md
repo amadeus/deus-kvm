@@ -38,8 +38,20 @@ User-reported intermittent issues, root-caused from source and this Mac's logs:
 4. **Return to the Mac partway across the PC screen.** Candidates: Windows edge
    test using `Screen.AllScreens` cached during monitor sleep/wake (≈50% if a
    fallback mode, ≈80% if scaled vs physical at 125%), or Mac-side returns
-   (Secure Input, heartbeat expiry). **Planned:** live monitor bounds and a
-   live-bounds check before LEAVE on Windows, with a rejection log. Not implemented.
+   (Secure Input, heartbeat expiry). Nothing accumulates cursor position on either
+   side, so drift is ruled out.
+   - **4a, implemented:** the desktop worker reads the layout live
+     (`EnumDisplayMonitors`/`GetMonitorInfo`) in its existing 1 s refresh instead of
+     the cached `Screen.AllScreens`, and confirms every LEAVE against the monitor
+     Windows reports under the cursor (same coordinate space). A disagreement is
+     not sent: the layout is re-read and the rejection (cached vs live size, cursor
+     fraction, physical cursor, DPI awareness, cursor jump vs raw movement) goes to
+     `edge-return.log` at most once per second. Enter/exit/config/layout/desktop
+     decisions and returns go to a 100-entry in-memory history for problem reports.
+     Tests cover the 50% and 80% cases, the real edge, an adjacent or different
+     monitor, and the history bounds.
+   - **Pending (hardware):** after the PC and its monitor sleep and wake, returns
+     happen only at the real right edge and entry lands at the right place.
 
 Lag diagnostics (Mac only; no protocol or Windows change):
 
