@@ -15,9 +15,20 @@ internal sealed class SettingsForm : Form
     private readonly CheckBox trayStartup = new() { Text = "Show tray icon when users sign in", AutoSize = true };
     private readonly TableLayoutPanel layout = new();
     private readonly Button remove = new() { Text = "Remove DeusKVM from this PC…", AutoSize = true };
+    // Windows' own Touchpad page does not list the Mac trackpad, so its feel is set here.
+    private readonly ITrackpadStore trackpad;
+    private readonly GroupBox trackpadGroup = new() { Text = "Mac trackpad", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+    private readonly Label cursorSpeedLabel = new() { AutoSize = true };
+    private readonly TrackBar cursorSpeed = new() { Minimum = 1, Maximum = TrackpadSettings.CursorSpeedNotches, TickFrequency = 1, LargeChange = 1, Width = 300 };
+    private readonly Label sensitivityLabel = new() { AutoSize = true };
+    private readonly TrackBar sensitivity = new() { Minimum = 0, Maximum = TrackpadSettings.SensitivityLabels.Length - 1, TickFrequency = 1, LargeChange = 1, Width = 300 };
+    private readonly CheckBox reverseScroll = new() { Text = "Reverse scrolling direction", AutoSize = true };
+    private readonly LinkLabel resetTrackpad = new() { Text = "Reset to Windows defaults", AutoSize = true };
+    private bool loadingTrackpad;
 
-    public SettingsForm(Func<string[], Task> control, Action connectMac, Func<Task> removeApp)
+    public SettingsForm(Func<string[], Task> control, Action connectMac, Func<Task> removeApp, ITrackpadStore trackpad)
     {
+        this.trackpad = trackpad;
         SuspendLayout(); layout.SuspendLayout();
         Icon = AppIcon.Image;
         Text = "DeusKVM Companion";
@@ -37,6 +48,7 @@ internal sealed class SettingsForm : Form
         startService.Margin = new Padding(0, 0, 6, 0); stopService.Margin = Padding.Empty;
         buttons.Controls.Add(startService); buttons.Controls.Add(stopService); layout.Controls.Add(buttons);
         layout.Controls.Add(automatic); layout.Controls.Add(trayStartup);
+        layout.Controls.Add(BuildTrackpadGroup());
         var closingHint = new Label { Text = "Closing this window leaves the service running. Open DeusKVM Companion again or use its tray icon to return here.",
             AutoSize = true, MaximumSize = new Size(420, 0) };
         layout.Controls.Add(closingHint); layout.Controls.Add(remove);
@@ -57,6 +69,65 @@ internal sealed class SettingsForm : Form
         automatic.Click += async (_, _) => await control(["--startup", automatic.Checked ? "auto" : "manual"]);
         trayStartup.Click += async (_, _) => await control(["--tray-startup", trayStartup.Checked ? "on" : "off"]);
         remove.Click += async (_, _) => await removeApp();
+        cursorSpeed.Scroll += (_, _) => ApplyTrackpad(() => TrackpadSettings.SetCursorSpeed(trackpad, cursorSpeed.Value));
+        sensitivity.Scroll += (_, _) => ApplyTrackpad(() => TrackpadSettings.SetSensitivity(trackpad, sensitivity.Value));
+        reverseScroll.Click += (_, _) => ApplyTrackpad(() => TrackpadSettings.SetScrollReversed(trackpad, reverseScroll.Checked));
+        resetTrackpad.LinkClicked += (_, _) => ApplyTrackpad(() => TrackpadSettings.Reset(trackpad));
+        LoadTrackpad();
+    }
+
+    private GroupBox BuildTrackpadGroup()
+    {
+        var rows = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill, ColumnCount = 1 };
+        rows.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var hint = new Label
+        {
+            Text = "Applies to the Mac trackpad only; mouse settings stay in Windows Settings. If a change has no effect, sign out and back in.",
+            AutoSize = true, MaximumSize = new Size(400, 0)
+        };
+        foreach (Control item in new Control[] { cursorSpeedLabel, cursorSpeed, sensitivityLabel, sensitivity, reverseScroll, resetTrackpad, hint })
+        {
+            item.Margin = new Padding(0, 0, 0, 4);
+            rows.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            rows.Controls.Add(item);
+        }
+        rows.RowCount = rows.Controls.Count;
+        rows.Padding = new Padding(6, 2, 6, 2);
+        trackpadGroup.Controls.Add(rows);
+        return trackpadGroup;
+    }
+
+    /// <summary>Writes the value Windows' Settings page would write, then shows what the registry now holds.</summary>
+    private void ApplyTrackpad(Action change)
+    {
+        try { change(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        { TrayContext.ShowError(error); }
+        LoadTrackpad();
+    }
+
+    private void LoadTrackpad()
+    {
+        if (loadingTrackpad) return;
+        loadingTrackpad = true;
+        try
+        {
+            var state = TrackpadSettings.Read(trackpad);
+            cursorSpeed.Value = state.CursorSpeedNotch;
+            sensitivity.Value = state.SensitivityIndex;
+            reverseScroll.Checked = state.ScrollReversed;
+            cursorSpeedLabel.Text = $"Cursor speed: {state.CursorSpeedNotch}";
+            sensitivityLabel.Text = $"Touchpad sensitivity: {TrackpadSettings.SensitivityLabels[state.SensitivityIndex]}";
+            resetTrackpad.Enabled = !state.IsDefault;
+            trackpadGroup.Enabled = true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            cursorSpeedLabel.Text = "Cursor speed: unavailable";
+            sensitivityLabel.Text = $"Touchpad sensitivity: {error.Message}";
+            trackpadGroup.Enabled = false;
+        }
+        finally { loadingTrackpad = false; }
     }
     public void RefreshControls(ServiceControllerStatus? service, bool autoStart, bool trayAtLogin, bool busy)
     {

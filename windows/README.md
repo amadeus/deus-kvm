@@ -39,6 +39,13 @@ acknowledged takeover protocol still require an update.
    ownership. A stalled handoff waits for release acknowledgement or an actual
    Bluetooth disconnect; a heartbeat timeout alone cannot grant overlapping control.
 
+6. **Mac trackpad** in the companion's Settings window sets Windows' cursor speed,
+   touchpad sensitivity and scrolling direction for a Mac trackpad presented as a
+   precision touchpad (the Windows Settings app does not list that touchpad on a
+   desktop PC). The values are the per-user precision touchpad settings Windows
+   itself uses; mouse settings stay in Windows Settings. Whether Windows applies a
+   change at once or after a sign-out has not been verified yet.
+
 If both Macs are connected before the service starts, it prefers the last active
 enabled Mac, then stable endpoint-ID order. Disabled Macs stay disabled. Windows
 does not provide the historical connection order through this initial enumeration. New connections afterward
