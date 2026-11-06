@@ -51,6 +51,13 @@ enum ReportID: UInt8 {
     case battery = 4
     case systemControl = 5
     case consumerControl = 6
+    /// Precision touchpad experiment (PRECISION_TOUCHPAD_PLAN.md): contact frames and the
+    /// feature reports Windows reads and writes around them.
+    case touchpad = 7
+    case touchpadCapabilities = 8
+    case touchpadCertification = 9
+    case touchpadInputMode = 10
+    case touchpadSelectiveReporting = 11
 }
 
 enum ReportType: UInt8 {
@@ -202,4 +209,141 @@ extension HIDProfile {
         0xC0, //   End Collection
         0xC0 // End Collection
     ])
+}
+
+/// Windows Precision Touchpad collection and its Configuration collection, appended to the
+/// report map when the experiment is on. Layout follows Microsoft's sample descriptor: five
+/// finger collections (confidence, tip switch, identifier, X, Y), then scan time, contact
+/// count and the button; Device Capabilities and Certification Status as features; Input
+/// Mode and Selective Reporting in the Configuration collection.
+extension HIDProfile {
+    static func reportMap(touchpad: Bool) -> Data {
+        touchpad ? reportMapData + touchpadReportMapData : reportMapData
+    }
+
+    /// Physical size in 0.01 inch: the Bluetooth Magic Trackpad surface, 156.0 × 110.4 mm.
+    static let touchpadPhysicalWidth = 614
+    static let touchpadPhysicalHeight = 435
+
+    static let touchpadReportMapData: Data = {
+        var map: [UInt8] = [
+            0x05, 0x0D, // Usage Page (Digitizer)
+            0x09, 0x05, // Usage (Touch Pad)
+            0xA1, 0x01, // Collection (Application)
+            0x85, ReportID.touchpad.rawValue // Report ID (7)
+        ]
+        for _ in 0 ..< TouchpadReport.maximumContacts {
+            map += touchpadFinger
+        }
+        map += [
+            0x05, 0x0D, //   Usage Page (Digitizer)
+            0x55, 0x0C, //   Unit Exponent (-4)
+            0x66, 0x01, 0x10, // Unit (Seconds)
+            0x47, 0xFF, 0xFF, 0x00, 0x00, // Physical Max (65535)
+            0x27, 0xFF, 0xFF, 0x00, 0x00, // Logical Max (65535)
+            0x75, 0x10, //   Report Size (16)
+            0x95, 0x01, //   Report Count (1)
+            0x09, 0x56, //   Usage (Scan Time)
+            0x81, 0x02, //   Input (Data,Var,Abs)
+            0x55, 0x00, //   Unit Exponent (0)
+            0x65, 0x00, //   Unit (None)
+            0x45, 0x00, //   Physical Max (0: same as logical)
+            0x09, 0x54, //   Usage (Contact Count)
+            0x25, 0x7F, //   Logical Max (127)
+            0x75, 0x08, //   Report Size (8)
+            0x81, 0x02, //   Input (Data,Var,Abs)
+            0x05, 0x09, //   Usage Page (Button)
+            0x09, 0x01, //   Usage (Button 1)
+            0x25, 0x01, //   Logical Max (1)
+            0x75, 0x01, //   Report Size (1)
+            0x81, 0x02, //   Input (Data,Var,Abs)
+            0x95, 0x07, //   Report Count (7)
+            0x81, 0x03, //   Input (Const,Var,Abs) padding
+
+            0x05, 0x0D, //   Usage Page (Digitizer)
+            0x85, ReportID.touchpadCapabilities.rawValue, // Report ID (8)
+            0x09, 0x55, //   Usage (Contact Count Maximum)
+            0x09, 0x59, //   Usage (Pad Type)
+            0x75, 0x04, //   Report Size (4)
+            0x95, 0x02, //   Report Count (2)
+            0x25, 0x0F, //   Logical Max (15)
+            0xB1, 0x02, //   Feature (Data,Var,Abs)
+
+            0x06, 0x00, 0xFF, // Usage Page (Vendor 0xFF00)
+            0x85, ReportID.touchpadCertification.rawValue, // Report ID (9)
+            0x09, 0xC5, //   Usage (Certification Status)
+            0x15, 0x00, //   Logical Min (0)
+            0x26, 0xFF, 0x00, // Logical Max (255)
+            0x75, 0x08, //   Report Size (8)
+            0x96, 0x00, 0x01, // Report Count (256)
+            0xB1, 0x02, //   Feature (Data,Var,Abs)
+            0xC0, // End Collection
+
+            0x05, 0x0D, // Usage Page (Digitizer)
+            0x09, 0x0E, // Usage (Device Configuration)
+            0xA1, 0x01, // Collection (Application)
+            0x85, ReportID.touchpadInputMode.rawValue, // Report ID (10)
+            0x09, 0x22, //   Usage (Finger)
+            0xA1, 0x02, //   Collection (Logical)
+            0x09, 0x52, //     Usage (Input Mode)
+            0x15, 0x00, //     Logical Min (0)
+            0x25, 0x0A, //     Logical Max (10)
+            0x75, 0x08, //     Report Size (8)
+            0x95, 0x01, //     Report Count (1)
+            0xB1, 0x02, //     Feature (Data,Var,Abs)
+            0xC0, //   End Collection
+            0x09, 0x22, //   Usage (Finger)
+            0xA1, 0x00, //   Collection (Physical)
+            0x85, ReportID.touchpadSelectiveReporting.rawValue, // Report ID (11)
+            0x09, 0x57, //     Usage (Surface Switch)
+            0x09, 0x58, //     Usage (Button Switch)
+            0x75, 0x01, //     Report Size (1)
+            0x95, 0x02, //     Report Count (2)
+            0x25, 0x01, //     Logical Max (1)
+            0xB1, 0x02, //     Feature (Data,Var,Abs)
+            0x95, 0x06, //     Report Count (6)
+            0xB1, 0x03, //     Feature (Const,Var,Abs) padding
+            0xC0, //   End Collection
+            0xC0 // End Collection
+        ]
+        return Data(map)
+    }()
+
+    /// One finger: 6 bytes. The usage page, units and physical range are reset first so the
+    /// bit fields do not inherit the previous finger's Generic Desktop page and inch scale.
+    private static let touchpadFinger: [UInt8] = [
+        0x05, 0x0D, //   Usage Page (Digitizer)
+        0x09, 0x22, //   Usage (Finger)
+        0xA1, 0x02, //   Collection (Logical)
+        0x55, 0x00, //     Unit Exponent (0)
+        0x65, 0x00, //     Unit (None)
+        0x45, 0x00, //     Physical Max (0)
+        0x15, 0x00, //     Logical Min (0)
+        0x25, 0x01, //     Logical Max (1)
+        0x09, 0x47, //     Usage (Confidence)
+        0x09, 0x42, //     Usage (Tip Switch)
+        0x75, 0x01, //     Report Size (1)
+        0x95, 0x02, //     Report Count (2)
+        0x81, 0x02, //     Input (Data,Var,Abs)
+        0x95, 0x06, //     Report Count (6)
+        0x81, 0x03, //     Input (Const,Var,Abs) padding
+        0x09, 0x51, //     Usage (Contact Identifier)
+        0x25, 0x7F, //     Logical Max (127)
+        0x75, 0x08, //     Report Size (8)
+        0x95, 0x01, //     Report Count (1)
+        0x81, 0x02, //     Input (Data,Var,Abs)
+        0x05, 0x01, //     Usage Page (Generic Desktop)
+        0x26, 0xFF, 0x0F, // Logical Max (4095)
+        0x75, 0x10, //     Report Size (16)
+        0x55, 0x0E, //     Unit Exponent (-2)
+        0x65, 0x13, //     Unit (Inch, English Linear)
+        0x09, 0x30, //     Usage (X)
+        0x35, 0x00, //     Physical Min (0)
+        0x46, UInt8(touchpadPhysicalWidth & 0xFF), UInt8(touchpadPhysicalWidth >> 8), // Physical Max (614)
+        0x81, 0x02, //     Input (Data,Var,Abs)
+        0x46, UInt8(touchpadPhysicalHeight & 0xFF), UInt8(touchpadPhysicalHeight >> 8), // Physical Max (435)
+        0x09, 0x31, //     Usage (Y)
+        0x81, 0x02, //     Input (Data,Var,Abs)
+        0xC0 //   End Collection
+    ]
 }

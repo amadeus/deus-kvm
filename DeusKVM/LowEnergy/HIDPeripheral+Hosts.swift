@@ -45,7 +45,8 @@ extension HIDPeripheral {
         ReportID.mouse.rawValue: MouseReport.zero.data,
         ReportID.keyboard.rawValue: KeyboardReport.zero.data,
         ReportID.systemControl.rawValue: SystemControlReport.zero.data,
-        ReportID.consumerControl.rawValue: ConsumerReport.zero.data
+        ReportID.consumerControl.rawValue: ConsumerReport.zero.data,
+        ReportID.touchpad.rawValue: TouchpadReport.zero.data
     ]
 
     func setAllowed(_ id: UUID, _ allowed: Bool) {

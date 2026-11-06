@@ -43,6 +43,9 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
     private var bootMouse: CBMutableCharacteristic?
     private var bootKeyboard: CBMutableCharacteristic?
     private var battery: CBMutableCharacteristic?
+    private var reportMap = HIDProfile.reportMapData
+    /// Touchpad feature reports: answered from here and overwritten by what the host writes.
+    private var featureReports = TouchpadReport.featureDefaults
     private var target: CBCentral?
     private var targetID: UUID?
     private var enabled = true
@@ -94,6 +97,7 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
             manager = nil
             epoch += 1
             reports.removeAll(); bootMouse = nil; bootKeyboard = nil; battery = nil
+            featureReports = TouchpadReport.featureDefaults
             pending.removeAll(); ready = true; releaseRecipients.removeAll(); releaseCallbacks.removeAll()
             companionChars.removeAll(); controls.removeAll(); bulk.removeAll(); companionBlocked = false; overflowed.removeAll()
             stats.setPending(0); stats.companion(queued: 0, blocked: false)
@@ -135,11 +139,12 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
 
     func configureHID(
         reports: [UInt8: CBMutableCharacteristic], bootMouse: CBMutableCharacteristic?,
-        bootKeyboard: CBMutableCharacteristic?, battery: CBMutableCharacteristic?
+        bootKeyboard: CBMutableCharacteristic?, battery: CBMutableCharacteristic?, reportMap: Data
     ) {
         let characteristics = Unchecked(value: (reports, bootMouse, bootKeyboard, battery))
         queue.async { [self] in
             (self.reports, self.bootMouse, self.bootKeyboard, self.battery) = characteristics.value
+            self.reportMap = reportMap
         }
     }
 
@@ -324,69 +329,6 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
         callbacks.forEach { $0() }
     }
 
-    // MARK: Companion frames (main thread enqueues; the queue sends)
-
-    func configureCompanion(_ characteristics: [CBMutableCharacteristic]) {
-        let characteristics = Unchecked(value: characteristics)
-        queue.async { [self] in companionChars = characteristics.value }
-    }
-
-    /// One packet's frames, in order; control frames go ahead of bulk. More than 512 queued
-    /// frames drops the client, as before.
-    func enqueueCompanion(_ frames: [Data], control: Bool, to central: CBCentral) {
-        let central = Unchecked(value: central)
-        queue.async { [self] in
-            let id = central.value.identifier
-            guard !overflowed.contains(id) else { return }
-            guard controls.count + bulk.count + frames.count <= 512 else {
-                // A partial stream would corrupt the client's decoder; stop here like a disconnect.
-                overflowed.insert(id)
-                removeFrames(for: id)
-                toMain { $0.companion.overflowed(id) }
-                return
-            }
-            let items = frames.map { Frame(data: $0, index: control ? 0 : 2, central: central.value) }
-            if control { controls.append(contentsOf: items) } else { bulk.append(contentsOf: items) }
-            drainCompanion()
-        }
-    }
-
-    /// The main thread disconnected this client; a later client with the same id starts clean.
-    func dropCompanion(for id: UUID) {
-        queue.async { [self] in
-            overflowed.remove(id)
-            removeFrames(for: id)
-        }
-    }
-
-    func resetCompanion() {
-        queue.async { [self] in
-            companionChars.removeAll(); controls.removeAll(); bulk.removeAll(); companionBlocked = false; overflowed.removeAll()
-            stats.companion(queued: 0, blocked: false)
-        }
-    }
-
-    private func removeFrames(for id: UUID) {
-        controls.removeAll { $0.central.identifier == id }
-        bulk.removeAll { $0.central.identifier == id }
-        stats.companion(queued: controls.count + bulk.count, blocked: companionBlocked)
-    }
-
-    private func drainCompanion() {
-        defer { stats.companion(queued: controls.count + bulk.count, blocked: companionBlocked) }
-        guard let manager, !companionBlocked else { return }
-        while let item = controls.first ?? bulk.first {
-            guard item.index < companionChars.count else { controls.removeAll(); bulk.removeAll(); return }
-            guard manager.updateValue(item.data, for: companionChars[item.index], onSubscribedCentrals: [item.central]) else {
-                companionBlocked = true
-                stats.transmitBlocked(at: ProcessInfo.processInfo.systemUptime)
-                return
-            }
-            stats.companionSent(bytes: item.data.count)
-            if !controls.isEmpty { controls.removeFirst() } else { bulk.removeFirst() }
-        }
-    }
-
     // MARK: CBPeripheralManagerDelegate (queue)
 
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
@@ -461,6 +403,12 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
             }
             return
         }
+        for request in requests {
+            // Feature reports keep what the host wrote (Input Mode, Selective Reporting) for later reads.
+            guard let id = reportID(request.characteristic), featureReports[id] != nil,
+                  request.offset == 0, let value = request.value else { continue }
+            featureReports[id] = value
+        }
         peripheral.respond(to: first, withResult: .success)
         let writes = Unchecked(value: requests.map { HIDWrite(central: $0.central, characteristic: $0.characteristic, value: $0.value) })
         toMain { $0.transportDidWrite(writes.value) }
@@ -480,12 +428,15 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
         switch request.characteristic.uuid {
         case HIDProfile.batteryLevel: return Data([Self.batteryLevel])
         case HIDProfile.hidInformation: return HIDProfile.hidInformationValue
-        case HIDProfile.reportMap: return HIDProfile.reportMapData
+        case HIDProfile.reportMap: return reportMap
         case HIDProfile.protocolMode: return Data([0x01]) // report protocol
         case HIDProfile.manufacturerName: return HIDProfile.manufacturerNameValue
         case HIDProfile.modelNumber: return HIDProfile.modelNumberValue
         case HIDProfile.pnpID: return HIDProfile.pnpIDValue
-        case HIDProfile.report: return reportID(request.characteristic).map { replay[$0] ?? Data() } ?? Data()
+        case HIDProfile.report:
+            guard let id = reportID(request.characteristic) else { return Data() }
+            // Feature reports are device state, the same for every host.
+            return featureReports[id] ?? replay[id] ?? Data()
         case HIDProfile.bootMouseInputReport: return isTarget ? cachedBootMouse : MouseReport.zero.bootData
         case HIDProfile.bootKeyboardInputReport: return replay[ReportID.keyboard.rawValue]
         default: return Data()
@@ -520,6 +471,116 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
     }
 }
 
+/// Touchpad playback and companion frames: same queue, same private state, kept out of the
+/// class body for length.
+extension BluetoothTransport {
+    // MARK: Precision touchpad experiment (main thread enqueues; the queue sends)
+
+    private struct TouchpadPlayback: Sendable {
+        let frames: [TouchpadFrame]
+        let interval: TimeInterval
+        let epoch: Int
+        let completion: @Sendable (Int, Int) -> Void
+        var index = 0
+        var accepted = 0
+        var deferred = 0
+
+        func advanced(sent: Bool) -> TouchpadPlayback {
+            var next = self
+            next.index += 1
+            if sent { next.accepted += 1 } else { next.deferred += 1 }
+            return next
+        }
+    }
+
+    /// Sends scripted contact frames `interval` apart, each stamped with the scan time of its
+    /// send. The completion gets the frames CoreBluetooth took at once and the frames that
+    /// waited in the backpressure queue.
+    func playTouchpad(_ frames: [TouchpadFrame], interval: TimeInterval, completion: @escaping @Sendable (Int, Int) -> Void) {
+        queue.async { [self] in
+            playTouchpadFrame(TouchpadPlayback(frames: frames, interval: interval, epoch: epoch, completion: completion))
+        }
+    }
+
+    private func playTouchpadFrame(_ playback: TouchpadPlayback) {
+        guard epoch == playback.epoch, playback.index < playback.frames.count,
+              let characteristic = reports[ReportID.touchpad.rawValue]
+        else { playback.completion(playback.accepted, playback.deferred); return }
+        let frame = playback.frames[playback.index]
+        let report = TouchpadReport(
+            contacts: frame.contacts, scanTime: TouchpadReport.scanTime(uptime: ProcessInfo.processInfo.systemUptime),
+            button: frame.button
+        )
+        // Contacts are momentary: a read or resubscription sees no fingers, never a stale frame.
+        cached[ReportID.touchpad.rawValue] = TouchpadReport.zero.data
+        let next = playback.advanced(sent: send(report.data, to: characteristic))
+        queue.asyncAfter(deadline: .now() + playback.interval) { [self] in playTouchpadFrame(next) }
+    }
+
+    // MARK: Companion frames (main thread enqueues; the queue sends)
+
+    func configureCompanion(_ characteristics: [CBMutableCharacteristic]) {
+        let characteristics = Unchecked(value: characteristics)
+        queue.async { [self] in companionChars = characteristics.value }
+    }
+
+    /// One packet's frames, in order; control frames go ahead of bulk. More than 512 queued
+    /// frames drops the client, as before.
+    func enqueueCompanion(_ frames: [Data], control: Bool, to central: CBCentral) {
+        let central = Unchecked(value: central)
+        queue.async { [self] in
+            let id = central.value.identifier
+            guard !overflowed.contains(id) else { return }
+            guard controls.count + bulk.count + frames.count <= 512 else {
+                // A partial stream would corrupt the client's decoder; stop here like a disconnect.
+                overflowed.insert(id)
+                removeFrames(for: id)
+                toMain { $0.companion.overflowed(id) }
+                return
+            }
+            let items = frames.map { Frame(data: $0, index: control ? 0 : 2, central: central.value) }
+            if control { controls.append(contentsOf: items) } else { bulk.append(contentsOf: items) }
+            drainCompanion()
+        }
+    }
+
+    /// The main thread disconnected this client; a later client with the same id starts clean.
+    func dropCompanion(for id: UUID) {
+        queue.async { [self] in
+            overflowed.remove(id)
+            removeFrames(for: id)
+        }
+    }
+
+    func resetCompanion() {
+        queue.async { [self] in
+            companionChars.removeAll(); controls.removeAll(); bulk.removeAll(); companionBlocked = false; overflowed.removeAll()
+            stats.companion(queued: 0, blocked: false)
+        }
+    }
+
+    private func removeFrames(for id: UUID) {
+        controls.removeAll { $0.central.identifier == id }
+        bulk.removeAll { $0.central.identifier == id }
+        stats.companion(queued: controls.count + bulk.count, blocked: companionBlocked)
+    }
+
+    private func drainCompanion() {
+        defer { stats.companion(queued: controls.count + bulk.count, blocked: companionBlocked) }
+        guard let manager, !companionBlocked else { return }
+        while let item = controls.first ?? bulk.first {
+            guard item.index < companionChars.count else { controls.removeAll(); bulk.removeAll(); return }
+            guard manager.updateValue(item.data, for: companionChars[item.index], onSubscribedCentrals: [item.central]) else {
+                companionBlocked = true
+                stats.transmitBlocked(at: ProcessInfo.processInfo.systemUptime)
+                return
+            }
+            stats.companionSent(bytes: item.data.count)
+            if !controls.isEmpty { controls.removeFirst() } else { bulk.removeFirst() }
+        }
+    }
+}
+
 extension BluetoothTransport {
     /// One line of queue state for a problem report; the completion runs on the Bluetooth queue.
     func snapshot(_ completion: @escaping @Sendable (String) -> Void) {
@@ -530,7 +591,8 @@ extension BluetoothTransport {
                 "manager=\(state)", "enabled=\(enabled)", "target=\(target != nil)", "ready=\(ready)",
                 "stallAgeMs=\(stall)", "hidPending=\(pending.count)", "releasing=\(!releaseRecipients.isEmpty)",
                 "companionBlocked=\(companionBlocked)", "controls=\(controls.count)", "bulk=\(bulk.count)",
-                "overflowed=\(overflowed.count)", "capturing=\(controller.isCapturing)", "gateActive=\(gate.active != nil)"
+                "overflowed=\(overflowed.count)", "capturing=\(controller.isCapturing)", "gateActive=\(gate.active != nil)",
+                "touchpadMode=\(featureReports[ReportID.touchpadInputMode.rawValue]?.first.map { String($0) } ?? "none")"
             ]
             completion("transport: " + fields.joined(separator: " "))
         }

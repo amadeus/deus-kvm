@@ -20,6 +20,12 @@ final class HIDPeripheral: NSObject, ObservableObject {
     var advertisingStarting = false
     @Published private(set) var connectedCentrals: Set<UUID> = []
     @Published private(set) var keyboardLEDs: KeyboardLEDs = []
+    /// Precision touchpad experiment: whether this launch advertises the collection, whether the
+    /// host subscribed to contact reports, and the Input Mode it last wrote (3 selects PTP).
+    @Published private(set) var isTouchpadAdvertised = false
+    @Published private(set) var touchpadSubscribed = false
+    /// Set from the touchpad extension when Windows writes the feature report.
+    @Published var touchpadInputMode: UInt8?
     @Published private(set) var lastError: String?
 
     let companion = CompanionService()
@@ -102,6 +108,8 @@ final class HIDPeripheral: NSObject, ObservableObject {
         bootKeyboardInputChar = nil
         bootKeyboardOutputChar = nil
         charsByReportID.removeAll()
+        touchpadSubscribed = false
+        touchpadInputMode = nil
         subscribedCentrals.removeAll()
         inputSubscriptions.removeAll()
         reconcileHosts()
@@ -274,10 +282,11 @@ final class HIDPeripheral: NSObject, ObservableObject {
         )
 
         // links the HID report map to battery level
+        let touchpad = UserDefaults.standard.bool(forKey: AppSettings.precisionTouchpadKey)
         let reportMap = CBMutableCharacteristic(
             type: HIDProfile.reportMap,
             properties: .read,
-            value: HIDProfile.reportMapData,
+            value: HIDProfile.reportMap(touchpad: touchpad),
             permissions: .readEncryptionRequired
         )
         reportMap.descriptors = [
@@ -305,7 +314,7 @@ final class HIDPeripheral: NSObject, ObservableObject {
             )
         ]
 
-        service.characteristics = [
+        var characteristics = [
             controlPoint,
             protocolMode,
             hidInfo,
@@ -319,6 +328,9 @@ final class HIDPeripheral: NSObject, ObservableObject {
             keyboardReportChar,
             outputReportChar
         ]
+        if touchpad { characteristics += makeTouchpadCharacteristics() }
+        isTouchpadAdvertised = touchpad
+        service.characteristics = characteristics
 
         bootMouseInputChar = bootMouseInput
         bootKeyboardInputChar = bootKbdInput
@@ -341,6 +353,33 @@ final class HIDPeripheral: NSObject, ObservableObject {
         )
         char.descriptors = [
             CBMutableDescriptor(type: HIDProfile.reportReference, value: NSData(data: id.descriptor(type)))
+        ]
+        return char
+    }
+
+    /// The contact input report and the feature reports Windows reads and writes around it.
+    private func makeTouchpadCharacteristics() -> [CBMutableCharacteristic] {
+        let input = makeReportChar(.touchpad, type: .input)
+        charsByReportID[ReportID.touchpad.rawValue] = input
+        let features = [ReportID.touchpadCapabilities, .touchpadCertification, .touchpadInputMode, .touchpadSelectiveReporting]
+            .map { id -> CBMutableCharacteristic in
+                let feature = makeFeatureChar(id)
+                charsByReportID[id.rawValue] = feature
+                return feature
+            }
+        return [input] + features
+    }
+
+    /// Feature reports are read and written by the host; HOGP needs both on one characteristic.
+    private func makeFeatureChar(_ id: ReportID) -> CBMutableCharacteristic {
+        let char = CBMutableCharacteristic(
+            type: HIDProfile.report,
+            properties: [.read, .write],
+            value: nil,
+            permissions: [.readEncryptionRequired, .writeEncryptionRequired]
+        )
+        char.descriptors = [
+            CBMutableDescriptor(type: HIDProfile.reportReference, value: NSData(data: id.descriptor(.feature)))
         ]
         return char
     }
@@ -393,7 +432,8 @@ extension HIDPeripheral {
             hidServiceObj = hid
             transport.configureHID(
                 reports: charsByReportID, bootMouse: bootMouseInputChar,
-                bootKeyboard: bootKeyboardInputChar, battery: batteryLevelChar
+                bootKeyboard: bootKeyboardInputChar, battery: batteryLevelChar,
+                reportMap: HIDProfile.reportMap(touchpad: isTouchpadAdvertised)
             )
             transport.add(hid)
         case HIDProfile.hidService:
@@ -428,6 +468,10 @@ extension HIDPeripheral {
         if let input = inputKind(characteristic) {
             inputSubscriptions[central.identifier, default: []].insert(input)
         }
+        if reportID(forCharacteristic: characteristic) == ReportID.touchpad.rawValue {
+            touchpadSubscribed = true
+            note("touchpad: \(central.identifier) subscribed to contact reports")
+        }
         reconcileHosts()
         guard central.identifier == hostPolicy.target else { return }
         transport.replay(characteristic)
@@ -438,6 +482,10 @@ extension HIDPeripheral {
         trace("unsubscribe: \(central.identifier) <- \(characteristic.uuid)")
         if let input = inputKind(characteristic) {
             inputSubscriptions[central.identifier]?.remove(input)
+        }
+        if reportID(forCharacteristic: characteristic) == ReportID.touchpad.rawValue {
+            touchpadSubscribed = false
+            note("touchpad: \(central.identifier) unsubscribed from contact reports")
         }
         reconcileHosts()
         guard var chars = subscribedCentrals[central.identifier] else { return }
@@ -465,6 +513,9 @@ extension HIDPeripheral {
     /// The transport already answered from its replay state; this is bookkeeping.
     func transportDidRead(_ central: CBCentral, characteristic: CBCharacteristic) {
         trace("read: \(central.identifier) -> \(characteristic.uuid)")
+        if let name = reportID(forCharacteristic: characteristic).flatMap(TouchpadReport.featureName) {
+            note("touchpad: \(central.identifier) read \(name)")
+        }
         _trackInteraction(from: central)
         scheduleServiceChanged()
     }
@@ -475,6 +526,7 @@ extension HIDPeripheral {
             let characteristic = write.characteristic
             trace("write: \(write.central.identifier) -> \(characteristic.uuid)")
             _trackInteraction(from: write.central)
+            noteTouchpadWrite(write)
             guard write.central.identifier == hostPolicy.target, let byte = write.value?.first else { continue }
             // Windows repeats LED output reports; unchanged values must not re-render the app scene.
             let isLEDReport = characteristic.uuid == HIDProfile.bootKeyboardOutputReport ||
