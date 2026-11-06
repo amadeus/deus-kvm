@@ -10,6 +10,8 @@ struct DirectInputEvent: Sendable {
         case mouseMove(Int8, Int8)
         case mouseButton(MouseButtons, Bool)
         case scroll(wheel: Int8, pan: Int8)
+        /// The trackpad's physical click while Windows drives the pad from its contacts.
+        case touchpadButton(Bool)
     }
 
     let kind: Kind

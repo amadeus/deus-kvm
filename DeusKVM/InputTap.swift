@@ -7,6 +7,9 @@ struct TapConfiguration: Equatable, Sendable {
     var edgeEnabled = false
     var geometry: EdgeGeometry?
     var shortcut = ToggleShortcut()
+    /// Windows drives the pointer from the trackpad's contacts: trackpad-derived pointer
+    /// events stay out of the mouse collection and a physical click is the pad's button.
+    var precisionTouchpad = false
 }
 
 enum TapOutput: Sendable {
@@ -36,6 +39,8 @@ final class InputTap: @unchecked Sendable {
     /// Tap thread only, while the tap runs.
     private var keyboard: RawKeyboardMonitor?
     private var resyncGate = ResyncGate()
+    /// Routes pointer events between the mouse collection and the pad while remote.
+    private var router = TouchpadRouter()
     /// Gesture types already noted in the diagnostics log this launch.
     private var notedGestureTypes: Set<UInt32> = []
     private var eventTap: CFMachPort?
@@ -47,15 +52,19 @@ final class InputTap: @unchecked Sendable {
     private let output: @MainActor @Sendable (TapOutput) -> Void
     /// Remote input skips the main thread; the receiver orders it by generation.
     private let forward: @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
+    /// Whether a finger is on the trackpad, asked only while precision mode is on.
+    private let presence: @Sendable () -> TouchpadPresence
     private let stats: TapStats
 
     init(
         output: @escaping @MainActor @Sendable (TapOutput) -> Void,
         forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void,
+        presence: @escaping @Sendable () -> TouchpadPresence = { .none },
         stats: TapStats = TapStats()
     ) {
         self.output = output
         self.forward = forward
+        self.presence = presence
         self.stats = stats
     }
 
@@ -295,6 +304,7 @@ final class InputTap: @unchecked Sendable {
         generation += 1
         edgeArmed = false
         dropNextMotion = true
+        router.reset()
         // placement and panel ownership stay on the main actor; input is already suppressed here
         _emit(.begin(generation, fromEdge ? geometry.inset(location) : location, fromEdge: fromEdge))
     }
@@ -373,11 +383,24 @@ final class InputTap: @unchecked Sendable {
                 return true
             }
         }
-        if wasRemote, let input = DirectInputEvent(type: type, event: event) {
-            stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
-            forward(generation, input, ProcessInfo.processInfo.systemUptime)
-        }
+        if wasRemote { _forwardRemote(type: type, event: event) }
         return wasRemote
+    }
+
+    /// Called with the lock held. Pointer events are routed between the mouse collection and
+    /// the pad (`TouchpadRouter`); everything else is forwarded as it is.
+    private func _forwardRemote(type: CGEventType, event: CGEvent) {
+        guard let input = DirectInputEvent(type: type, event: event) else { return }
+        stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
+        let continuous = type == .scrollWheel && event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
+        let routed: DirectInputEvent? = switch router.route(
+            TouchpadRouter.Event(input.kind, continuous: continuous), enabled: configuration.precisionTouchpad, presence: presence
+        ) {
+        case .forward: input
+        case .drop: nil
+        case let .padButton(down): DirectInputEvent(kind: .touchpadButton(down), modifiers: input.modifiers)
+        }
+        if let routed { forward(generation, routed, ProcessInfo.processInfo.systemUptime) }
     }
 
     private func _suppressRawAlias(code: UInt16, down: Bool, flags: CGEventFlags) -> Bool {

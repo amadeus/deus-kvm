@@ -118,8 +118,8 @@ struct SetupView: View {
         }
     }
 
-    /// Phase 1 of the precision touchpad experiment: advertise the collection, show what Windows
-    /// wrote back, and send scripted gestures to the PC.
+    /// The precision touchpad experiment: advertise the collection, show what Windows wrote
+    /// back and whether a session is streaming the trackpad, and send scripted gestures.
     private var touchpadSection: some View {
         Section {
             Toggle("Advertise a precision touchpad to Windows", isOn: $precisionTouchpad)
@@ -133,6 +133,8 @@ struct SetupView: View {
             if lowEnergy.isTouchpadAdvertised {
                 row("Windows input mode", Text(verbatim: touchpadModeLabel))
                 row("Contact reports", Text(verbatim: lowEnergy.touchpadSubscribed ? "Subscribed" : "Not subscribed"))
+                row("Precision mode", Text(verbatim: lowEnergy.isPrecisionTouchpad ? "On (Windows drives the trackpad)" : "Off"))
+                row("Contacts", Text(verbatim: lowEnergy.touchpadStreaming ? "Streaming" : "Idle"))
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), alignment: .leading)], alignment: .leading) {
                     ForEach(TouchpadScript.allCases) { script in
                         Button(script.title) { lowEnergy.playTouchpadScript(script) }

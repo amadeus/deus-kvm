@@ -8,4 +8,6 @@ struct HIDInput {
     let isActive: Bool
     let isConnected: Bool
     let activeError: String?
+    /// The pad's button in the touchpad collection; nil when no precision touchpad is live.
+    var sendTouchpadButton: ((Bool) -> Void)?
 }

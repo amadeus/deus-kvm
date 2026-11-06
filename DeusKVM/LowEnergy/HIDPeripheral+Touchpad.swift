@@ -2,14 +2,32 @@ import CoreBluetooth
 import Foundation
 import os
 
-/// Precision touchpad experiment (PRECISION_TOUCHPAD_PLAN.md, Phase 1): everything Windows
-/// does with the touchpad collection is written to the diagnostics log, and the developer
-/// view can send scripted contact frames to the PC.
+/// Precision touchpad experiment (PRECISION_TOUCHPAD_PLAN.md): everything Windows does with
+/// the touchpad collection is written to the diagnostics log, the developer view can send
+/// scripted contact frames to the PC, and precision mode (Phase 2) is decided here and
+/// mirrored to the transport and the input tap.
 extension HIDPeripheral {
     /// A durable line: unified log and the diagnostics file, whatever the developer setting.
     func note(_ message: String) {
         touchpadLog.notice("\(message, privacy: .public)")
         DiagnosticsLog.shared.write(message)
+    }
+
+    /// Precision mode is advertised ∧ subscribed ∧ last Input Mode write = 3. Each flip is
+    /// logged and pushed to the Bluetooth queue in order with the route.
+    func refreshPrecisionTouchpad() {
+        let next = isTouchpadAdvertised && touchpadSubscribed && touchpadInputMode == TouchpadReport.inputModePrecisionTouchpad
+        guard next != isPrecisionTouchpad else { return }
+        isPrecisionTouchpad = next
+        transport.setPrecisionTouchpad(next)
+        let mode = touchpadInputMode.map(String.init) ?? "none"
+        note("touchpad: precision mode \(next ? "on" : "off") (subscribed=\(touchpadSubscribed) mode=\(mode))")
+    }
+
+    /// The transport started or stopped a session's contact stream.
+    func touchpadStreamChanged(_ streaming: Bool, _ message: String) {
+        if touchpadStreaming != streaming { touchpadStreaming = streaming }
+        note(message)
     }
 
     /// Windows writes Input Mode (3 selects precision touchpad reports) and Selective Reporting

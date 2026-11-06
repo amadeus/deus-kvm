@@ -16,6 +16,7 @@ final class DirectInputController {
     private var pressedConsumerKeys: [ConsumerKey] = []
     private var sendConsumer: ((ConsumerReport) -> Void)?
     private var sendMouse: ((MouseReport) -> Void)?
+    private var sendTouchpadButton: ((Bool) -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -27,6 +28,7 @@ final class DirectInputController {
         sendKeyboard = hid.sendKeyboard
         sendMouse = hid.sendMouse
         sendConsumer = hid.sendConsumer
+        sendTouchpadButton = hid.sendTouchpadButton
         capsLock = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift)
         isCapturing = true
     }
@@ -42,6 +44,8 @@ final class DirectInputController {
         sendKeyboard = nil
         sendMouse = nil
         sendConsumer = nil
+        // The transport releases the pad's button and contacts itself when the session ends.
+        sendTouchpadButton = nil
         isCapturing = false
     }
 
@@ -90,6 +94,8 @@ final class DirectInputController {
             // Wheel and pan are relative: one report per step. A trailing zero report doubled
             // scroll traffic and filled CoreBluetooth's queue; reads never replay relative fields.
             sendMouse?(MouseReport(buttons: pressedMouseButtons, wheel: vertical, pan: horizontal))
+        case let .touchpadButton(down):
+            sendTouchpadButton?(down)
         }
     }
 

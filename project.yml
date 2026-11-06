@@ -94,6 +94,8 @@ targets:
       - DeusKVM/TrackpadGesture.swift
       - DeusKVM/LowEnergy/TouchpadReports.swift
       - DeusKVM/TouchpadScript.swift
+      - DeusKVM/TouchpadTracker.swift
+      - DeusKVM/TouchpadRouting.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

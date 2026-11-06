@@ -73,6 +73,15 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
 
     private let controller = DirectInputController()
     private var gate = InputGate<(DirectInputEvent, TimeInterval)>()
+    /// Live trackpad contacts for the precision touchpad; its presence query serves the tap.
+    let touchpadSource = TouchpadSource()
+    /// Queue-only: scripted playback and the live contact stream (`TouchpadLink`).
+    private lazy var touchpad = TouchpadLink(queue: queue, source: touchpadSource, hooks: TouchpadLink.Hooks(
+        isAdvertised: { [unowned self] in reports[ReportID.touchpad.rawValue] != nil },
+        isReady: { [unowned self] in ready },
+        send: { [unowned self] in sendTouchpad($0) },
+        note: { [unowned self] streaming, message in toMain { $0.touchpadStreamChanged(streaming, message) } }
+    ))
 
     /// Main thread, once, before the manager starts.
     func attach(_ owner: HIDPeripheral) {
@@ -98,6 +107,7 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
             epoch += 1
             reports.removeAll(); bootMouse = nil; bootKeyboard = nil; battery = nil
             featureReports = TouchpadReport.featureDefaults
+            touchpad.reset()
             pending.removeAll(); ready = true; releaseRecipients.removeAll(); releaseCallbacks.removeAll()
             companionChars.removeAll(); controls.removeAll(); bulk.removeAll(); companionBlocked = false; overflowed.removeAll()
             stats.setPending(0); stats.companion(queued: 0, blocked: false)
@@ -237,8 +247,10 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
                 sendMouse: { [weak self] in self?.sendMouse($0) },
                 sendKeyboard: { [weak self] in self?.sendKeyboard($0) },
                 sendConsumer: { [weak self] in self?.sendConsumer($0) },
-                isActive: true, isConnected: true, activeError: nil
+                isActive: true, isConnected: true, activeError: nil,
+                sendTouchpadButton: { [weak self] in self?.touchpad.button($0) }
             ))
+            touchpad.startSession()
             for (event, captured) in gate.start(generation) {
                 forward(event, captured)
             }
@@ -249,6 +261,8 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
     func stopInput() {
         queue.async { [self] in
             gate.stop()
+            // Lifts and the pad's button go first, ahead of the controller's zero reports.
+            touchpad.stopSession()
             controller.stop()
         }
     }
@@ -472,42 +486,30 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
 }
 
 extension BluetoothTransport {
-    // MARK: Precision touchpad experiment (main thread enqueues; the queue sends)
+    // MARK: Precision touchpad (main thread enqueues; the queue sends; the source delivers)
 
-    private struct TouchpadPlayback: Sendable {
-        let frames: [TouchpadFrame]
-        let interval: TimeInterval
-        let epoch: Int
-        let completion: @Sendable (Int, Int) -> Void
-        var index = 0
-        var accepted = 0
-        var deferred = 0
+    /// The collection is advertised, Windows subscribed to contact reports and last wrote
+    /// Input Mode 3: live frames go out and the tap keeps the trackpad off the mouse collection.
+    func setPrecisionTouchpad(_ value: Bool) {
+        queue.async { [self] in touchpad.precision = value }
     }
 
-    /// Sends scripted contact frames `interval` apart, each stamped with the scan time of its
-    /// send. The completion gets the reports CoreBluetooth took at once and the reports that
-    /// waited in the backpressure queue.
+    /// Tap thread: the pad's state for routing decisions.
+    func touchpadPresence() -> TouchpadPresence {
+        touchpadSource.presence(now: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// Sends scripted contact frames `interval` apart; see `TouchpadLink.play`.
     func playTouchpad(_ frames: [TouchpadFrame], interval: TimeInterval, completion: @escaping @Sendable (Int, Int) -> Void) {
-        queue.async { [self] in
-            playTouchpadFrame(TouchpadPlayback(frames: frames, interval: interval, epoch: epoch, completion: completion))
-        }
+        queue.async { [self] in touchpad.play(frames, interval: interval, completion: completion) }
     }
 
-    private func playTouchpadFrame(_ playback: TouchpadPlayback) {
-        guard epoch == playback.epoch, playback.index < playback.frames.count,
-              let characteristic = reports[ReportID.touchpad.rawValue]
-        else { playback.completion(playback.accepted, playback.deferred); return }
-        let frame = playback.frames[playback.index]
-        let scanTime = TouchpadReport.scanTime(uptime: ProcessInfo.processInfo.systemUptime)
-        // Contacts are momentary: a read or resubscription sees no fingers, never a stale frame.
+    /// One contact report to the current target. Contacts are momentary: a read or
+    /// resubscription sees no fingers, never a stale frame.
+    private func sendTouchpad(_ data: Data) -> Bool {
+        guard let characteristic = reports[ReportID.touchpad.rawValue] else { return false }
         cached[ReportID.touchpad.rawValue] = TouchpadReport.zero.data
-        var next = playback
-        next.index += 1
-        for report in TouchpadReport.reports(contacts: frame.contacts, scanTime: scanTime, button: frame.button) {
-            if send(report.data, to: characteristic) { next.accepted += 1 } else { next.deferred += 1 }
-        }
-        let scheduled = next
-        queue.asyncAfter(deadline: .now() + playback.interval) { [self] in playTouchpadFrame(scheduled) }
+        return send(data, to: characteristic)
     }
 
     // MARK: Companion frames (main thread enqueues; the queue sends)
@@ -585,7 +587,8 @@ extension BluetoothTransport {
                 "stallAgeMs=\(stall)", "hidPending=\(pending.count)", "releasing=\(!releaseRecipients.isEmpty)",
                 "companionBlocked=\(companionBlocked)", "controls=\(controls.count)", "bulk=\(bulk.count)",
                 "overflowed=\(overflowed.count)", "capturing=\(controller.isCapturing)", "gateActive=\(gate.active != nil)",
-                "touchpadMode=\(featureReports[ReportID.touchpadInputMode.rawValue]?.first.map { String($0) } ?? "none")"
+                "touchpadMode=\(featureReports[ReportID.touchpadInputMode.rawValue]?.first.map { String($0) } ?? "none")",
+                touchpad.snapshot
             ]
             completion("transport: " + fields.joined(separator: " "))
         }

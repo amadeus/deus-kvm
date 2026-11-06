@@ -22,10 +22,25 @@ final class HIDPeripheral: NSObject, ObservableObject {
     @Published private(set) var keyboardLEDs: KeyboardLEDs = []
     /// Precision touchpad experiment: whether this launch advertises the collection, whether the
     /// host subscribed to contact reports, and the Input Mode it last wrote (3 selects PTP).
-    @Published private(set) var isTouchpadAdvertised = false
-    @Published private(set) var touchpadSubscribed = false
+    @Published private(set) var isTouchpadAdvertised = false {
+        didSet { refreshPrecisionTouchpad() }
+    }
+
+    @Published private(set) var touchpadSubscribed = false {
+        didSet { refreshPrecisionTouchpad() }
+    }
+
     /// Set from the touchpad extension when Windows writes the feature report.
-    @Published var touchpadInputMode: UInt8?
+    @Published var touchpadInputMode: UInt8? {
+        didSet { refreshPrecisionTouchpad() }
+    }
+
+    /// Advertised, subscribed and Input Mode 3: Windows drives the pointer from contact
+    /// frames and the mouse collection is for other pointing devices. Both are set from the
+    /// touchpad extension only.
+    @Published var isPrecisionTouchpad = false
+    /// A remote session is streaming the trackpad's contacts.
+    @Published var touchpadStreaming = false
     @Published private(set) var lastError: String?
 
     let companion = CompanionService()
@@ -110,6 +125,7 @@ final class HIDPeripheral: NSObject, ObservableObject {
         charsByReportID.removeAll()
         touchpadSubscribed = false
         touchpadInputMode = nil
+        touchpadStreaming = false
         subscribedCentrals.removeAll()
         inputSubscriptions.removeAll()
         reconcileHosts()
@@ -412,6 +428,7 @@ extension HIDPeripheral {
             isAdvertising = false
             inputSubscriptions.removeAll()
             subscribedCentrals.removeAll()
+            if touchpadSubscribed { touchpadSubscribed = false }
             connectedCentrals.removeAll()
             reconcileHosts()
         } else { reconcileAdvertising() }
