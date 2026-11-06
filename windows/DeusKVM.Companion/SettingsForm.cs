@@ -82,7 +82,7 @@ internal sealed class SettingsForm : Form
         rows.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         var hint = new Label
         {
-            Text = "Applies to the Mac trackpad only; mouse settings stay in Windows Settings. If a change has no effect, sign out and back in.",
+            Text = "Applies to the Mac trackpad only; mouse settings stay in Windows Settings. Windows applies changes the next time you sign in: sign out and back in, or restart.",
             AutoSize = true, MaximumSize = new Size(400, 0)
         };
         foreach (Control item in new Control[] { cursorSpeedLabel, cursorSpeed, sensitivityLabel, sensitivity, reverseScroll, resetTrackpad, hint })

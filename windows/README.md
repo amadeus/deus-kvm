@@ -43,8 +43,8 @@ acknowledged takeover protocol still require an update.
    touchpad sensitivity and scrolling direction for a Mac trackpad presented as a
    precision touchpad (the Windows Settings app does not list that touchpad on a
    desktop PC). The values are the per-user precision touchpad settings Windows
-   itself uses; mouse settings stay in Windows Settings. Whether Windows applies a
-   change at once or after a sign-out has not been verified yet.
+   itself uses; mouse settings stay in Windows Settings. Windows applies a change
+   at the next sign-in (verified with a restart on 2026-11-06).
 
 If both Macs are connected before the service starts, it prefers the last active
 enabled Mac, then stable endpoint-ID order. Disabled Macs stay disabled. Windows
