@@ -24,6 +24,7 @@ internal sealed class SettingsForm : Form
     private readonly TrackBar sensitivity = new() { Minimum = 0, Maximum = TrackpadSettings.SensitivityLabels.Length - 1, TickFrequency = 1, LargeChange = 1, Width = 300 };
     private readonly CheckBox reverseScroll = new() { Text = "Reverse scrolling direction", AutoSize = true };
     private readonly LinkLabel resetTrackpad = new() { Text = "Reset to Windows defaults", AutoSize = true };
+    private readonly Label trackpadStatus = new() { AutoSize = true, MaximumSize = new Size(400, 0) };
     private bool loadingTrackpad;
 
     public SettingsForm(Func<string[], Task> control, Action connectMac, Func<Task> removeApp, ITrackpadStore trackpad)
@@ -80,12 +81,7 @@ internal sealed class SettingsForm : Form
     {
         var rows = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill, ColumnCount = 1 };
         rows.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var hint = new Label
-        {
-            Text = "Applies to the Mac trackpad only; mouse settings stay in Windows Settings. Windows applies changes the next time you sign in: sign out and back in, or restart.",
-            AutoSize = true, MaximumSize = new Size(400, 0)
-        };
-        foreach (Control item in new Control[] { cursorSpeedLabel, cursorSpeed, sensitivityLabel, sensitivity, reverseScroll, resetTrackpad, hint })
+        foreach (Control item in new Control[] { cursorSpeedLabel, cursorSpeed, sensitivityLabel, sensitivity, reverseScroll, resetTrackpad, trackpadStatus })
         {
             item.Margin = new Padding(0, 0, 0, 4);
             rows.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -97,28 +93,40 @@ internal sealed class SettingsForm : Form
         return trackpadGroup;
     }
 
-    /// <summary>Writes the value Windows' Settings page would write, then shows what the registry now holds.</summary>
+    /// <summary>
+    /// Writes the registry values the Settings page would write, then applies them live where
+    /// Windows offers that (24H2 and later); older builds read the values at the next sign-in.
+    /// </summary>
     private void ApplyTrackpad(Action change)
     {
-        try { change(); }
+        var live = false;
+        try
+        {
+            change();
+            live = TrackpadLive.TryApply(TrackpadSettings.Read(trackpad));
+        }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         { TrayContext.ShowError(error); }
-        LoadTrackpad();
+        LoadTrackpad(live ? "Applied." : "Windows applies changes the next time you sign in: sign out and back in, or restart.");
     }
 
-    private void LoadTrackpad()
+    private void LoadTrackpad(string? outcome = null)
     {
         if (loadingTrackpad) return;
         loadingTrackpad = true;
         try
         {
-            var state = TrackpadSettings.Read(trackpad);
+            // The live block is what Windows is using right now; the registry is the fallback.
+            var live = TrackpadLive.TryRead(out var parameters);
+            var state = live ? parameters.State : TrackpadSettings.Read(trackpad);
             cursorSpeed.Value = state.CursorSpeedNotch;
             sensitivity.Value = state.SensitivityIndex;
             reverseScroll.Checked = state.ScrollReversed;
             cursorSpeedLabel.Text = $"Cursor speed: {state.CursorSpeedNotch}";
             sensitivityLabel.Text = $"Touchpad sensitivity: {TrackpadSettings.SensitivityLabels[state.SensitivityIndex]}";
             resetTrackpad.Enabled = !state.IsDefault;
+            trackpadStatus.Text = (live ? parameters.Detection + "\n" : "") +
+                (outcome ?? "Applies to the Mac trackpad only; mouse settings stay in Windows Settings.");
             trackpadGroup.Enabled = true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
