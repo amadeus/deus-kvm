@@ -87,7 +87,14 @@ final class ClipboardImageTests: XCTestCase {
         try assertFileAndImageSnapshot(type: .png, concealed: true)
     }
 
-    private func assertFileAndImageSnapshot(type: NSPasteboard.PasteboardType?, concealed: Bool) throws {
+    /// Finder publishes the copied file's icon as TIFF beside the URL; the file must win.
+    func testFinderFileCopyStaysAFileDespiteItsIconImage() throws {
+        for marker in ClipboardPasteboard.fileIconTypes {
+            try assertFileAndImageSnapshot(type: .tiff, concealed: false, fileIcon: marker)
+        }
+    }
+
+    private func assertFileAndImageSnapshot(type: NSPasteboard.PasteboardType?, concealed: Bool, fileIcon: String? = nil) throws {
         let board = NSPasteboard(name: .init("DeusKVMTests.\(UUID().uuidString)"))
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
         defer { board.releaseGlobally(); try? FileManager.default.removeItem(at: url) }
@@ -102,13 +109,14 @@ final class ClipboardImageTests: XCTestCase {
             item.setData(data, forType: type)
         }
         if concealed { item.setData(Data(), forType: .init("org.nspasteboard.ConcealedType")) }
+        if let fileIcon { item.setData(Data([0]), forType: .init(fileIcon)) }
         XCTAssertTrue(board.writeObjects([item]))
         let snapshot = expectation(description: "file/image classification")
         let clipboard = ClipboardPasteboard(board: board, snapshot: { value in
             XCTAssertNil(value.text)
             if concealed {
                 XCTAssertNil(value.file)
-            } else if type != nil {
+            } else if type != nil, fileIcon == nil {
                 XCTAssertEqual(value.file?.contentType, "image/png")
                 XCTAssertNotNil(value.file.flatMap { $0.read(offset: 0) }.flatMap(ClipboardImage.decode))
             } else {

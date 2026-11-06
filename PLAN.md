@@ -1,5 +1,122 @@
 # DeusKVM: implementation plan
 
+### Reliability investigation and lag diagnostics — 2026-11-01
+
+User-reported intermittent issues, root-caused from source and this Mac's logs:
+
+1. **No crossing after wake** (Disable/Enable fixes it). Tonight's logs: lock at
+   16:00:35 (`kAELockScreenEvent`, user active), display on 21:33:02, PC link
+   21:33:36, no capture until the tap restarted at 21:34:11; the BLE link was
+   untouched. The user locks with ⌃⌘Q: the tap sees Q down, Secure Input hides
+   Q up, and `HandoffState.isReleased` blocks edge and hotkey forever while the
+   icon shows ready. **Implemented:** the tap re-reads held keys, buttons and
+   raw-keyboard values from macOS (media keys clear) when Secure Input turns off,
+   on screen unlock and on tap re-enable; pushing against the edge or releasing a
+   key with the hotkey pending while held input blocks the crossing triggers the
+   same resync (at most every 0.5 s). Corrections are logged as counts. Unit tests
+   cover the ⌃⌘Q case, keys really held, modifiers, buttons, media keys, a stale
+   consumed shortcut key and the throttle.
+   **Pending (hardware):** lock with ⌃⌘Q, let the display sleep, wake, unlock
+   and cross immediately (edge and hotkey) without Disable/Enable; the
+   diagnostics file shows `held input corrected (screen unlocked): keys=1`.
+2. **Finder file copy sends its icon.** Confirmed: `ClipboardPasteboard` prefers
+   image data over a file URL (`6fcbce6`, for CleanShot), and Finder copies carry
+   the icon as `public.tiff`. **Implemented:** image data wins only when the
+   pasteboard carries no file-manager icon marker (`com.apple.icns`,
+   `com.apple.finder.noderef`). A Finder-shaped regression test (URL + TIFF +
+   marker) failed before the change and passes after; CleanShot tests still pass.
+   **Pending (hardware):** Finder file → Explorer pastes the real file; CleanShot
+   → Discord still pastes the image.
+3. **Occasional lag under fast pointer movement** (and possibly repeated
+   letters) that persists until the Mac app restarts. Ruled out by the user:
+   Windows-wide (PC's own mouse is fine) and per-crossing state (crossing again
+   does not help). The PC link runs at 15 ms (macOS widens Windows' 7.5 ms
+   request; `.low` latency changes nothing) and shares the radio with a
+   Bluetooth trackpad. Unified-log retention (~12 h) held no past incident, so
+   diagnostics were added first (below). Adaptive motion pacing is optional
+   polish, not the fix.
+4. **Return to the Mac partway across the PC screen.** Candidates: Windows edge
+   test using `Screen.AllScreens` cached during monitor sleep/wake (≈50% if a
+   fallback mode, ≈80% if scaled vs physical at 125%), or Mac-side returns
+   (Secure Input, heartbeat expiry). Nothing accumulates cursor position on either
+   side, so drift is ruled out.
+   - **4a, implemented:** the desktop worker reads the layout live
+     (`EnumDisplayMonitors`/`GetMonitorInfo`) in its existing 1 s refresh instead of
+     the cached `Screen.AllScreens`, and confirms every LEAVE against the monitor
+     Windows reports under the cursor (same coordinate space). A disagreement is
+     not sent: the layout is re-read and the rejection (cached vs live size, cursor
+     fraction, physical cursor, DPI awareness, cursor jump vs raw movement) goes to
+     `edge-return.log` at most once per second. Enter/exit/config/layout/desktop
+     decisions and returns go to a 100-entry in-memory history for problem reports.
+     Tests cover the 50% and 80% cases, the real edge, an adjacent or different
+     monitor, and the history bounds.
+   - **Pending (hardware):** after the PC and its monitor sleep and wake, returns
+     happen only at the real right edge and entry lands at the right place.
+   - **4b, implemented:** desktop `state` still reaches the service every second
+     over the local pipe (its keep-alive), but is forwarded to the Mac over
+     Bluetooth only when it changes, plus a 30 s refresh (it was one message per
+     second). The 5 s `edge-return.log` health line is written only while the Mac
+     owns control or a return was decided, not for the PC's own mouse.
+   - **Pending (hardware):** Mac menu status still tracks Windows desktop/lock
+     changes promptly; `edge-return.log` stays quiet while only the PC's mouse is used.
+   - **4c, implemented:** the clipboard thread is event-driven: clipboard changes
+     (`AddClipboardFormatListener`), commands from the service and session
+     lock/unlock (`WTSRegisterSessionNotification`) wake it; a 1 s timer keeps the
+     desktop check (was 200 ms), and the 200 ms retry runs only while a read,
+     write, file or image is pending. Re-entrant wake-ups queue one more pass.
+     If the listener cannot register, the previous 200 ms poll is used. The retry
+     policy has portable tests; the listener itself is Windows-only.
+   - **Pending (hardware):** text, image and file clipboard both ways, including
+     right after the PC locks/unlocks; Task Manager shows the desktop worker idle.
+   - **4d, implemented:** **Report Problem Now** (renamed from Report Lag Now)
+     also asks the Windows companion for its state over the existing link
+     (`REPORT_REQUEST` 0x30 / `REPORT` 0x31, offered via HELLO `report: 1`;
+     older companions are noted as unable to report). The service adds link,
+     desktop and clipboard state; the desktop worker adds its scaling mode,
+     cached vs live layout, cursor position, counters and decision history.
+     Everything lands in the Mac's diagnostics file for an agent to read.
+     Both apps must be updated. Shared framing fixtures cover both messages.
+   - **Pending (hardware):** with both apps updated, Report Problem Now shows a
+     `windows companion report:` section with the worker history.
+
+5. **Trackpad gestures reached macOS while controlling Windows** (four-finger
+   swipes ran Mission Control/Spaces behind the PC). **Implemented:** gesture
+   event types (rotate, begin/end, gesture, magnify/Dock control, swipe, smart
+   magnify, quick look, pressure) are in the tap mask and swallowed while
+   remote; each type is noted once per launch in the diagnostics file.
+   A mapping of the Spaces/Mission Control swipe to Win+Tab, Win+D and
+   Ctrl+Win+←/→ was tried and removed at the user's request: each swipe arrived
+   twice (shortcuts fired twice), and the undocumented Dock-swipe fields did not
+   match the published layout (motion came through as 2/3, not 1/2; the two
+   velocity fields mirrored each other).
+   **Pending (hardware):** whether a session tap stops the Dock's swipes on this
+   macOS; pinch/rotate do nothing on the Mac while on the PC.
+
+Lag diagnostics (Mac only; no protocol or Windows change):
+
+- `~/Library/Logs/DeusKVM/diagnostics.log`: app start/stop, system sleep/wake,
+  display sleep/wake, screen lock/unlock, enable/disable, link and companion ready/lost, crossings and return reasons,
+  and one summary per minute while controlling Windows. Counts and timings only.
+- Bounded writes: buffered in memory and written every 5 minutes (or at 32 KiB,
+  sleep, quit, or a report); at most 120 lines per minute with a suppressed count;
+  rotation at 2 MB to one `.previous` file (≈4 MB maximum).
+- New per-second fields (unified log and summaries): tap delivery lag from event
+  timestamps, corrective cursor warps, notifications accepted by CoreBluetooth,
+  time its transmit queue stayed full (`stallMs`, `stallMaxMs`), companion frames
+  and bytes in each direction, and PING/PONG round trip every 2 s (every Windows
+  companion already answers PING).
+- **Report Problem Now** in the menu bar writes the app/link state, the Bluetooth
+  queue state, the last 10 minutes of per-second samples (kept only in memory),
+  the Windows companion's report (4d) and bluetoothd's recent link-parameter
+  lines, then confirms with a dialog.
+- Validation: 128 Mac tests passed (10 new: event-lag units, tap/ping/transport
+  accounting, summaries, history, rotation, flush and line budget); SwiftFormat
+  and strict SwiftLint passed; Debug build succeeded. The bluetoothd predicate
+  was checked against this Mac's live log. The app was not launched or installed.
+- **Pending (hardware):** install the build, confirm the per-minute summaries
+  and a Report Problem Now entry look right, then use it at the next lag or
+  early-return occurrence before restarting.
+
 ### QMK key coverage correction — 2026-10-26
 
 - Audited the linked DUO layout and Cloud/Dimple R3/Kradlex at QMK PR #2 revision

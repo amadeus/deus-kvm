@@ -57,6 +57,15 @@ final class RawKeyboardMonitor {
         opened = false
     }
 
+    /// Re-reads every keyboard's current key values; a release this monitor missed is
+    /// reported through `changed` like any other. Tap thread only.
+    func refresh() {
+        guard opened, let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else { return }
+        for device in devices {
+            snapshot(device)
+        }
+    }
+
     private func snapshot(_ device: IOHIDDevice) {
         guard let elements = IOHIDDeviceCopyMatchingElements(device, [kIOHIDElementUsagePageKey: 7] as CFDictionary, 0)
             as? [IOHIDElement] else { return }

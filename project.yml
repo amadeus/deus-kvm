@@ -87,6 +87,11 @@ targets:
       - DeusKVM/Clipboard/ClipboardImage.swift
       - DeusKVM/Clipboard/ClipboardImageFile.swift
       - DeusKVM/Clipboard/FileNetworkReceiver.swift
+      - DeusKVM/DiagnosticsLog.swift
+      - DeusKVM/LinkHealth.swift
+      - DeusKVM/BluetoothLinkLog.swift
+      - DeusKVM/LowEnergy/TransportStats.swift
+      - DeusKVM/TrackpadGesture.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

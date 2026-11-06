@@ -21,6 +21,9 @@ enum CompanionProtocol {
         case requestControl = 0x1A, releaseAck = 0x1B
         case clipGrab = 0x20, clipGet = 0x21, clipData = 0x22, clipState = 0x23
         case fileOffer = 0x24, fileGet = 0x25, fileData = 0x26, fileAccept = 0x27
+        /// Problem report: the Mac asks (control stream, u32 token); Windows answers on the bulk
+        /// stream with the token and UTF-8 diagnostic text. Offered via HELLO `report: 1`.
+        case reportRequest = 0x30, report = 0x31
         case nack = 0x7F
     }
 
@@ -146,6 +149,7 @@ struct CompanionHello: Codable {
     var availabilityEpoch: UInt32?
     var takeover: Bool?
     var requestControl: Bool?
+    var report: Int?
 }
 
 struct PCMonitor: Codable, Identifiable, Equatable {

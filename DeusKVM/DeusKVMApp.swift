@@ -81,10 +81,31 @@ private struct StatusMenu: View {
             .disabled(!coordinator.isRemote && !coordinator.canSwitch)
         Toggle(L10n.Layout.lock, isOn: $coordinator.locked)
         Divider()
+        // When something misbehaves (before restarting): keeps both computers' recent state.
+        Button(coordinator.reportingProblem ? "Saving Problem Report…" : "Report Problem Now") {
+            coordinator.reportProblem { ProblemReportAlert.show($0) }
+        }
+        .disabled(coordinator.reportingProblem)
         Button(coordinator.isEnabled ? "Disable DeusKVM" : "Enable DeusKVM") {
             coordinator.setEnabled(!coordinator.isEnabled)
         }
         Button(L10n.Layout.quit) { NSApp.terminate(nil) }
+    }
+}
+
+@MainActor
+private enum ProblemReportAlert {
+    static func show(_ url: URL) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Problem report saved"
+        let path = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        alert.informativeText = "Recent details from this Mac and the PC were added to \(path). You can restart DeusKVM now."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Show in Finder")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
     }
 }
 

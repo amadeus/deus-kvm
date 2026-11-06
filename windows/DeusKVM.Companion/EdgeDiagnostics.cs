@@ -1,6 +1,7 @@
 namespace DeusKVM.Companion;
 
-// Aggregate edge state only: no key contents, pointer coordinates, or device identifiers.
+// Aggregate edge state, layout changes and rejected returns (screen sizes and cursor position as a
+// fraction of the screen). No key contents, absolute pointer coordinates, or device identifiers.
 internal static class EdgeDiagnostics
 {
     private static readonly object Gate = new();

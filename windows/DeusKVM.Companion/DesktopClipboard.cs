@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using DeusKVM.Companion.Core;
 
@@ -13,6 +14,8 @@ internal sealed class DesktopClipboard : IDisposable
     private volatile FileClipboardSession? fileSession;
     private volatile CancellationTokenSource? sending;
     private volatile CancellationTokenSource? receivingImage;
+    // The clipboard thread's window, so other threads can wake it; zero until it exists.
+    private IntPtr wakeWindow;
     public DesktopClipboard(Action<DesktopMessage> send)
     {
         var thread = new Thread(() => Run(send)) { IsBackground = true, Name = "DeusKVM clipboard" };
@@ -32,15 +35,25 @@ internal sealed class DesktopClipboard : IDisposable
             while (commands.Count >= 16 && commands.TryDequeue(out _)) { }
         }
         if (commands.Count < 16) commands.Enqueue(message);
+        Wake();
     }
-    public void Dispose() { disposed = true; receivingImage?.Cancel(); fileSession?.Dispose(); sending?.Cancel(); while (commands.TryDequeue(out _)) { } }
+    public void Dispose() { disposed = true; receivingImage?.Cancel(); fileSession?.Dispose(); sending?.Cancel(); while (commands.TryDequeue(out _)) { } Wake(); }
+    private void Wake()
+    {
+        var window = Volatile.Read(ref wakeWindow);
+        if (window != IntPtr.Zero) PostMessage(window, ClipboardWindow.WakeMessage, IntPtr.Zero, IntPtr.Zero);
+    }
     private void Run(Action<DesktopMessage> send)
     {
         Application.OleRequired();
         using var context = new ApplicationContext();
-        var window = new NativeWindow();
+        var window = new ClipboardWindow();
         window.CreateHandle(new CreateParams { Caption = "DeusKVM clipboard", Parent = new IntPtr(-3) });
-        using var timer = new System.Windows.Forms.Timer { Interval = 200 };
+        // Clipboard changes, posted commands and session lock changes wake this thread. A slow
+        // timer keeps the desktop check; the short one runs only while an operation can still
+        // fail transiently (an unread change, a pending write, file or image).
+        using var idle = new System.Windows.Forms.Timer { Interval = 1000 };
+        using var retry = new System.Windows.Forms.Timer { Interval = 200 };
         bool? available = null;
         var enabled = false; var priming = false; var yield = false;
         uint epoch = 0;
@@ -64,7 +77,7 @@ internal sealed class DesktopClipboard : IDisposable
         }
         long applyDeadline = 0;
         bool CanAccess() => !disposed && permitted && permittedEpoch == epoch && DesktopNative.IsDefaultDesktop();
-        timer.Tick += (_, _) =>
+        void Tick()
         {
             if (disposed) { context.ExitThread(); return; }
             var accessible = DesktopNative.IsDefaultDesktop();
@@ -193,9 +206,64 @@ internal sealed class DesktopClipboard : IDisposable
             if (!CanAccess()) return;
             if (ClipboardNative.Write(window.Handle, update.Clipboard!, revision, CanAccess, out var written))
             { sending?.Cancel(); source = null; sourceOffer = null; versions.Imported(written); pending = null; }
-        };
-        timer.Start();
+        }
+        // WM_CLIPBOARDUPDATE is sent, and OLE clipboard calls inside a tick can pump messages,
+        // so our own write can wake this thread mid-tick. Queue one more pass instead of nesting.
+        var ticking = false; var again = false;
+        void Wakeup()
+        {
+            if (ticking) { again = true; return; }
+            ticking = true;
+            try { do { again = false; Tick(); } while (again && !disposed); }
+            finally { ticking = false; }
+            retry.Enabled = !disposed && ClipboardWake.NeedsRetry(enabled, available == true && CanAccess(),
+                versions.Observed != ClipboardNative.GetClipboardSequenceNumber(), pending is not null, pendingFile is not null,
+                imageUpdate is not null || incomingImage is not null, yield);
+        }
+        window.Wake = Wakeup;
+        idle.Tick += (_, _) => Wakeup();
+        retry.Tick += (_, _) => Wakeup();
+        var listening = AddClipboardFormatListener(window.Handle);
+        var sessions = WTSRegisterSessionNotification(window.Handle, 0); // NOTIFY_FOR_THIS_SESSION
+        if (!listening) idle.Interval = 200; // the previous polling cadence
+        Volatile.Write(ref wakeWindow, window.Handle);
+        idle.Start();
+        Wakeup();
         try { Application.Run(context); }
-        finally { ClearFile(true); window.DestroyHandle(); }
+        finally
+        {
+            Volatile.Write(ref wakeWindow, IntPtr.Zero);
+            if (listening) RemoveClipboardFormatListener(window.Handle);
+            if (sessions) WTSUnRegisterSessionNotification(window.Handle);
+            ClearFile(true); window.DestroyHandle();
+        }
     }
+
+    private sealed class ClipboardWindow : NativeWindow
+    {
+        public const uint WakeMessage = 0x8001; // WM_APP + 1
+        public Action? Wake { get; set; }
+        protected override void WndProc(ref Message message)
+        {
+            // WM_CLIPBOARDUPDATE, a posted command, or WM_WTSSESSION_CHANGE (lock/unlock).
+            if (message.Msg is 0x031D or (int)WakeMessage or 0x02B1) Wake?.Invoke();
+            base.WndProc(ref message);
+        }
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AddClipboardFormatListener(IntPtr window);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveClipboardFormatListener(IntPtr window);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    [DllImport("wtsapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSRegisterSessionNotification(IntPtr window, uint flags);
+    [DllImport("wtsapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSUnRegisterSessionNotification(IntPtr window);
 }

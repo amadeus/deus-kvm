@@ -62,6 +62,66 @@ internal static class DesktopNative
         var monitor = MonitorFromPoint(new Point { X = x, Y = y }, 2);
         return GetDpiForMonitor(monitor, 0, out var dpi, out _) == 0 ? (int)dpi : 96;
     }
+
+    // Read live from Windows each time. .NET Framework's Screen.AllScreens caches its bounds
+    // until a display-change event, which can leave a layout read while a monitor slept.
+    internal static MonitorInfo[] Monitors()
+    {
+        var result = new List<MonitorInfo>();
+        MonitorEnum callback = (IntPtr monitor, IntPtr hdc, ref Rect rect, IntPtr data) =>
+        {
+            if (Describe(monitor) is { } info) result.Add(info);
+            return true;
+        };
+        return EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, callback, IntPtr.Zero) ? result.ToArray() : [];
+    }
+
+    // The monitor under a point, in the calling thread's coordinate space (as GetCursorPos).
+    internal static MonitorInfo? MonitorAt(int x, int y)
+    {
+        var monitor = MonitorFromPoint(new Point { X = x, Y = y }, 0); // MONITOR_DEFAULTTONULL
+        return monitor == IntPtr.Zero ? null : Describe(monitor);
+    }
+
+    private static MonitorInfo? Describe(IntPtr monitor)
+    {
+        var info = new MonitorInfoEx { Size = Marshal.SizeOf<MonitorInfoEx>() };
+        if (!GetMonitorInfo(monitor, ref info)) return null;
+        var bounds = info.Monitor;
+        var dpi = GetDpiForMonitor(monitor, 0, out var value, out _) == 0 ? (int)value : 96;
+        return new MonitorInfo(info.Device, bounds.Left, bounds.Top, bounds.Right - bounds.Left, bounds.Bottom - bounds.Top,
+            dpi, (info.Flags & 1) != 0);
+    }
+
+    // 0 unaware, 1 system, 2 per-monitor; -1 if unavailable. Diagnostics only.
+    internal static int DpiAwareness()
+    {
+        try { return GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()); }
+        catch (EntryPointNotFoundException) { return -1; }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MonitorInfoEx
+    {
+        public int Size;
+        public Rect Monitor, Work;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Device;
+    }
+    private delegate bool MonitorEnum(IntPtr monitor, IntPtr hdc, ref Rect rect, IntPtr data);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnum callback, IntPtr data);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetMonitorInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfoEx info);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetThreadDpiAwarenessContext();
+    [DllImport("user32.dll")]
+    private static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetPhysicalCursorPos(out Point point);
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [DllImport("shcore.dll")]

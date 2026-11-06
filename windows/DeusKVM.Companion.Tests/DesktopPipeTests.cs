@@ -24,6 +24,23 @@ public sealed class DesktopPipeTests
     }
 
     [Fact]
+    public async Task ProblemReportTravelsOutsideTheStatusDetail()
+    {
+        // The host copies any message's Detail into its status line; a report must not replace it.
+        using var stream = new MemoryStream();
+        var report = string.Join("\n", Enumerable.Repeat("  12:00:00.000Z leave StaleLayout: cached=1920x1080@120", 100));
+        await DesktopPipe.Write(stream, new DesktopMessage("report", Epoch: 42, Report: report), CancellationToken.None);
+        stream.Position = 0;
+        var message = await DesktopPipe.Read(stream, CancellationToken.None);
+        Assert.Equal(("report", 42u, report), (message.Kind, message.Epoch, message.Report));
+        Assert.Null(message.Detail);
+    }
+
+    [Fact]
+    public void ProblemReportMessageValues() =>
+        Assert.Equal((0x30, 0x31), ((int)Protocol.Message.ReportRequest, (int)Protocol.Message.Report));
+
+    [Fact]
     public async Task MaximumClipboardFitsInAuthenticatedDesktopMessage()
     {
         using var stream = new MemoryStream();

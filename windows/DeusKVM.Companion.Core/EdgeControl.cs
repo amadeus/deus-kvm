@@ -24,7 +24,8 @@ public sealed record MonitorInfo(string Id, int X, int Y, int W, int H, int Dpi,
 public sealed record EdgeConfiguration(byte Edge, string Monitor);
 public sealed record DesktopMessage(string Kind, EdgeConfiguration? Config = null, byte SwitchId = 0,
     byte Edge = 0, ushort Fraction = 0, MonitorInfo[]? Monitors = null,
-    byte Blind = 4, byte Desktop = 2, bool MousePresent = false, bool Ok = false, int X = 0, int Y = 0, string? Detail = null, uint Epoch = 0, uint Revision = 0, byte[]? Clipboard = null, bool Center = false);
+    byte Blind = 4, byte Desktop = 2, bool MousePresent = false, bool Ok = false, int X = 0, int Y = 0, string? Detail = null, uint Epoch = 0, uint Revision = 0, byte[]? Clipboard = null, bool Center = false,
+    string? Report = null);
 
 // Only fresh outward counts from the selected Mac mouse can trigger a return.
 public static class EdgeDetector
@@ -53,6 +54,28 @@ public static class EdgeDetector
             return false;
         return true;
     }
+
+    // A return is about to be sent from the cached layout. Repeat the test against the
+    // monitor Windows reports under the cursor right now, read in the same coordinate space
+    // as the cursor itself: a layout cached while the display slept or reconnected, or in
+    // scaled rather than physical pixels, must not end control partway across the screen.
+    public static EdgeVerdict Confirm(MonitorInfo cached, MonitorInfo? live, IReadOnlyList<MonitorInfo> monitors,
+        EdgeConfiguration config, int x, int y, int dx, int dy)
+    {
+        if (live is null) return EdgeVerdict.Unavailable;
+        if (live.Id != cached.Id) return EdgeVerdict.OtherMonitor;
+        var current = monitors.Where(item => item.Id != live.Id).Append(live).ToList();
+        return Observe(live, current, config, x, y, dx, dy, false, false) ? EdgeVerdict.Leave : EdgeVerdict.StaleLayout;
+    }
+}
+
+public enum EdgeVerdict { Leave, StaleLayout, OtherMonitor, Unavailable }
+
+public static class EdgeHealth
+{
+    // The five-second health line is written only while the Mac owns control or a return was
+    // decided; moving the PC's own mouse alone no longer appends to the log.
+    public static bool ShouldWrite(bool macOwnsControl, int leaves, int rejected) => macOwnsControl || leaves + rejected > 0;
 }
 
 // A desktop restart/EXIT invalidates its previous handoff; later placement or edge messages cannot revive it.

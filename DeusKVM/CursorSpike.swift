@@ -46,6 +46,7 @@ final class CursorSpike {
             _log("hide=\(success) point=\(String(describing: CGEvent(source: nil)?.location))")
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?._finish() }
         case .end, .disabled: _finish()
+        case .note: break
         }
     }
 

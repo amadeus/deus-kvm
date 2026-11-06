@@ -140,9 +140,4 @@ extension HIDPeripheral {
         let completion = Unchecked(value: completion)
         transport.afterRelease { DispatchQueue.main.async { MainActor.assumeIsolated { completion.value() } } }
     }
-
-    /// Counts only; resets so each capture health line covers its own interval.
-    func takeNotificationDiagnostics() -> String {
-        transport.stats.takeHID()
-    }
 }

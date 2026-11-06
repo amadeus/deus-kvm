@@ -68,4 +68,49 @@ struct HandoffState: Sendable {
     mutating func cancel() {
         pendingToggle = false
     }
+
+    /// Replaces tracked input with what macOS reports as held now. Releases the tap never saw
+    /// (Secure Input hides key-ups, such as Q after ⌃⌘Q locks the screen) otherwise block every
+    /// crossing until that key is pressed again. Media keys cannot be queried, so they clear.
+    mutating func resync(keys: Set<UInt16>, buttons: Set<Int64>, flags: CGEventFlags) -> HeldInputCorrection {
+        let correction = HeldInputCorrection(
+            keys: heldKeys.subtracting(keys).subtracting(Self.modifierKeyCodes).count,
+            buttons: heldButtons.subtracting(buttons).count,
+            media: heldMediaKeys.count
+        )
+        heldKeys = keys
+        heldButtons = buttons
+        heldMediaKeys.removeAll()
+        if let consumedKey, !keys.contains(consumedKey) { self.consumedKey = nil }
+        updateModifiers(flags)
+        return correction
+    }
+}
+
+/// Stale entries a resync dropped; counts only.
+struct HeldInputCorrection: Equatable {
+    var keys = 0
+    var buttons = 0
+    var media = 0
+    var raw = 0
+
+    var total: Int {
+        keys + buttons + media + raw
+    }
+
+    func message(_ reason: String) -> String {
+        "held input corrected (\(reason)): keys=\(keys) raw=\(raw) media=\(media) buttons=\(buttons)"
+    }
+}
+
+/// Bounds how often a blocked crossing asks macOS for the real held state.
+struct ResyncGate {
+    var interval: TimeInterval = 0.5
+    private var last = -TimeInterval.infinity
+
+    mutating func allow(now: TimeInterval) -> Bool {
+        guard now - last >= interval else { return false }
+        last = now
+        return true
+    }
 }

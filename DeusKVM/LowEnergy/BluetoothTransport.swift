@@ -97,6 +97,7 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
             pending.removeAll(); ready = true; releaseRecipients.removeAll(); releaseCallbacks.removeAll()
             companionChars.removeAll(); controls.removeAll(); bulk.removeAll(); companionBlocked = false; overflowed.removeAll()
             stats.setPending(0); stats.companion(queued: 0, blocked: false)
+            stats.transmitReady(at: ProcessInfo.processInfo.systemUptime)
         }
     }
 
@@ -293,10 +294,12 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
         }
         guard manager.updateValue(data, for: characteristic, onSubscribedCentrals: [target]) else {
             ready = false
+            stats.transmitBlocked(at: ProcessInfo.processInfo.systemUptime)
             let merged = pending.append(data, target: characteristic, coalesceMotion: coalesceMotion)
             stats.notification(rejected: true, merged: merged, pending: pending.count)
             return false
         }
+        stats.sent()
         return true
     }
 
@@ -307,9 +310,11 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
         while let entry = pending.first {
             guard manager.updateValue(entry.data, for: entry.target, onSubscribedCentrals: recipients) else {
                 ready = false
+                stats.transmitBlocked(at: ProcessInfo.processInfo.systemUptime)
                 stats.setPending(pending.count)
                 return
             }
+            stats.sent()
             pending.removeFirst()
         }
         stats.setPending(0)
@@ -374,8 +379,10 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
             guard item.index < companionChars.count else { controls.removeAll(); bulk.removeAll(); return }
             guard manager.updateValue(item.data, for: companionChars[item.index], onSubscribedCentrals: [item.central]) else {
                 companionBlocked = true
+                stats.transmitBlocked(at: ProcessInfo.processInfo.systemUptime)
                 return
             }
+            stats.companionSent(bytes: item.data.count)
             if !controls.isEmpty { controls.removeFirst() } else { bulk.removeFirst() }
         }
     }
@@ -408,6 +415,7 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
     }
 
     func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
+        stats.transmitReady(at: ProcessInfo.processInfo.systemUptime)
         ready = true
         drainHID()
         companionBlocked = false
@@ -434,6 +442,7 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
         guard let first = requests.first else { return }
         guard companionIndex(first.characteristic) == nil else {
             // Companion frames are decoded on the main thread; the ATT response waits for the result.
+            stats.companionReceived(frames: requests.count, bytes: requests.reduce(0) { $0 + ($1.value?.count ?? 0) })
             let writes = requests.map { request in
                 CompanionWrite(
                     central: request.central.identifier, index: companionIndex(request.characteristic) ?? -1,
@@ -511,57 +520,19 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
     }
 }
 
-/// Aggregate counts from the Bluetooth queue, sampled on the main thread for Capture logs.
-final class TransportStats: @unchecked Sendable {
-    private let lock = NSLock()
-    private var events = 0
-    private var maxDelay: TimeInterval = 0
-    private var rejected = 0
-    private var merged = 0
-    private var pending = 0
-    private var companionQueued = 0
-    private var companionBlocked = false
-
-    func input(delay: TimeInterval) {
-        lock.withLock { events += 1; maxDelay = max(maxDelay, delay) }
-    }
-
-    func resetInput() {
-        lock.withLock { events = 0; maxDelay = 0 }
-    }
-
-    func takeInput() -> (events: Int, maxDelay: TimeInterval) {
-        lock.withLock {
-            defer { events = 0; maxDelay = 0 }
-            return (events, maxDelay)
+extension BluetoothTransport {
+    /// One line of queue state for a problem report; the completion runs on the Bluetooth queue.
+    func snapshot(_ completion: @escaping @Sendable (String) -> Void) {
+        queue.async { [self] in
+            let stall: String = stats.stallAge(now: ProcessInfo.processInfo.systemUptime).map { String(Int($0 * 1000)) } ?? "none"
+            let state: String = manager.map { String($0.state.rawValue) } ?? "none"
+            let fields: [String] = [
+                "manager=\(state)", "enabled=\(enabled)", "target=\(target != nil)", "ready=\(ready)",
+                "stallAgeMs=\(stall)", "hidPending=\(pending.count)", "releasing=\(!releaseRecipients.isEmpty)",
+                "companionBlocked=\(companionBlocked)", "controls=\(controls.count)", "bulk=\(bulk.count)",
+                "overflowed=\(overflowed.count)", "capturing=\(controller.isCapturing)", "gateActive=\(gate.active != nil)"
+            ]
+            completion("transport: " + fields.joined(separator: " "))
         }
-    }
-
-    func notification(rejected wasRejected: Bool = false, merged wasMerged: Bool, pending count: Int) {
-        lock.withLock {
-            if wasRejected { rejected += 1 }
-            if wasMerged { merged += 1 }
-            pending = count
-        }
-    }
-
-    func setPending(_ count: Int) {
-        lock.withLock { pending = count }
-    }
-
-    /// Counts only; resets so each capture health line covers its own interval.
-    func takeHID() -> String {
-        lock.withLock {
-            defer { rejected = 0; merged = 0 }
-            return "hidPending=\(pending) hidRejected=\(rejected) hidMerged=\(merged)"
-        }
-    }
-
-    func companion(queued: Int, blocked: Bool) {
-        lock.withLock { companionQueued = queued; companionBlocked = blocked }
-    }
-
-    var companionState: (queued: Int, blocked: Bool) {
-        lock.withLock { (companionQueued, companionBlocked) }
     }
 }

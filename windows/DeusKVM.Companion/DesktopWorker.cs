@@ -21,8 +21,11 @@ internal sealed class DesktopWorker : ApplicationContext
     private readonly HandoffSession handoff = new();
     private readonly DesktopRecoveryPoll recoveryPoll = new();
     private readonly MouseIdentityCache devices = new();
-    private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests;
-    private long lastEdgeReport;
+    private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests, rejectedLeaves;
+    private long lastEdgeReport, lastRejectionLog;
+    // Recent edge/desktop decisions for a problem report requested from the Mac; memory only.
+    private readonly DiagnosticHistory history = new();
+    private DesktopNative.Point? lastPoint;
     private MonitorInfo[] monitors = [];
     private EdgeConfiguration? config;
     private byte blind = 4;
@@ -87,10 +90,12 @@ internal sealed class DesktopWorker : ApplicationContext
             UpdateDesktopState(state);
             return; // Secure-desktop enumeration must not invalidate the saved display/session.
         }
-        var next = Screen.AllScreens.Select(screen => new MonitorInfo(screen.DeviceName,
-            screen.Bounds.X, screen.Bounds.Y, screen.Bounds.Width, screen.Bounds.Height, DesktopNative.Dpi(screen.Bounds.X, screen.Bounds.Y), screen.Primary)).ToArray();
-        if (!next.SequenceEqual(monitors))
+        var next = DesktopNative.Monitors();
+        if (next.Length > 0 && !next.SequenceEqual(monitors))
         {
+            var change = $"layout: {Describe(monitors)} -> {Describe(next)}";
+            history.Add(change);
+            if (monitors.Length > 0) ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(change));
             cursor.Reveal();
             handoff.Exit(); monitors = next;
             Send(new DesktopMessage("screens", Monitors: monitors));
@@ -115,7 +120,9 @@ internal sealed class DesktopWorker : ApplicationContext
     {
         var mouse = devices.HasMatch;
         var accessible = state.Desktop == 0;
-        blind = !accessible ? state.Blind : !mouse ? (byte)3 : (byte)0;
+        var next = !accessible ? state.Blind : !mouse ? (byte)3 : (byte)0;
+        if (next != blind) history.Add($"desktop: blind={next} desktop={state.Desktop} mouse={mouse}");
+        blind = next;
         handoff.SetAvailable(blind == 0);
         if (blind != 0) cursor.Reveal();
         Send(new DesktopMessage("state", Blind: blind, Desktop: state.Desktop, MousePresent: mouse,
@@ -132,13 +139,15 @@ internal sealed class DesktopWorker : ApplicationContext
                 cursor.Reveal();
                 handoff.Exit();
                 config = message.Config is { Edge: < 4 } ? message.Config : null;
+                history.Add($"config: edge={config?.Edge} monitor={Describe(monitors.FirstOrDefault(item => item.Id == config?.Monitor))}");
                 break;
-            case "reset": cursor.Reveal(); handoff.Exit(); break;
+            case "reset": cursor.Reveal(); handoff.Exit(); history.Add("reset"); break;
             case "exit":
                 if (handoff.Accept(message.SwitchId))
                 {
                     handoff.Exit();
                     if (blind == 0) cursor.Hide();
+                    history.Add($"exit: switch={message.SwitchId}");
                 }
                 break;
             case "resume":
@@ -149,7 +158,11 @@ internal sealed class DesktopWorker : ApplicationContext
                     handoff.Enter(message.SwitchId);
                     cursor.Reveal();
                     UpdateDesktopState(DesktopNative.DesktopState());
+                    history.Add($"resume: switch={message.SwitchId}");
                 }
+                break;
+            case "report-request":
+                Send(new DesktopMessage("report", Epoch: message.Epoch, Report: BuildReport()));
                 break;
             case "enter":
                 cursor.Reveal();
@@ -171,6 +184,9 @@ internal sealed class DesktopWorker : ApplicationContext
                 }
                 Send(new DesktopMessage("ack", SwitchId: message.SwitchId, Ok: ok,
                     X: position.X, Y: position.Y, Blind: ok ? blind : (byte)4));
+                lastPoint = null;
+                history.Add($"enter: switch={message.SwitchId} ok={ok} center={message.Center} " +
+                    $"monitor={Describe(monitor)} x={Fraction(monitor, position.X):0.000}");
                 break;
         }
     }
@@ -215,14 +231,76 @@ internal sealed class DesktopWorker : ApplicationContext
                 clip.Right < monitor.X + monitor.W || clip.Bottom < monitor.Y + monitor.H;
             if (held) heldMotion++;
             if (clipped) clippedMotion++;
+            var previous = lastPoint;
+            lastPoint = point;
             if (EdgeDetector.Observe(monitor, monitors, config, point.X, point.Y, dx, dy, held, clipped))
             {
-                leaveRequests++;
-                Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
-                    Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
+                var live = DesktopNative.MonitorAt(point.X, point.Y);
+                var verdict = EdgeDetector.Confirm(monitor, live, monitors, config, point.X, point.Y, dx, dy);
+                var detail = LeaveDetail(verdict, monitor, live, point, previous, dx, dy);
+                if (verdict == EdgeVerdict.Leave)
+                {
+                    leaveRequests++;
+                    history.Add(detail);
+                    Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
+                        Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
+                }
+                else RejectLeave(detail);
             }
         }
         finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    // A layout that disagrees with Windows' live monitor is re-read, and the durable log gets a
+    // line, at most once per second however long the cursor pushes outward.
+    private void RejectLeave(string detail)
+    {
+        rejectedLeaves++;
+        var now = RuntimeCompat.TickCount64;
+        if (now - lastRejectionLog >= 1000)
+        {
+            lastRejectionLog = now;
+            history.Add(detail);
+            ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(detail));
+            Refresh();
+        }
+    }
+
+    private static string LeaveDetail(EdgeVerdict verdict, MonitorInfo cached, MonitorInfo? live, DesktopNative.Point point,
+        DesktopNative.Point? previous, int dx, int dy)
+    {
+        var physical = DesktopNative.GetPhysicalCursorPos(out var real) ?
+            real.X == point.X && real.Y == point.Y ? "same" : $"x={Fraction(live ?? cached, real.X):0.000}" : "unavailable";
+        var moved = previous is { } last ? Math.Abs(point.X - last.X) + Math.Abs(point.Y - last.Y) : -1;
+        return $"leave {verdict}: cached={Describe(cached)} live={Describe(live)} x={Fraction(cached, point.X):0.000} " +
+            $"physical={physical} awareness={DesktopNative.DpiAwareness()} movedPx={moved} raw={dx},{dy}";
+    }
+
+    private static double Fraction(MonitorInfo? monitor, int x) => monitor is null || monitor.W <= 0 ? -1 : (x - monitor.X) / (double)monitor.W;
+    private static string Describe(MonitorInfo? monitor) => monitor is null ? "none" : $"{monitor.W}x{monitor.H}@{monitor.Dpi}";
+    private static string Describe(IReadOnlyList<MonitorInfo> list) => list.Count == 0 ? "none" : string.Join(",", list.Select(Describe));
+
+    // Answers a problem report requested from the Mac. Sizes, fractions and counts only.
+    private string BuildReport()
+    {
+        var configured = monitors.FirstOrDefault(item => item.Id == config?.Monitor);
+        var cursorLine = DesktopNative.GetCursorPos(out var point)
+            ? $"cursor: x={Fraction(configured, point.X):0.000} live={Describe(DesktopNative.MonitorAt(point.X, point.Y))} " +
+              $"physical={(DesktopNative.GetPhysicalCursorPos(out var real) ? real.X == point.X && real.Y == point.Y ? "same" : "differs" : "unavailable")}"
+            : "cursor: unavailable";
+        var lines = new List<string>
+        {
+            $"desktop worker: awareness={DesktopNative.DpiAwareness()} blind={blind} mouse={devices.HasMatch} handoff={handoff.Active is not null} " +
+                $"hidden={cursor.Hidden} edge={config?.Edge} configured={Describe(configured)}",
+            $"cached layout: {Describe(monitors)}",
+            $"live layout: {Describe(DesktopNative.Monitors())}",
+            cursorLine,
+            $"since last health line: selected={selectedMotion} other={otherMotion} held={heldMotion} clipped={clippedMotion} " +
+                $"leave={leaveRequests} rejected={rejectedLeaves}",
+            $"history ({history.Count}, oldest first):"
+        };
+        lines.AddRange(history.Lines().Select(line => "  " + line));
+        return string.Join("\n", lines);
     }
 
     private void ReportEdgeHealth()
@@ -230,14 +308,14 @@ internal sealed class DesktopWorker : ApplicationContext
         var now = RuntimeCompat.TickCount64;
         if (now - lastEdgeReport < 5000) return;
         lastEdgeReport = now;
-        if (handoff.Active is not null || selectedMotion + otherMotion != 0)
+        if (EdgeHealth.ShouldWrite(handoff.Active is not null, leaveRequests, rejectedLeaves))
         {
             var value = $"edge health: active={handoff.Active is not null} blind={blind} configured={config is not null} " +
-                $"mouse={devices.HasMatch} selected={selectedMotion} other={otherMotion} held={heldMotion} clipped={clippedMotion} leave={leaveRequests}";
+                $"mouse={devices.HasMatch} selected={selectedMotion} other={otherMotion} held={heldMotion} clipped={clippedMotion} leave={leaveRequests} rejected={rejectedLeaves}";
             // File IO never runs on the raw-input thread. At most one aggregate per five seconds.
             ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(value));
         }
-        selectedMotion = otherMotion = heldMotion = clippedMotion = leaveRequests = 0;
+        selectedMotion = otherMotion = heldMotion = clippedMotion = leaveRequests = rejectedLeaves = 0;
     }
 
     protected override void Dispose(bool disposing)

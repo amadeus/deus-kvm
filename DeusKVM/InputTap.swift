@@ -15,6 +15,8 @@ enum TapOutput: Sendable {
     case begin(Int, CGPoint, fromEdge: Bool)
     case end(Int)
     case disabled
+    /// A diagnostic line for the coordinator's log; counts only.
+    case note(String)
 }
 
 /// all mutable tap state is protected by lock; the callback decides routing synchronously
@@ -31,6 +33,11 @@ final class InputTap: @unchecked Sendable {
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "Capture")
     private var rawKeyboardReady = false
     private var rawShortcutKeys: Set<UInt16> = []
+    /// Tap thread only, while the tap runs.
+    private var keyboard: RawKeyboardMonitor?
+    private var resyncGate = ResyncGate()
+    /// Gesture types already noted in the diagnostics log this launch.
+    private var notedGestureTypes: Set<UInt32> = []
     private var eventTap: CFMachPort?
     private var runLoop: CFRunLoop?
     private var deferredTimer: CFRunLoopTimer?
@@ -40,13 +47,16 @@ final class InputTap: @unchecked Sendable {
     private let output: @MainActor @Sendable (TapOutput) -> Void
     /// Remote input skips the main thread; the receiver orders it by generation.
     private let forward: @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
+    private let stats: TapStats
 
     init(
         output: @escaping @MainActor @Sendable (TapOutput) -> Void,
-        forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
+        forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void,
+        stats: TapStats = TapStats()
     ) {
         self.output = output
         self.forward = forward
+        self.stats = stats
     }
 
     func configure(_ value: TapConfiguration) {
@@ -83,7 +93,14 @@ final class InputTap: @unchecked Sendable {
     func reenable() {
         lock.withLock {
             if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: true) }
+            // Events, releases included, were lost while macOS had the tap disabled.
+            _requestResync("tap re-enabled", force: true)
         }
+    }
+
+    /// Replaces tracked held input with macOS's current state, on the tap thread.
+    func resyncHeldInput(_ reason: String) {
+        lock.withLock { _requestResync(reason, force: true) }
     }
 
     func requestToggle() {
@@ -147,7 +164,7 @@ final class InputTap: @unchecked Sendable {
             CGEventType.keyDown, .keyUp, .flagsChanged, .mouseMoved, .leftMouseDown, .leftMouseUp,
             .leftMouseDragged, .rightMouseDown, .rightMouseUp, .rightMouseDragged,
             .otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel, MediaKeyEvent.eventType
-        ].reduce(CGEventMask(0)) { $0 | CGEventMask(1) << CGEventMask($1.rawValue) }
+        ].reduce(TrackpadGesture.eventMask) { $0 | CGEventMask(1) << CGEventMask($1.rawValue) }
         let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
@@ -160,19 +177,12 @@ final class InputTap: @unchecked Sendable {
             eventTap = tap
             runLoop = loop
             handoff.heldRawKeys.removeAll()
-            handoff.heldMediaKeys.removeAll()
             rawShortcutKeys.removeAll()
-            handoff.heldKeys = Set((0 ... 127).compactMap { code in
-                CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code)) ? UInt16(code) : nil
-            })
             location = CGEvent(source: nil)?.location ?? .zero
-            handoff.updateModifiers(CGEventSource.flagsState(.combinedSessionState))
-            handoff.heldButtons = Set((0 ... 31).compactMap { button in
-                guard let cgButton = CGMouseButton(rawValue: UInt32(button)) else { return nil }
-                return CGEventSource.buttonState(.combinedSessionState, button: cgButton) ? Int64(button) : nil
-            })
+            _ = _resyncFromSystem()
         }
         let keyboard = RawKeyboardMonitor { [weak self] key, down in self?._rawKey(key, down: down) }
+        self.keyboard = keyboard
         let keyboardReady = keyboard.start(on: loop)
         lock.withLock { rawKeyboardReady = keyboardReady }
         _emit(.keyboardMonitoring(token, keyboardReady))
@@ -181,6 +191,7 @@ final class InputTap: @unchecked Sendable {
         _emit(.installed(token, true))
         if lock.withLock({ runState.isRunning }) { CFRunLoopRun() }
         keyboard.stop(on: loop)
+        self.keyboard = nil
         CFMachPortInvalidate(tap)
         lock.withLock {
             _cancelTick()
@@ -210,6 +221,43 @@ final class InputTap: @unchecked Sendable {
         deferredTimer = timer
         CFRunLoopAddTimer(loop, timer, .commonModes)
         CFRunLoopWakeUp(loop)
+    }
+
+    /// Called with the lock held. Runs a resync on the tap thread after this callback returns,
+    /// at most every `ResyncGate.interval` unless forced.
+    private func _requestResync(_ reason: String, force: Bool = false) {
+        guard runState.isRunning, let runLoop else { return }
+        guard force || resyncGate.allow(now: ProcessInfo.processInfo.systemUptime) else { return }
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { [weak self] in self?._resync(reason) }
+        CFRunLoopWakeUp(runLoop)
+    }
+
+    /// Tap thread. Raw keyboard callbacks take the lock, so the device refresh runs first.
+    private func _resync(_ reason: String) {
+        let rawBefore = lock.withLock { handoff.heldRawKeys.count }
+        keyboard?.refresh()
+        lock.withLock {
+            guard runState.isRunning else { return }
+            defer { _scheduleTick() }
+            var correction = _resyncFromSystem()
+            correction.raw = max(0, rawBefore - handoff.heldRawKeys.count)
+            guard correction.total > 0 else { return }
+            let message = correction.message(reason)
+            log.notice("\(message, privacy: .public)")
+            _emit(.note(message))
+        }
+    }
+
+    /// Called with the lock held.
+    private func _resyncFromSystem() -> HeldInputCorrection {
+        let keys = Set((0 ... 127).compactMap { code in
+            CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code)) ? UInt16(code) : nil
+        })
+        let buttons = Set((0 ... 31).compactMap { button -> Int64? in
+            guard let cgButton = CGMouseButton(rawValue: UInt32(button)) else { return nil }
+            return CGEventSource.buttonState(.combinedSessionState, button: cgButton) ? Int64(button) : nil
+        })
+        return handoff.resync(keys: keys, buttons: buttons, flags: CGEventSource.flagsState(.combinedSessionState))
     }
 
     private func _cancelTick() {
@@ -270,6 +318,7 @@ final class InputTap: @unchecked Sendable {
                 _emit(.disabled)
                 return false
             }
+            if TrackpadGesture.eventTypes.contains(type.rawValue) { return _gesture(type: type, event: event) }
             return _handleInput(type: type, event: event)
         }
     }
@@ -295,6 +344,9 @@ final class InputTap: @unchecked Sendable {
             handoff.updateModifiers(event.flags)
         }
         _trackButtons(type: type, event: event)
+        if handoff.pendingToggle, !handoff.isReleased,
+           [.keyUp, .flagsChanged, .leftMouseUp, .rightMouseUp, .otherMouseUp].contains(type)
+        { _requestResync("toggle blocked by held input") }
         let motion = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged].contains(type)
         if !remote {
             if motion, returnProbe != nil, let point = CGEvent(source: nil)?.location {
@@ -312,13 +364,17 @@ final class InputTap: @unchecked Sendable {
         } else if motion {
             if let point = configuration.geometry?.parkingPoint,
                TapWorkSchedule.needsCursorCorrection(location: event.location, parkingPoint: point)
-            { CGWarpMouseCursorPosition(point) }
+            {
+                CGWarpMouseCursorPosition(point)
+                stats.warp()
+            }
             if dropNextMotion {
                 dropNextMotion = false
                 return true
             }
         }
         if wasRemote, let input = DirectInputEvent(type: type, event: event) {
+            stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
             forward(generation, input, ProcessInfo.processInfo.systemUptime)
         }
         return wasRemote
@@ -359,6 +415,7 @@ final class InputTap: @unchecked Sendable {
             handoff.heldMediaKeys.remove(media.key.rawValue)
         }
         if remote, let input = DirectInputEvent(type: MediaKeyEvent.eventType, event: event) {
+            stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
             forward(generation, input, ProcessInfo.processInfo.systemUptime)
         }
         return remote
@@ -383,12 +440,31 @@ final class InputTap: @unchecked Sendable {
         let dy = event.getIntegerValueField(.mouseEventDeltaY)
         // switch during this motion callback; only held-input release needs the timer
         edgeArmed = geometry.isOutward(dx: dx, dy: dy) || (dx == 0 && dy == 0)
-        if edgeArmed, handoff.isReleased { _begin(fromEdge: true) }
+        if edgeArmed, handoff.isReleased { _begin(fromEdge: true) } else if edgeArmed {
+            _requestResync("crossing blocked by held input")
+        }
     }
 
     private static let callback: CGEventTapCallBack = { _, type, event, userInfo in
         guard let userInfo else { return Unmanaged.passUnretained(event) }
         let owner = Unmanaged<InputTap>.fromOpaque(userInfo).takeUnretainedValue()
         return owner._handle(type: type, event: event) ? nil : Unmanaged.passUnretained(event)
+    }
+}
+
+extension InputTap {
+    /// Called with the tap lock held. Gestures pass through on the Mac and are swallowed while
+    /// controlling Windows.
+    private func _gesture(type: CGEventType, event _: CGEvent) -> Bool {
+        guard remote else { return false }
+        if notedGestureTypes.insert(type.rawValue).inserted {
+            _note("gesture events suppressed while controlling Windows: type \(type.rawValue)")
+        }
+        return true
+    }
+
+    private func _note(_ message: String) {
+        log.notice("\(message, privacy: .public)")
+        _emit(.note(message))
     }
 }
