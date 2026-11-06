@@ -12,24 +12,42 @@ struct TouchpadContact: Sendable, Equatable {
     var confidence = true
 }
 
-/// The Windows Precision Touchpad input report (Report ID 7): five contact slots, scan time,
-/// contact count and the pad's button. Slots past `contacts.count` stay zero, which Windows
-/// ignores because Contact Count says how many are valid.
+/// The Windows Precision Touchpad input report (Report ID 7): two contact slots, scan time,
+/// contact count and the pad's button, 16 bytes. The pad reports in hybrid mode: a frame with
+/// more contacts than slots is sent as several reports with the same scan time, the first
+/// carrying the frame's contact count and the rest zero (`reports(contacts:scanTime:button:)`).
+/// Unused slots stay zero.
 struct TouchpadReport: Sendable, Equatable {
+    /// Contact Count Maximum in Device Capabilities: what a frame may hold.
     static let maximumContacts = 5
+    /// Slots in the descriptor: what one report may hold.
+    static let contactsPerReport = 2
     static let logicalMaximum: UInt16 = 4095
     private static let contactBytes = 6
 
     var contacts: [TouchpadContact] = []
     /// Relative scan time in 100 µs units, wrapping at 16 bits.
     var scanTime: UInt16 = 0
+    /// Contacts in the whole frame; zero in a frame's second and later reports.
+    var contactCount: UInt8 = 0
     var button = false
 
     static let zero = TouchpadReport()
 
+    /// One frame as the reports that carry it, in sending order.
+    static func reports(contacts: [TouchpadContact], scanTime: UInt16, button: Bool) -> [TouchpadReport] {
+        let frame = Array(contacts.prefix(maximumContacts))
+        let chunks = stride(from: 0, to: max(frame.count, 1), by: contactsPerReport).map { start in
+            Array(frame[start ..< min(start + contactsPerReport, frame.count)])
+        }
+        return chunks.enumerated().map { index, slice in
+            TouchpadReport(contacts: slice, scanTime: scanTime, contactCount: index == 0 ? UInt8(frame.count) : 0, button: button)
+        }
+    }
+
     var data: Data {
-        var bytes = [UInt8](repeating: 0, count: Self.maximumContacts * Self.contactBytes + 4)
-        for (slot, contact) in contacts.prefix(Self.maximumContacts).enumerated() {
+        var bytes = [UInt8](repeating: 0, count: Self.contactsPerReport * Self.contactBytes + 4)
+        for (slot, contact) in contacts.prefix(Self.contactsPerReport).enumerated() {
             let base = slot * Self.contactBytes
             bytes[base] = (contact.confidence ? 1 : 0) | (contact.tip ? 2 : 0)
             bytes[base + 1] = contact.id
@@ -38,10 +56,10 @@ struct TouchpadReport: Sendable, Equatable {
             bytes[base + 4] = UInt8(contact.y & 0xFF)
             bytes[base + 5] = UInt8(contact.y >> 8)
         }
-        let tail = Self.maximumContacts * Self.contactBytes
+        let tail = Self.contactsPerReport * Self.contactBytes
         bytes[tail] = UInt8(scanTime & 0xFF)
         bytes[tail + 1] = UInt8(scanTime >> 8)
-        bytes[tail + 2] = UInt8(min(contacts.count, Self.maximumContacts))
+        bytes[tail + 2] = contactCount
         bytes[tail + 3] = button ? 1 : 0
         return Data(bytes)
     }

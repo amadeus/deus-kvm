@@ -32,7 +32,7 @@ extension HIDPeripheral {
         transport.playTouchpad(frames, interval: TouchpadScript.interval) { [weak self] accepted, deferred in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    self?.note("touchpad: \(script.rawValue) done, \(accepted) frames sent at once, \(deferred) waited for the link")
+                    self?.note("touchpad: \(script.rawValue) done, \(accepted) reports sent at once, \(deferred) waited for the link")
                 }
             }
         }

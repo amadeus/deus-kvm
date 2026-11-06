@@ -471,8 +471,6 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
     }
 }
 
-/// Touchpad playback and companion frames: same queue, same private state, kept out of the
-/// class body for length.
 extension BluetoothTransport {
     // MARK: Precision touchpad experiment (main thread enqueues; the queue sends)
 
@@ -484,17 +482,10 @@ extension BluetoothTransport {
         var index = 0
         var accepted = 0
         var deferred = 0
-
-        func advanced(sent: Bool) -> TouchpadPlayback {
-            var next = self
-            next.index += 1
-            if sent { next.accepted += 1 } else { next.deferred += 1 }
-            return next
-        }
     }
 
     /// Sends scripted contact frames `interval` apart, each stamped with the scan time of its
-    /// send. The completion gets the frames CoreBluetooth took at once and the frames that
+    /// send. The completion gets the reports CoreBluetooth took at once and the reports that
     /// waited in the backpressure queue.
     func playTouchpad(_ frames: [TouchpadFrame], interval: TimeInterval, completion: @escaping @Sendable (Int, Int) -> Void) {
         queue.async { [self] in
@@ -507,14 +498,16 @@ extension BluetoothTransport {
               let characteristic = reports[ReportID.touchpad.rawValue]
         else { playback.completion(playback.accepted, playback.deferred); return }
         let frame = playback.frames[playback.index]
-        let report = TouchpadReport(
-            contacts: frame.contacts, scanTime: TouchpadReport.scanTime(uptime: ProcessInfo.processInfo.systemUptime),
-            button: frame.button
-        )
+        let scanTime = TouchpadReport.scanTime(uptime: ProcessInfo.processInfo.systemUptime)
         // Contacts are momentary: a read or resubscription sees no fingers, never a stale frame.
         cached[ReportID.touchpad.rawValue] = TouchpadReport.zero.data
-        let next = playback.advanced(sent: send(report.data, to: characteristic))
-        queue.asyncAfter(deadline: .now() + playback.interval) { [self] in playTouchpadFrame(next) }
+        var next = playback
+        next.index += 1
+        for report in TouchpadReport.reports(contacts: frame.contacts, scanTime: scanTime, button: frame.button) {
+            if send(report.data, to: characteristic) { next.accepted += 1 } else { next.deferred += 1 }
+        }
+        let scheduled = next
+        queue.asyncAfter(deadline: .now() + playback.interval) { [self] in playTouchpadFrame(scheduled) }
     }
 
     // MARK: Companion frames (main thread enqueues; the queue sends)

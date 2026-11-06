@@ -1,8 +1,8 @@
 import XCTest
 
 final class TouchpadReportTests: XCTestCase {
-    func testZeroReportIsAllZeroAndThirtyFourBytes() {
-        XCTAssertEqual(Array(TouchpadReport.zero.data), Array(repeating: 0, count: 34))
+    func testZeroReportIsAllZeroAndSixteenBytes() {
+        XCTAssertEqual(Array(TouchpadReport.zero.data), Array(repeating: 0, count: 16))
     }
 
     func testContactsScanTimeCountAndButtonLandAtTheirOffsets() {
@@ -12,21 +12,35 @@ final class TouchpadReportTests: XCTestCase {
                 TouchpadContact(id: 7, x: 0, y: 1, tip: false, confidence: false)
             ],
             scanTime: 0xABCD,
+            contactCount: 2,
             button: true
         )
         let bytes = Array(report.data)
         XCTAssertEqual(Array(bytes[0 ..< 6]), [0x03, 0, 0x23, 0x01, 0xFF, 0x0F])
         XCTAssertEqual(Array(bytes[6 ..< 12]), [0x00, 7, 0, 0, 1, 0])
-        XCTAssertEqual(Array(bytes[12 ..< 30]), Array(repeating: 0, count: 18), "unused slots stay zero")
-        XCTAssertEqual(Array(bytes[30 ..< 34]), [0xCD, 0xAB, 2, 1])
+        XCTAssertEqual(Array(bytes[12 ..< 16]), [0xCD, 0xAB, 2, 1])
+        XCTAssertEqual(
+            Array(TouchpadReport(contacts: [TouchpadContact(id: 3, x: 1, y: 1)], contactCount: 1).data[6 ..< 12]),
+            Array(repeating: 0, count: 6),
+            "an unused slot stays zero"
+        )
     }
 
-    func testMoreThanFiveContactsAreTruncatedToTheDescriptor() {
-        let contacts = (0 ..< 7).map { TouchpadContact(id: UInt8($0), x: 1, y: 1) }
-        let bytes = Array(TouchpadReport(contacts: contacts).data)
-        XCTAssertEqual(bytes.count, 34)
-        XCTAssertEqual(bytes[32], 5)
-        XCTAssertEqual(bytes[24 ..< 30].map(\.self), [0x03, 4, 1, 0, 1, 0])
+    func testHybridSplittingSendsOneFrameAsSeveralReports() {
+        let contacts = (0 ..< 5).map { TouchpadContact(id: UInt8($0), x: UInt16($0), y: 9) }
+        let reports = TouchpadReport.reports(contacts: contacts, scanTime: 77, button: true)
+        XCTAssertEqual(reports.map { $0.contacts.map(\.id) }, [[0, 1], [2, 3], [4]])
+        XCTAssertEqual(reports.map(\.contactCount), [5, 0, 0], "the first report carries the frame's count")
+        XCTAssertTrue(reports.allSatisfy { $0.scanTime == 77 && $0.button })
+        XCTAssertEqual(TouchpadReport.reports(contacts: Array(contacts.prefix(2)), scanTime: 1, button: false).count, 1)
+        XCTAssertEqual(TouchpadReport.reports(contacts: Array(contacts.prefix(3)), scanTime: 1, button: false).map(\.contactCount), [3, 0])
+        let empty = TouchpadReport.reports(contacts: [], scanTime: 5, button: false)
+        XCTAssertEqual(empty, [TouchpadReport(contacts: [], scanTime: 5, contactCount: 0, button: false)])
+        XCTAssertEqual(
+            TouchpadReport.reports(contacts: contacts + contacts, scanTime: 1, button: false).first?.contactCount,
+            5,
+            "more than the maximum is truncated"
+        )
     }
 
     func testScanTimeCountsHundredMicrosecondTicksAndWraps() {

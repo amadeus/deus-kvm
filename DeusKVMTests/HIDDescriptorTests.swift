@@ -21,6 +21,12 @@ final class HIDDescriptorTests: XCTestCase {
         XCTAssertEqual(inputs.filter { $0.reportID == 2 }.reduce(0) { $0 + $1.size * $1.count }, 64)
     }
 
+    func testReportMapWithTouchpadFitsOneBluetoothAttribute() {
+        // 734 bytes with five slots broke fresh pairings on Windows; the limit is the ATT maximum.
+        XCTAssertLessThanOrEqual(HIDProfile.reportMap(touchpad: true).count, HIDProfile.reportMapAttributeLimit)
+        XCTAssertEqual(HIDProfile.reportMapAttributeLimit, 512)
+    }
+
     func testTouchpadDescriptorMatchesWireFormatAndMicrosoftRequirements() throws {
         let map = HIDProfile.reportMap(touchpad: true)
         XCTAssertEqual(map.prefix(HIDProfile.reportMapData.count), HIDProfile.reportMapData, "existing collections are untouched")
@@ -30,30 +36,29 @@ final class HIDDescriptorTests: XCTestCase {
         let touchpad = fields.filter { $0.reportID == 7 && $0.kind == .input }
         XCTAssertEqual(touchpad.reduce(0) { $0 + $1.size * $1.count }, TouchpadReport.zero.data.count * 8)
         let flags = touchpad.filter { $0.page == 0x0D && $0.usages == [0x47, 0x42] }
-        XCTAssertEqual(flags.map(\.offset), [0, 48, 96, 144, 192], "confidence and tip switch open each finger")
-        XCTAssertTrue(flags.allSatisfy { $0.size == 1 && $0.count == 2 && $0.physicalMaximum == 0 && $0.unit == 0 })
+        XCTAssertEqual(flags.map(\.offset), [0, 48], "confidence and tip switch open each of the two slots")
+        XCTAssertTrue(flags.allSatisfy { $0.size == 1 && $0.count == 2 && $0.maximum == 1 })
         let ids = touchpad.filter { $0.page == 0x0D && $0.usages == [0x51] }
-        XCTAssertEqual(ids.map(\.offset), [8, 56, 104, 152, 200])
+        XCTAssertEqual(ids.map(\.offset), [8, 56])
         XCTAssertTrue(ids.allSatisfy { $0.size == 8 && $0.maximum == 127 })
         let xs = touchpad.filter { $0.page == 0x01 && $0.usages == [0x30] }
-        XCTAssertEqual(xs.map(\.offset), [16, 64, 112, 160, 208])
-        XCTAssertTrue(xs
-            .allSatisfy { $0.size == 16 && $0.maximum == 4095 && $0.physicalMaximum == 614 && $0.unit == 0x13 && $0.unitExponent == 0x0E })
+        XCTAssertEqual(xs.map(\.offset), [16, 64])
+        XCTAssertTrue(xs.allSatisfy {
+            $0.size == 16 && $0.minimum == 0 && $0.maximum == 4095 && $0.physicalMaximum == 614 && $0.unit == 0x13 && $0
+                .unitExponent == 0x0E
+        })
         let ys = touchpad.filter { $0.page == 0x01 && $0.usages == [0x31] }
-        XCTAssertEqual(ys.map(\.offset), [32, 80, 128, 176, 224])
+        XCTAssertEqual(ys.map(\.offset), [32, 80])
         XCTAssertTrue(ys.allSatisfy { $0.size == 16 && $0.maximum == 4095 && $0.physicalMaximum == 435 && $0.unit == 0x13 })
         let scanTime = try XCTUnwrap(touchpad.first { $0.page == 0x0D && $0.usages == [0x56] })
         XCTAssertEqual(
             [scanTime.offset, scanTime.size, scanTime.maximum, scanTime.unit, scanTime.unitExponent],
-            [240, 16, 65535, 0x1001, 0x0C]
+            [96, 16, 65535, 0x1001, 0x0C]
         )
         let contactCount = try XCTUnwrap(touchpad.first { $0.page == 0x0D && $0.usages == [0x54] })
-        XCTAssertEqual(
-            [contactCount.offset, contactCount.size, contactCount.maximum, contactCount.physicalMaximum, contactCount.unit],
-            [256, 8, 127, 0, 0]
-        )
+        XCTAssertEqual([contactCount.offset, contactCount.size, contactCount.maximum], [112, 8, 127])
         let button = try XCTUnwrap(touchpad.first { $0.page == 0x09 && $0.usages == [0x01] })
-        XCTAssertEqual([button.offset, button.size, button.count, button.maximum], [264, 1, 1, 1])
+        XCTAssertEqual([button.offset, button.size, button.count, button.maximum], [120, 1, 1, 1])
 
         let capabilities = try XCTUnwrap(fields.first { $0.reportID == 8 })
         XCTAssertEqual(capabilities.kind, .feature)
