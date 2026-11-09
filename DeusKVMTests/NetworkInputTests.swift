@@ -39,6 +39,8 @@ final class NetworkInputTests: XCTestCase {
         XCTAssertNil(state.acked(2, now: 1.13), "nothing is pending now")
         XCTAssertEqual(state.frames, InputStreamState.window + 1)
         XCTAssertNotNil(state.motion(dx: 1, dy: 1, now: 1.145), "after the flush motion flows again")
+        XCTAssertNil(state.acked(6, now: 1.2), "everything acknowledged, nothing pending")
+        XCTAssertNotNil(state.motion(dx: 1, dy: 1, now: 3), "a rest is not a gap")
         XCTAssertTrue(state.summary.contains("coalesced=2"))
         XCTAssertTrue(state.summary.contains("gapMaxMs=55.0"), state.summary)
     }

@@ -63,11 +63,11 @@ public static class InputRecord
 
 /// <summary>
 /// What arrived on the PC and how evenly: the mirror of the Mac's gap statistics, so one
-/// problem report shows both ends. Gaps over a quarter second are a lifted finger, not jitter.
+/// problem report shows both ends. Gaps over 100 ms are a lifted finger, not jitter.
 /// </summary>
 public sealed class InputArrivalStats
 {
-    public const double StrokeGapMs = 250;
+    public const double StrokeGapMs = 100;
     public int Received { get; private set; }
     public int Injected { get; set; }
     public int Discarded { get; set; }

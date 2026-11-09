@@ -85,6 +85,8 @@ struct InputStreamState: Sendable, Equatable {
     static let window = 4
     static let stallAfter: TimeInterval = 1
     static let pingAfter: TimeInterval = 1
+    /// Motion gaps longer than this are a lifted finger, not delivery jitter.
+    static let strokeGap: TimeInterval = 0.1
 
     private(set) var lastSent: UInt32 = 0
     private(set) var lastAcked: UInt32 = 0
@@ -110,7 +112,7 @@ struct InputStreamState: Sendable, Equatable {
 
     /// The record to send now, or nothing if it was folded into the pending delta.
     mutating func motion(dx: Int32, dy: Int32, now: TimeInterval) -> Data? {
-        if let last = lastMotionAt { gapMax = max(gapMax, (now - last) * 1000) }
+        if let last = lastMotionAt, now - last <= Self.strokeGap { gapMax = max(gapMax, (now - last) * 1000) }
         lastMotionAt = now
         guard inflight < Self.window, !hasPending else {
             pendingX &+= dx; pendingY &+= dy; hasPending = true; coalesced += 1

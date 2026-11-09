@@ -41,14 +41,15 @@ final class TapStats: @unchecked Sendable {
         var lagMaxMs = 0.0
         var warps = 0
         /// Pointer motion events captured while remote, and the spacing between consecutive
-        /// ones within a stroke (gaps over `strokeGap` are a lifted finger, not jitter).
+        /// ones within a stroke (gaps over `strokeGap` are a lifted finger, not jitter; the pad
+        /// delivers every 8 ms and a tap's lift-and-land takes well over 100 ms).
         var motion = 0
         var motionGaps = 0
         var motionGapSumMs = 0.0
         var motionGapMaxMs = 0.0
     }
 
-    static let strokeGap: TimeInterval = 0.25
+    static let strokeGap: TimeInterval = 0.1
     private let lock = NSLock()
     private var current = Interval()
     private var lastMotionAt: TimeInterval?
