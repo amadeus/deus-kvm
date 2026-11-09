@@ -93,6 +93,7 @@ targets:
       - DeusKVM/LowEnergy/TransportStats.swift
       - DeusKVM/TrackpadGesture.swift
       - DeusKVM/PointerRouting.swift
+      - DeusKVM/ScrollAccumulator.swift
       - DeusKVM/NetworkInput.swift
     settings:
       base:

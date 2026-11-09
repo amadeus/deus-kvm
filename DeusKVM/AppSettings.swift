@@ -14,6 +14,8 @@ enum AppSettings {
 
     static let invertVerticalScrollKey = "DeusKVM.invertVerticalScroll"
     static let invertHorizontalScrollKey = "DeusKVM.invertHorizontalScroll"
+    /// Multiplier on wheel/pan steps while controlling Windows (ScrollAccumulator range).
+    static let scrollSpeedKey = "DeusKVM.scrollSpeed"
 
     static let edgeSwitchEnabledKey = "DeusKVM.edgeSwitchEnabled"
     static let edgeDisplayUUIDKey = "DeusKVM.edgeDisplayUUID"

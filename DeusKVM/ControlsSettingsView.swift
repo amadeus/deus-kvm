@@ -6,6 +6,7 @@ struct ControlsSettingsView: View {
     @State private var recording = false
     @AppStorage(AppSettings.invertVerticalScrollKey) private var invertVerticalScroll = false
     @AppStorage(AppSettings.invertHorizontalScrollKey) private var invertHorizontalScroll = false
+    @AppStorage(AppSettings.scrollSpeedKey) private var scrollSpeed = ScrollAccumulator.defaultSpeed
     @AppStorage(AppSettings.clipboardEnabledKey) private var clipboardEnabled = true
 
     var body: some View {
@@ -54,6 +55,13 @@ struct ControlsSettingsView: View {
                     .toggleStyle(.switch)
                 Toggle("Invert horizontal scrolling", isOn: $invertHorizontalScroll)
                     .toggleStyle(.switch)
+                HStack {
+                    Text("Scroll speed")
+                    Slider(value: $scrollSpeed, in: ScrollAccumulator.minimum ... ScrollAccumulator.maximum)
+                    Text(verbatim: String(format: "%.2g×", scrollSpeed)).monospacedDigit().foregroundStyle(.secondary)
+                    Button("Reset") { scrollSpeed = ScrollAccumulator.defaultSpeed }
+                        .buttonStyle(.borderless).controlSize(.small)
+                }
             } header: {
                 Text(L10n.SettingsOrganization.inputSettings)
             }

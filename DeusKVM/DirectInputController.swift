@@ -16,6 +16,7 @@ final class DirectInputController {
     private var pressedConsumerKeys: [ConsumerKey] = []
     private var sendConsumer: ((ConsumerReport) -> Void)?
     private var sendMouse: ((MouseReport) -> Void)?
+    private var scroll = ScrollAccumulator()
     private var sendNetwork: ((NetworkInputEvent) -> Void)?
     private var networkReady: (() -> Bool)?
     /// Buttons pressed over the network stream, released there when capture stops.
@@ -34,6 +35,7 @@ final class DirectInputController {
         sendNetwork = hid.sendNetwork
         networkReady = hid.networkReady
         capsLock = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift)
+        scroll.reset()
         isCapturing = true
     }
 
@@ -94,10 +96,13 @@ final class DirectInputController {
         case let .networkButton(button, isDown):
             networkButton(button, isDown)
         case let .scroll(wheel, pan):
-            // Source deltas are already clamped to -127...127, so negation is safe.
             // Read on each scroll so settings changes apply during capture too.
-            let vertical = defaults.bool(forKey: AppSettings.invertVerticalScrollKey) ? -wheel : wheel
-            let horizontal = defaults.bool(forKey: AppSettings.invertHorizontalScrollKey) ? -pan : pan
+            let speed = defaults.object(forKey: AppSettings.scrollSpeedKey) as? Double ?? ScrollAccumulator.defaultSpeed
+            let scaled = scroll.scale(wheel: wheel, pan: pan, by: speed)
+            // Source deltas are clamped to -127...127, so negation is safe.
+            let vertical = defaults.bool(forKey: AppSettings.invertVerticalScrollKey) ? -scaled.wheel : scaled.wheel
+            let horizontal = defaults.bool(forKey: AppSettings.invertHorizontalScrollKey) ? -scaled.pan : scaled.pan
+            guard vertical != 0 || horizontal != 0 else { return }
             // Wheel and pan are relative: one report per step. A trailing zero report doubled
             // scroll traffic and filled CoreBluetooth's queue; reads never replay relative fields.
             sendMouse?(MouseReport(buttons: pressedMouseButtons, wheel: vertical, pan: horizontal))
