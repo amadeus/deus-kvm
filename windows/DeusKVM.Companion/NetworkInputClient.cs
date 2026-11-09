@@ -6,9 +6,10 @@ namespace DeusKVM.Companion;
 
 /// <summary>
 /// The PC's end of the Mac's pointer stream (NETWORK_POINTER_PLAN.md): connects to the offered
-/// listener, runs the nonce handshake under the "input" key purpose, delivers each record and
-/// acknowledges it at once. Reconnects with backoff while the offer stands; disposing ends it.
-/// Runs on the thread pool; the caller marshals deliveries to its own thread.
+/// listener, runs the nonce handshake under the "input" key purpose, delivers each record from
+/// the receiving thread and acknowledges once per read (cumulative, so a 1000 Hz mouse does not
+/// cost an acknowledgement per step). Reconnects with backoff while the offer stands; disposing
+/// ends it. Deliveries arrive on the thread pool; the caller must be safe for that.
 /// </summary>
 internal sealed class NetworkInputClient : IDisposable
 {
@@ -80,20 +81,32 @@ internal sealed class NetworkInputClient : IDisposable
         using (outgoing)
         {
             status("up");
-            var header = new byte[1];
+            var buffer = new byte[4096];
+            var filled = 0;
             var ack = new byte[InputRecord.SealedAckLength];
             while (true)
             {
-                await wire.ReadExactlyAsync(header, lifetime.Token).ConfigureAwait(false);
-                int length = header[0];
-                if (length < 16) throw new InvalidDataException("Short record");
-                var sealedRecord = new byte[length];
-                await wire.ReadExactlyAsync(sealedRecord, lifetime.Token).ConfigureAwait(false);
-                var plain = incoming.Open(sealedRecord);
-                if (!InputRecord.TryParse(plain, out var record)) throw new InvalidDataException("Unknown record");
-                deliver(record);
-                outgoing.Seal(InputRecord.Ack(record.Sequence, InputRecord.Clock()), ack);
-                await wire.WriteAsync(ack, lifetime.Token).ConfigureAwait(false);
+                // One read takes whatever arrived: a single step at rest, a burst under load.
+                var read = await wire.ReadAsync(buffer, filled, buffer.Length - filled, lifetime.Token).ConfigureAwait(false);
+                if (read <= 0) throw new IOException("Stream closed");
+                filled += read;
+                var offset = 0;
+                uint? last = null;
+                while (filled - offset >= 1 && filled - offset >= 1 + buffer[offset])
+                {
+                    int length = buffer[offset];
+                    if (length < 16) throw new InvalidDataException("Short record");
+                    var plain = incoming.Open(buffer.AsSpan(offset + 1, length).ToArray());
+                    if (!InputRecord.TryParse(plain, out var record)) throw new InvalidDataException("Unknown record");
+                    deliver(record);
+                    last = record.Sequence;
+                    offset += 1 + length;
+                }
+                if (offset > 0) { Buffer.BlockCopy(buffer, offset, buffer, 0, filled - offset); filled -= offset; }
+                if (filled == buffer.Length) throw new InvalidDataException("Oversized record");
+                if (last is not { } sequence) continue;
+                outgoing.Seal(InputRecord.Ack(sequence, InputRecord.Clock()), ack);
+                await wire.WriteAsync(ack, 0, ack.Length, lifetime.Token).ConfigureAwait(false);
             }
         }
     }

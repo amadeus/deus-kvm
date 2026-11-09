@@ -26,8 +26,11 @@ internal sealed class DesktopWorker : ApplicationContext
     private NetworkInputClient? network;
     private SynchronizationContext? context;
     private string networkStatus = "Network pointer: no offer";
-    private uint heldNetworkButtons; // MOUSEEVENTF up flags still owed
-    private bool defaultDesktop;
+    private readonly object networkGate = new();
+    private uint heldNetworkButtons; // MOUSEEVENTF up flags still owed; under networkGate
+    private volatile bool defaultDesktop;
+    // Injected motion since the desktop thread last ran the edge test; one post at a time.
+    private int pendingDx, pendingDy, observePosted;
     private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests, rejectedLeaves;
     private long lastEdgeReport, lastRejectionLog;
     // Recent edge/desktop decisions for a problem report requested from the Mac; memory only.
@@ -156,8 +159,7 @@ internal sealed class DesktopWorker : ApplicationContext
                     handoff.Exit();
                     ReleaseNetworkButtons();
                     if (blind == 0) cursor.Hide();
-                    history.Add($"exit: switch={message.SwitchId} network={arrivals.Summary}");
-                    arrivals.Reset();
+                    lock (networkGate) { history.Add($"exit: switch={message.SwitchId} network={arrivals.Summary}"); arrivals.Reset(); }
                 }
                 break;
             case "input-offer": StartNetwork(message.Report); break;
@@ -280,7 +282,7 @@ internal sealed class DesktopWorker : ApplicationContext
         catch (System.Text.Json.JsonException) { }
         if (offer is not { Valid: true } || context is not { } post) { SetNetworkStatus("invalid offer"); return; }
         history.Add($"network: offer port={offer.Port} hosts={offer.Hosts.Length}");
-        network = new NetworkInputClient(offer, record => post.Post(_ => Inject(record), null),
+        network = new NetworkInputClient(offer, Inject,
             text => post.Post(_ => { if (text.StartsWith("closed", StringComparison.Ordinal)) ReleaseNetworkButtons(); SetNetworkStatus(text); }, null));
     }
 
@@ -300,33 +302,51 @@ internal sealed class DesktopWorker : ApplicationContext
         UpdateDesktopState(DesktopNative.DesktopState());
     }
 
-    // One record from the stream, on the desktop thread. Only while the Mac owns the handoff and
-    // the default desktop is up; otherwise it is counted and dropped (the Mac keeps acks flowing).
+    // One record from the stream, on the receiving thread: injected at once, since SendInput
+    // needs no particular thread, and only while the Mac owns the handoff and the default
+    // desktop is up (otherwise counted and dropped; the Mac keeps acknowledgements flowing).
+    // The edge test runs on the desktop thread over the motion accumulated since its last turn.
     private void Inject(InputEvent record)
     {
         if (record.Type == InputRecord.Ping) return;
-        arrivals.Observe(DesktopNative.Milliseconds());
-        if (handoff.Active is null || !defaultDesktop) { arrivals.Discarded++; return; }
-        if (record.IsMotion)
+        lock (networkGate)
         {
-            if (DesktopNative.InjectMouse(record.Dx, record.Dy, DesktopNative.MouseMove)) arrivals.Injected++;
-            ObserveMotion(record.Dx, record.Dy);
+            arrivals.Observe(DesktopNative.Milliseconds());
+            if (handoff.Active is null || !defaultDesktop) { arrivals.Discarded++; return; }
+            if (record.IsMotion)
+            {
+                if (DesktopNative.InjectMouse(record.Dx, record.Dy, DesktopNative.MouseMove)) arrivals.Injected++;
+                pendingDx += record.Dx; pendingDy += record.Dy;
+            }
+            else if (record.IsButton)
+            {
+                var (down, up) = DesktopNative.ButtonFlags(record.Button);
+                if (record.Down) heldNetworkButtons |= up; else heldNetworkButtons &= ~up;
+                if (DesktopNative.InjectMouse(0, 0, record.Down ? down : up)) arrivals.Injected++;
+                return;
+            }
         }
-        else if (record.IsButton)
-        {
-            var (down, up) = DesktopNative.ButtonFlags(record.Button);
-            if (record.Down) heldNetworkButtons |= up; else heldNetworkButtons &= ~up;
-            if (DesktopNative.InjectMouse(0, 0, record.Down ? down : up)) arrivals.Injected++;
-        }
+        if (Interlocked.Exchange(ref observePosted, 1) == 0) context?.Post(_ => ObserveInjected(), null);
+    }
+
+    private void ObserveInjected()
+    {
+        int dx, dy;
+        lock (networkGate) { dx = pendingDx; dy = pendingDy; pendingDx = pendingDy = 0; }
+        Interlocked.Exchange(ref observePosted, 0);
+        ObserveMotion(dx, dy);
     }
 
     // A button pressed from the stream is released here when the stream, the handoff or the
     // worker ends, so Windows never keeps one that the Mac can no longer release.
     private void ReleaseNetworkButtons()
     {
-        if (heldNetworkButtons == 0) return;
-        DesktopNative.InjectMouse(0, 0, heldNetworkButtons);
-        heldNetworkButtons = 0;
+        lock (networkGate)
+        {
+            if (heldNetworkButtons == 0) return;
+            DesktopNative.InjectMouse(0, 0, heldNetworkButtons);
+            heldNetworkButtons = 0;
+        }
     }
 
     // A layout that disagrees with Windows' live monitor is re-read, and the durable log gets a

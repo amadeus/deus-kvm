@@ -76,13 +76,16 @@ enum InputRecord {
     }
 }
 
-/// One connection's flow control and counters. Motion is sent while at most `window` records
-/// are unacknowledged; beyond that it accumulates into one pending delta that leaves with the
-/// next acknowledgement. Buttons always go out at once, after any pending motion, so nothing a
-/// button depends on is reordered. Without an acknowledgement for `stallAfter` the stream is
-/// stalled and the caller closes it.
+/// One connection's flow control and counters. Motion is sent as it comes while the PC keeps
+/// up; once the oldest unacknowledged record is older than `maxLag` (the PC is behind), motion
+/// accumulates into one pending delta that leaves with the next acknowledgement. Buttons
+/// always go out at once, after any pending motion, so nothing a button depends on is
+/// reordered. Without an acknowledgement for `stallAfter` the stream is stalled and the caller
+/// closes it. The PC's receive clock in each acknowledgement, against the capture clock the
+/// record carried, gives the one-way jitter of delivery (clock offsets cancel).
 struct InputStreamState: Sendable, Equatable {
-    static let window = 4
+    static let maxLag: TimeInterval = 0.04
+    static let maxInflight = 256
     static let stallAfter: TimeInterval = 1
     static let pingAfter: TimeInterval = 1
     /// Motion gaps longer than this are a lifted finger, not delivery jitter.
@@ -105,16 +108,23 @@ struct InputStreamState: Sendable, Equatable {
     private var rttCount = 0
     private var rttMax = 0.0
     private var gapMax = 0.0
+    private var deliveryMin: Int32?
+    private var deliveryMax: Int32?
 
     var inflight: Int {
         Int(lastSent &- lastAcked)
+    }
+
+    /// The PC has not kept up: hold motion until it acknowledges.
+    func behind(now: TimeInterval) -> Bool {
+        inflight >= Self.maxInflight || sentAt.values.min().map { now - $0 > Self.maxLag } ?? false
     }
 
     /// The record to send now, or nothing if it was folded into the pending delta.
     mutating func motion(dx: Int32, dy: Int32, now: TimeInterval) -> Data? {
         if let last = lastMotionAt, now - last <= Self.strokeGap { gapMax = max(gapMax, (now - last) * 1000) }
         lastMotionAt = now
-        guard inflight < Self.window, !hasPending else {
+        guard !hasPending, !behind(now: now) else {
             pendingX &+= dx; pendingY &+= dy; hasPending = true; coalesced += 1
             return nil
         }
@@ -131,17 +141,23 @@ struct InputStreamState: Sendable, Equatable {
         return records
     }
 
-    /// The PC acknowledged `sequence`: the pending delta goes out if the window has room.
-    mutating func acked(_ sequence: UInt32, now: TimeInterval) -> Data? {
-        guard sequence &- lastAcked <= UInt32(Self.window + 1), sequence != lastAcked else { return nil }
+    /// The PC acknowledged everything up to `sequence`, received at `received` on its clock:
+    /// the pending delta goes out if the PC has caught up.
+    mutating func acked(_ sequence: UInt32, received: UInt32 = 0, now: TimeInterval) -> Data? {
+        let ahead = sequence &- lastAcked
+        guard ahead > 0, ahead <= lastSent &- lastAcked else { return nil }
         lastAcked = sequence
         lastAckAt = now
         if let sent = sentAt.removeValue(forKey: sequence) {
             let rtt = (now - sent) * 1000
             rttSum += rtt; rttCount += 1; rttMax = max(rttMax, rtt)
+            // Clock offset plus one-way latency, in 100 µs; its spread is the delivery jitter.
+            let delivery = Int32(bitPattern: received &- InputRecord.clock(uptime: sent))
+            deliveryMin = min(deliveryMin ?? delivery, delivery)
+            deliveryMax = max(deliveryMax ?? delivery, delivery)
         }
-        sentAt = sentAt.filter { $0.key &- sequence <= UInt32(Self.window) }
-        guard hasPending, inflight < Self.window else { return nil }
+        sentAt = sentAt.filter { $0.key &- sequence <= UInt32(Self.maxInflight) }
+        guard hasPending, !behind(now: now) else { return nil }
         return flushPending(now: now)
     }
 
@@ -163,9 +179,10 @@ struct InputStreamState: Sendable, Equatable {
 
     var summary: String {
         let rttAverage = rttCount == 0 ? 0 : rttSum / Double(rttCount)
+        let jitter = deliveryMin.flatMap { low in deliveryMax.map { Double($0 - low) / 10 } } ?? 0
         return "frames=\(frames) buttons=\(buttons) coalesced=\(coalesced) stalls=\(stalls) " +
             "rttAvgMs=\(String(format: "%.1f", rttAverage)) rttMaxMs=\(String(format: "%.1f", rttMax)) " +
-            "gapMaxMs=\(String(format: "%.1f", gapMax)) inflight=\(inflight)"
+            "jitterMs=\(String(format: "%.1f", jitter)) gapMaxMs=\(String(format: "%.1f", gapMax)) inflight=\(inflight)"
     }
 
     private mutating func flushPending(now: TimeInterval) -> Data? {

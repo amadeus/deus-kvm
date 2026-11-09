@@ -57,6 +57,7 @@ final class InputNetworkServer: @unchecked Sendable {
                 tcp.noDelay = true // every record is one pointer step; never wait for a full segment
                 let parameters = NWParameters(tls: nil, tcp: tcp)
                 parameters.includePeerToPeer = false
+                parameters.serviceClass = .interactiveVoice // pointer steps: lowest queueing the network offers
                 let next = try NWListener(using: parameters, on: .any)
                 listener = next
                 next.stateUpdateHandler = { [weak self, weak next] state in
@@ -216,7 +217,8 @@ final class InputNetworkServer: @unchecked Sendable {
             guard let self, connectionID == id else { return }
             do {
                 guard let plain = try incoming?.open(sealed), let ack = InputRecord.ack(plain) else { close(reason: "bad ack"); return }
-                if let record = state.acked(ack.sequence, now: ProcessInfo.processInfo.systemUptime) { transmit(record) }
+                if let record = state
+                    .acked(ack.sequence, received: ack.received, now: ProcessInfo.processInfo.systemUptime) { transmit(record) }
                 readAcks(id)
             } catch {
                 close(reason: "bad ack")

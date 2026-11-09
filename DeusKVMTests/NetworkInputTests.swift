@@ -23,41 +23,53 @@ final class NetworkInputTests: XCTestCase {
         XCTAssertEqual(InputRecord.sealedAckLength, 24)
     }
 
-    func testMotionFlowsWhileTheWindowHasRoomThenCoalesces() throws {
+    func testMotionFlowsWhileThePCKeepsUpAndCoalescesOnceItIsBehind() throws {
         var state = InputStreamState()
-        var sent: [Data] = []
-        for index in 0 ..< InputStreamState.window {
-            try sent.append(XCTUnwrap(state.motion(dx: 1, dy: Int32(index), now: 1 + Double(index) * 0.015)))
+        // A 1000 Hz mouse: forty records in 40 ms with no acknowledgement yet all go out.
+        for index in 0 ..< 40 {
+            XCTAssertNotNil(state.motion(dx: 1, dy: 0, now: 1 + Double(index) * 0.001), "record \(index)")
         }
-        XCTAssertEqual(state.inflight, InputStreamState.window)
-        XCTAssertNil(state.motion(dx: 5, dy: 5, now: 1.1), "the window is full")
-        XCTAssertNil(state.motion(dx: 2, dy: -1, now: 1.115), "and the second frame joins the first")
+        XCTAssertEqual(state.inflight, 40)
+        XCTAssertFalse(state.behind(now: 1.0399))
+        XCTAssertTrue(state.behind(now: 1.041), "the first record is now older than the allowed lag")
+        XCTAssertNil(state.motion(dx: 5, dy: 5, now: 1.041), "so motion waits")
+        XCTAssertNil(state.motion(dx: 2, dy: -1, now: 1.042), "and joins the pending delta")
         XCTAssertEqual(state.coalesced, 2)
-        let flushed = try XCTUnwrap(state.acked(1, now: 1.12), "one acknowledgement makes room for the pending delta")
+        XCTAssertNil(state.acked(10, now: 1.055), "record 11, sent at 1.010, is still too old")
+        let flushed = try XCTUnwrap(state.acked(40, now: 1.056), "everything acknowledged: the pending delta leaves")
         XCTAssertEqual(Array(flushed.suffix(4)), [7, 0, 4, 0], "the pending delta is the sum, 7 and 4")
-        XCTAssertEqual(state.inflight, InputStreamState.window)
-        XCTAssertNil(state.acked(2, now: 1.13), "nothing is pending now")
-        XCTAssertEqual(state.frames, InputStreamState.window + 1)
-        XCTAssertNotNil(state.motion(dx: 1, dy: 1, now: 1.145), "after the flush motion flows again")
-        XCTAssertNil(state.acked(6, now: 1.2), "everything acknowledged, nothing pending")
+        XCTAssertEqual(state.frames, 41)
+        XCTAssertEqual(state.inflight, 1)
+        XCTAssertNotNil(state.motion(dx: 1, dy: 1, now: 1.050), "motion flows again")
+        XCTAssertNil(state.acked(42, now: 1.052))
         XCTAssertNotNil(state.motion(dx: 1, dy: 1, now: 3), "a rest is not a gap")
         XCTAssertTrue(state.summary.contains("coalesced=2"))
-        XCTAssertTrue(state.summary.contains("gapMaxMs=55.0"), state.summary)
+        XCTAssertTrue(state.summary.contains("gapMaxMs=8.0"), state.summary)
+    }
+
+    func testAnInflightCapBoundsAnUnresponsivePC() {
+        var state = InputStreamState()
+        var sent = 0
+        for index in 0 ..< InputStreamState.maxInflight + 5 where state.motion(dx: 1, dy: 0, now: 1 + Double(index) * 0.0001) != nil {
+            sent += 1
+        }
+        XCTAssertEqual(sent, InputStreamState.maxInflight)
+        XCTAssertEqual(state.coalesced, 5)
     }
 
     func testButtonsAlwaysGoOutAfterPendingMotion() {
         var state = InputStreamState()
-        for index in 0 ..< InputStreamState.window {
-            _ = state.motion(dx: 1, dy: 1, now: Double(index))
+        for index in 0 ..< 4 {
+            _ = state.motion(dx: 1, dy: 1, now: Double(index) * 0.001)
         }
-        XCTAssertNil(state.motion(dx: 3, dy: 0, now: 5))
+        XCTAssertNil(state.motion(dx: 3, dy: 0, now: 5), "the oldest record is seconds old")
         let records = state.button(.left, down: true, now: 6)
         XCTAssertEqual(records.count, 2)
         XCTAssertEqual(records[0].first, InputRecord.motion)
         XCTAssertEqual(records[1].first, InputRecord.button)
         XCTAssertEqual(state.button(.left, down: false, now: 7).count, 1)
         XCTAssertEqual(state.buttons, 2)
-        XCTAssertEqual(state.inflight, InputStreamState.window + 3, "buttons do not wait for the window")
+        XCTAssertEqual(state.inflight, 7, "buttons do not wait for the PC")
     }
 
     func testStallAndPingTiming() {
@@ -75,17 +87,26 @@ final class NetworkInputTests: XCTestCase {
         XCTAssertTrue(state.summary.contains("stalls=1"))
     }
 
-    func testAcknowledgementsMeasureRoundTripAndIgnoreStrays() {
+    func testAcknowledgementsAreCumulativeMeasureRoundTripAndJitterAndIgnoreStrays() {
         var state = InputStreamState()
         _ = state.motion(dx: 1, dy: 1, now: 1.000)
         _ = state.motion(dx: 1, dy: 1, now: 1.015)
+        _ = state.motion(dx: 1, dy: 1, now: 1.030)
         XCTAssertNil(state.acked(9, now: 1.02), "an unknown sequence is ignored")
-        XCTAssertEqual(state.inflight, 2)
-        XCTAssertNil(state.acked(2, now: 1.020), "acknowledging the second covers the first")
+        XCTAssertEqual(state.inflight, 3)
+        // The PC's clock reads 100 000 ticks ahead of ours; delivery took 1.0 ms then 2.5 ms.
+        XCTAssertNil(
+            state.acked(2, received: InputRecord.clock(uptime: 1.015) &+ 100_000 &+ 10, now: 1.020),
+            "acknowledging the second covers the first"
+        )
+        XCTAssertEqual(state.inflight, 1)
+        XCTAssertNil(state.acked(3, received: InputRecord.clock(uptime: 1.030) &+ 100_000 &+ 25, now: 1.035))
         XCTAssertEqual(state.inflight, 0)
-        XCTAssertTrue(state.summary.hasPrefix("frames=2 buttons=0"))
+        XCTAssertTrue(state.summary.hasPrefix("frames=3 buttons=0"))
         XCTAssertTrue(state.summary.contains("rttMaxMs=5.0"), state.summary)
-        XCTAssertNil(state.acked(2, now: 1.03), "a repeated acknowledgement changes nothing")
+        XCTAssertTrue(state.summary.contains("jitterMs=1.5"), state.summary)
+        XCTAssertNil(state.acked(3, now: 1.04), "a repeated acknowledgement changes nothing")
+        XCTAssertNil(state.acked(2, now: 1.04), "an older one neither")
     }
 
     func testOfferRoundTripsAsJSON() throws {
