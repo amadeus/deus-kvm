@@ -1,35 +1,41 @@
+import Darwin
 import Foundation
-import Network
 import os
 
 /// The Mac's end of the local-network pointer stream (NETWORK_POINTER_PLAN.md): a TCP listener
 /// the PC's desktop worker connects to, the nonce handshake and keys of the file transfer path
-/// under the "input" purpose, and `InputStreamState` for flow control. Everything runs on its
-/// own queue. `isUp` is readable from any thread (the tap asks per pointer event) and `send`
-/// may be called from the Bluetooth queue.
+/// under the "input" purpose, and `InputStreamState` for flow control.
+///
+/// It uses a BSD socket on a dedicated thread rather than Network.framework: a pointer step is
+/// written to the socket the moment it is captured, with no dispatch hop, and acknowledgements
+/// are read by a blocking recv on the same thread. Sends use MSG_DONTWAIT so the Bluetooth queue
+/// that calls `send` is never blocked; a step that cannot be queued at once is dropped (motion
+/// coalesces, the stall timer closes a truly stuck link). All mutable state is under `lock`;
+/// `isUp`, `carrier` and `currentPort` are readable from any thread.
 final class InputNetworkServer: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "io.github.amadeus.deuskvm.network-input", qos: .userInteractive)
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "NetworkInput")
     private let lock = NSLock()
+    private let timerQueue = DispatchQueue(label: "io.github.amadeus.deuskvm.network-input.timer", qos: .utility)
+
+    private var running = false
     private var up = false
     private var blocked = false
     private var port: UInt16?
-    private var listener: NWListener?
+    private var listenFD: Int32 = -1
+    private var connFD: Int32 = -1
     private var secret: Data?
-    private var connection: NWConnection?
-    private var connectionID = 0
     private var incoming: FileNetworkCrypto?
     private var outgoing: FileNetworkCrypto?
     private var state = InputStreamState()
+    private var stalledOut = false
     private var sessionStalls = 0
     private var sessionReconnects = 0
+    private var everConnected = false
     private var timer: DispatchSourceTimer?
     private var lastStateText = ""
 
     /// Short state text for the settings view ("listening", "up", "stalled"), any thread.
     var onStateChange: (@Sendable (String) -> Void)?
-    /// The connection came or went; the tracker's lone-finger policy follows it. Any thread.
-    var onUpChanged: (@Sendable (Bool) -> Void)?
 
     /// Connected and the PC injects: the controller sends pointer events here.
     var isUp: Bool {
@@ -45,51 +51,18 @@ final class InputNetworkServer: @unchecked Sendable {
         lock.withLock { port }
     }
 
-    // MARK: Main thread
+    // MARK: Control
 
-    /// Keeps one listener while enabled; a failed listener is replaced on the next call.
     func configure(_ enabled: Bool) {
-        queue.sync {
-            if !enabled {
-                guard listener != nil || connection != nil else { return }
-                listener?.cancel(); listener = nil
-                setPort(nil)
-                revokeLocked()
-                note("off")
-                return
-            }
-            guard listener == nil else { return }
-            do {
-                let tcp = NWProtocolTCP.Options()
-                tcp.noDelay = true // every record is one pointer step; never wait for a full segment
-                let parameters = NWParameters(tls: nil, tcp: tcp)
-                parameters.includePeerToPeer = false
-                parameters.serviceClass = .interactiveVoice // pointer steps: lowest queueing the network offers
-                let next = try NWListener(using: parameters, on: .any)
-                listener = next
-                next.stateUpdateHandler = { [weak self, weak next] state in
-                    guard let self, let next, listener === next else { return }
-                    switch state {
-                    case .ready: setPort(next.port?.rawValue); note("listening")
-                    case .failed: listener = nil; setPort(nil); revokeLocked(); note("listener failed")
-                    default: break
-                    }
-                }
-                next.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
-                next.start(queue: queue)
-                note("starting")
-            } catch {
-                listener = nil
-                note("listener unavailable")
-            }
-        }
+        if enabled { start() } else { stop(reason: "off") }
     }
 
-    /// A fresh key for the current listener; the previous connection, if any, is dropped.
+    /// A fresh key for the current listener; the previous connection, if any, is dropped so the
+    /// PC reconnects with the new key.
     func offer() -> InputNetworkOffer? {
-        queue.sync {
-            revokeLocked()
+        lock.withLock {
             guard let port else { return nil }
+            dropConnectionLocked()
             let hosts = FileNetworkServer.addresses()
             guard !hosts.isEmpty else { return nil }
             let key = FileNetworkCrypto.random()
@@ -99,21 +72,22 @@ final class InputNetworkServer: @unchecked Sendable {
     }
 
     func revoke() {
-        queue.sync { revokeLocked() }
+        lock.withLock { secret = nil; dropConnectionLocked() }
     }
 
-    // MARK: Bluetooth queue
+    // MARK: Hot path
 
+    /// Bluetooth queue: one captured pointer event. Writes inline, no dispatch hop.
     func send(_ event: NetworkInputEvent) {
-        queue.async { [self] in
+        lock.withLock {
             guard up else { return }
             let now = ProcessInfo.processInfo.systemUptime
             switch event {
             case let .motion(dx, dy):
-                if let record = state.motion(dx: dx, dy: dy, now: now) { transmit(record) }
+                if let record = state.motion(dx: dx, dy: dy, now: now) { writeLocked(record) }
             case let .button(button, down):
                 for record in state.button(button, down: down, now: now) {
-                    transmit(record)
+                    writeLocked(record)
                 }
             }
         }
@@ -121,7 +95,7 @@ final class InputNetworkServer: @unchecked Sendable {
 
     /// A remote session begins: counters restart, the connection stays.
     func resetSession() {
-        queue.async { [self] in
+        lock.withLock {
             if up { state = InputStreamState() }
             sessionStalls = 0; sessionReconnects = 0
         }
@@ -129,149 +103,239 @@ final class InputNetworkServer: @unchecked Sendable {
 
     /// One line for the session's diagnostics; empty if the stream carried nothing.
     func summary(_ completion: @escaping @Sendable (String) -> Void) {
-        queue.async { [self] in
-            guard state.frames + state.buttons > 0 || sessionStalls > 0 else { completion(""); return }
-            completion("up=\(up) \(state.summary) sessionStalls=\(sessionStalls) reconnects=\(sessionReconnects)")
+        let line: String = lock.withLock {
+            guard state.frames + state.buttons > 0 || sessionStalls > 0 else { return "" }
+            return "up=\(up) \(state.summary) sessionStalls=\(sessionStalls) reconnects=\(sessionReconnects)"
+        }
+        completion(line)
+    }
+
+    // MARK: Listener
+
+    private func start() {
+        var startThread: Thread?
+        lock.withLock {
+            guard !running else { return }
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            guard fd >= 0 else { return }
+            var yes: Int32 = 1
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+            var addr = sockaddr_in()
+            addr.sin_family = sa_family_t(AF_INET)
+            addr.sin_addr.s_addr = 0 // INADDR_ANY
+            addr.sin_port = 0 // ephemeral
+            let bound = withUnsafePointer(to: &addr) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+            }
+            guard bound == 0, listen(fd, 1) == 0 else { close(fd); return }
+            var local = sockaddr_in()
+            var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+            _ = withUnsafeMutablePointer(to: &local) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) }
+            }
+            listenFD = fd
+            port = UInt16(bigEndian: local.sin_port)
+            running = true
+            let thread = Thread { [weak self] in self?.acceptLoop(fd) }
+            thread.name = "io.github.amadeus.deuskvm.network-input"
+            startThread = thread
+        }
+        guard let startThread else { note("listener unavailable"); return }
+        note("listening")
+        startThread.start()
+    }
+
+    private func stop(reason: String) {
+        let (listen, conn): (Int32, Int32) = lock.withLock {
+            running = false
+            secret = nil
+            let (l, c) = (listenFD, connFD)
+            listenFD = -1; connFD = -1
+            port = nil
+            setUpLocked(false)
+            return (l, c)
+        }
+        if conn >= 0 { shutdown(conn, SHUT_RDWR); close(conn) }
+        if listen >= 0 { close(listen) } // unblocks accept()
+        stopTimer()
+        note(reason)
+    }
+
+    /// Drops the current connection but keeps the listener (lock held).
+    private func dropConnectionLocked() {
+        let conn = connFD
+        connFD = -1
+        setUpLocked(false)
+        incoming = nil; outgoing = nil
+        if conn >= 0 { shutdown(conn, SHUT_RDWR) } // unblocks the recv loop, which closes it
+    }
+
+    // MARK: Dedicated thread
+
+    private func acceptLoop(_ listen: Int32) {
+        while lock.withLock({ running }) {
+            let fd = accept(listen, nil, nil)
+            if fd < 0 {
+                if errno == EINTR { continue }
+                break // listener closed
+            }
+            guard lock.withLock({ running }) else { close(fd); break }
+            serve(fd)
         }
     }
 
-    // MARK: Queue only
+    private func serve(_ fd: Int32) {
+        var one: Int32 = 1
+        setsockopt(fd, Int32(IPPROTO_TCP), TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
+        var timeout = timeval(tv_sec: 1, tv_usec: 0) // wake to re-check `running`
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
-    private func setPort(_ value: UInt16?) {
-        lock.withLock { port = value }
+        guard let client = recvExact(fd, 32), handshake(fd, client: client) else { close(fd); return }
+        note("up")
+        startTimer(fd)
+
+        var reason = "closed"
+        acks: while true {
+            guard let sealed = recvExact(fd, InputRecord.sealedAckLength) else { break }
+            let outcome: Bool = lock.withLock {
+                guard connFD == fd, let plain = try? incoming?.open(sealed), let ack = InputRecord.ack(plain) else { return false }
+                setBlockedLocked(ack.blocked)
+                if let record = state.acked(ack.sequence, received: ack.received, now: ProcessInfo.processInfo.systemUptime) {
+                    writeLocked(record)
+                }
+                return true
+            }
+            if !outcome { reason = "bad ack"; break acks }
+        }
+
+        stopTimer()
+        let stalled: Bool = lock.withLock {
+            let was = stalledOut
+            stalledOut = false
+            if connFD == fd { connFD = -1; setUpLocked(false); incoming = nil; outgoing = nil }
+            return was
+        }
+        close(fd)
+        note(stalled ? "stalled" : reason)
     }
 
-    private func setUp(_ value: Bool) {
-        let changed: Bool = lock.withLock {
-            defer { up = value; if !value { blocked = false } }
-            return up != value
+    private func handshake(_ fd: Int32, client: Data) -> Bool {
+        let key: Data? = lock.withLock { secret }
+        guard let key, client.count == 32 else { return false }
+        let server = FileNetworkCrypto.random()
+        let inc = FileNetworkCrypto(secret: key, client: client, server: server, direction: "client", purpose: "input")
+        let out = FileNetworkCrypto(secret: key, client: client, server: server, direction: "server", purpose: "input")
+        guard sendAll(fd, server) else { return false }
+        lock.withLock {
+            guard running else { return }
+            if everConnected { sessionReconnects += 1 }
+            everConnected = true
+            connFD = fd
+            incoming = inc; outgoing = out
+            state = InputStreamState()
+            setUpLocked(true)
         }
-        if changed { onUpChanged?(value) }
+        return lock.withLock { connFD == fd }
     }
 
-    /// The PC reported whether it can inject; a secure desktop (UAC, lock screen) says no.
-    private func setBlocked(_ value: Bool) {
-        let changed: Bool = lock.withLock {
-            defer { blocked = value }
-            return blocked != value
+    // MARK: Timer (ping + stall)
+
+    private func startTimer(_ fd: Int32) {
+        stopTimer()
+        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
+        timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
+        timer.setEventHandler { [weak self] in self?.tick(fd) }
+        lock.withLock { self.timer = timer }
+        timer.resume()
+    }
+
+    private func stopTimer() {
+        let timer: DispatchSourceTimer? = lock.withLock { defer { self.timer = nil }; return self.timer }
+        timer?.cancel()
+    }
+
+    private func tick(_ fd: Int32) {
+        let action: (close: Bool, ping: Data?) = lock.withLock {
+            guard up, connFD == fd else { return (false, nil) }
+            let now = ProcessInfo.processInfo.systemUptime
+            if state.stalled(now: now) {
+                state.noteStall(); sessionStalls += 1; stalledOut = true
+                return (true, nil)
+            }
+            if let ping = state.ping(now: now) { writeLocked(ping) }
+            return (false, nil)
         }
-        guard changed else { return }
-        note(value ? "blocked (secure desktop)" : "up")
+        if action.close { shutdown(fd, SHUT_RDWR) } // unblocks recvExact; serve() tears down
+    }
+
+    // MARK: Socket I/O
+
+    /// Lock held. Seals and writes one record without blocking; a step that will not fit is
+    /// dropped (motion tolerates it), a hard error shuts the connection for the recv loop.
+    private func writeLocked(_ record: Data) {
+        guard connFD >= 0, up, let sealed = try? outgoing?.seal(record), sealed.count <= 255 else { return }
+        var frame = Data([UInt8(sealed.count)])
+        frame.append(sealed)
+        let fd = connFD
+        let sent = frame.withUnsafeBytes { Darwin.send(fd, $0.baseAddress, frame.count, Int32(MSG_DONTWAIT)) }
+        if sent == frame.count { return }
+        if sent < 0, errno == EAGAIN || errno == EWOULDBLOCK { return } // drop
+        shutdown(fd, SHUT_RDWR) // partial or hard error: the stream is corrupt, end it
+    }
+
+    private func sendAll(_ fd: Int32, _ data: Data) -> Bool {
+        data.withUnsafeBytes { raw -> Bool in
+            var sent = 0
+            while sent < raw.count {
+                let n = Darwin.send(fd, raw.baseAddress!.advanced(by: sent), raw.count - sent, 0)
+                if n > 0 { sent += n; continue }
+                if n < 0, errno == EINTR { continue }
+                return false
+            }
+            return true
+        }
+    }
+
+    private func recvExact(_ fd: Int32, _ count: Int) -> Data? {
+        var buffer = [UInt8](repeating: 0, count: count)
+        var got = 0
+        while got < count {
+            let n = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress!.advanced(by: got), count - got, 0) }
+            if n > 0 { got += n; continue }
+            if n == 0 { return nil } // peer closed
+            if errno == EINTR { continue }
+            if errno == EAGAIN || errno == EWOULDBLOCK { // recv timeout: keep waiting while this is still the connection
+                if lock.withLock({ running && connFD == fd }) { continue }
+                return nil
+            }
+            return nil // other error (EBADF after close, ECONNRESET, ...)
+        }
+        return Data(buffer)
+    }
+
+    // MARK: State helpers (lock held)
+
+    private func setUpLocked(_ value: Bool) {
+        up = value
+        if !value { blocked = false }
+    }
+
+    private func setBlockedLocked(_ value: Bool) {
+        guard blocked != value else { return }
+        blocked = value
+        // Noting calls out to user code; do it off the lock via the timer queue to avoid reentrancy.
+        let text = value ? "blocked (secure desktop)" : "up"
+        timerQueue.async { [weak self] in self?.note(text) }
     }
 
     private func note(_ text: String) {
-        guard text != lastStateText else { return }
-        lastStateText = text
+        let changed: Bool = lock.withLock {
+            guard text != lastStateText else { return false }
+            lastStateText = text
+            return true
+        }
+        guard changed else { return }
         log.notice("network input: \(text, privacy: .public)")
         onStateChange?(text)
-    }
-
-    private func revokeLocked() {
-        secret = nil
-        close(reason: nil)
-    }
-
-    private func close(reason: String?) {
-        connectionID += 1
-        connection?.cancel(); connection = nil
-        incoming = nil; outgoing = nil
-        timer?.cancel(); timer = nil
-        setUp(false)
-        if let reason { note(reason) } else if listener != nil { note("listening") }
-    }
-
-    private func accept(_ next: NWConnection) {
-        guard secret != nil else { next.cancel(); return }
-        if connection != nil { sessionReconnects += 1 }
-        close(reason: nil)
-        connectionID += 1
-        let id = connectionID
-        connection = next
-        next.stateUpdateHandler = { [weak self] state in
-            guard let self, connectionID == id else { return }
-            switch state {
-            case .ready: note("handshake"); handshake(id)
-            case .failed, .cancelled: if connection === next { close(reason: "closed") }
-            default: break
-            }
-        }
-        next.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + 3) { [weak self] in
-            guard let self, connectionID == id, !up else { return }
-            close(reason: "handshake timed out")
-        }
-    }
-
-    private func receive(_ id: Int, count: Int, done: @escaping @Sendable (Data) -> Void) {
-        guard connectionID == id, let connection else { return }
-        connection.receive(minimumIncompleteLength: count, maximumLength: count) { [weak self] data, _, _, error in
-            guard let self, connectionID == id else { return }
-            guard error == nil, let data, data.count == count else { close(reason: "closed"); return }
-            done(data)
-        }
-    }
-
-    private func handshake(_ id: Int) {
-        receive(id, count: 32) { [weak self] client in
-            guard let self, let key = secret, let connection, connectionID == id else { return }
-            let server = FileNetworkCrypto.random()
-            incoming = FileNetworkCrypto(secret: key, client: client, server: server, direction: "client", purpose: "input")
-            outgoing = FileNetworkCrypto(secret: key, client: client, server: server, direction: "server", purpose: "input")
-            connection.send(content: server, completion: .contentProcessed { [weak self] error in
-                guard let self, connectionID == id else { return }
-                guard error == nil else { close(reason: "closed"); return }
-                state = InputStreamState()
-                setUp(true)
-                note("up")
-                readAcks(id)
-                startTimer(id)
-            })
-        }
-    }
-
-    private func readAcks(_ id: Int) {
-        receive(id, count: InputRecord.sealedAckLength) { [weak self] sealed in
-            guard let self, connectionID == id else { return }
-            do {
-                guard let plain = try incoming?.open(sealed), let ack = InputRecord.ack(plain) else { close(reason: "bad ack"); return }
-                setBlocked(ack.blocked)
-                if let record = state
-                    .acked(ack.sequence, received: ack.received, now: ProcessInfo.processInfo.systemUptime) { transmit(record) }
-                readAcks(id)
-            } catch {
-                close(reason: "bad ack")
-            }
-        }
-    }
-
-    private func startTimer(_ id: Int) {
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
-        timer.setEventHandler { [weak self] in
-            guard let self, connectionID == id, up else { return }
-            let now = ProcessInfo.processInfo.systemUptime
-            if state.stalled(now: now) {
-                state.noteStall(); sessionStalls += 1
-                close(reason: "stalled")
-                return
-            }
-            if let ping = state.ping(now: now) { transmit(ping) }
-        }
-        timer.resume()
-        self.timer = timer
-    }
-
-    private func transmit(_ record: Data) {
-        guard let connection, up else { return }
-        do {
-            guard let sealed = try outgoing?.seal(record), sealed.count <= 255 else { close(reason: "bad record"); return }
-            let id = connectionID
-            connection.send(content: Data([UInt8(sealed.count)]) + sealed, completion: .contentProcessed { [weak self] error in
-                guard let self, connectionID == id, error != nil else { return }
-                close(reason: "closed")
-            })
-        } catch {
-            close(reason: "bad record")
-        }
     }
 }
