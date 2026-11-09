@@ -7,9 +7,6 @@ struct TapConfiguration: Equatable, Sendable {
     var edgeEnabled = false
     var geometry: EdgeGeometry?
     var shortcut = ToggleShortcut()
-    /// Windows drives the pointer from the trackpad's contacts: trackpad-derived pointer
-    /// events stay out of the mouse collection and a physical click is the pad's button.
-    var precisionTouchpad = false
 }
 
 enum TapOutput: Sendable {
@@ -39,8 +36,8 @@ final class InputTap: @unchecked Sendable {
     /// Tap thread only, while the tap runs.
     private var keyboard: RawKeyboardMonitor?
     private var resyncGate = ResyncGate()
-    /// Routes pointer events between the mouse collection and the pad while remote.
-    private var router = TouchpadRouter()
+    /// Routes pointer events between the local-network stream and the Bluetooth mouse.
+    private var router = PointerRouter()
     /// Gesture types already noted in the diagnostics log this launch.
     private var notedGestureTypes: Set<UInt32> = []
     private var eventTap: CFMachPort?
@@ -52,8 +49,6 @@ final class InputTap: @unchecked Sendable {
     private let output: @MainActor @Sendable (TapOutput) -> Void
     /// Remote input skips the main thread; the receiver orders it by generation.
     private let forward: @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
-    /// Whether a finger is on the trackpad, asked only while precision mode is on.
-    private let presence: @Sendable () -> TouchpadPresence
     /// What the local-network pointer stream can do, asked per pointer event.
     private let network: @Sendable () -> NetworkCarrier
     private let stats: TapStats
@@ -61,13 +56,11 @@ final class InputTap: @unchecked Sendable {
     init(
         output: @escaping @MainActor @Sendable (TapOutput) -> Void,
         forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void,
-        presence: @escaping @Sendable () -> TouchpadPresence = { .none },
         network: @escaping @Sendable () -> NetworkCarrier = { .down },
         stats: TapStats = TapStats()
     ) {
         self.output = output
         self.forward = forward
-        self.presence = presence
         self.network = network
         self.stats = stats
     }
@@ -465,25 +458,16 @@ final class InputTap: @unchecked Sendable {
 }
 
 extension InputTap {
-    /// Called with the lock held. Pointer events are routed between the mouse collection and
-    /// the pad (`TouchpadRouter`); everything else is forwarded as it is.
+    /// Called with the lock held. Pointer motion and clicks take the local-network stream while
+    /// it is up and the Bluetooth mouse otherwise; everything else is forwarded as it is.
     private func _forwardRemote(type: CGEventType, event: CGEvent) {
         guard let input = DirectInputEvent(type: type, event: event) else { return }
         stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
-        let continuous = type == .scrollWheel && event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
-        let routerEvent = TouchpadRouter.Event(input.kind, continuous: continuous)
-        let carrier = routerEvent == .other ? .down : network()
-        // A PC that cannot inject (secure desktop) takes only the Bluetooth mouse: mouse mode.
-        let routed: DirectInputEvent? = switch router.route(
-            routerEvent, enabled: configuration.precisionTouchpad && carrier != .unavailable, network: carrier == .up,
-            presence: presence
-        ) {
-        case .forward: input
-        case .network: input.networked
-        case .drop: nil
-        case let .padButton(down): DirectInputEvent(kind: .touchpadButton(down), modifiers: input.modifiers)
-        }
-        if let routed { forward(generation, routed, ProcessInfo.processInfo.systemUptime) }
+        let routerEvent = PointerRouter.Event(input.kind)
+        // Only a stream that is up (not down, not blocked by a secure desktop) takes pointer input.
+        let useNetwork = routerEvent != .other && network() == .up
+        let routed = router.route(routerEvent, network: useNetwork) == .network ? input.networked : input
+        forward(generation, routed, ProcessInfo.processInfo.systemUptime)
     }
 
     /// Called with the tap lock held. Gestures pass through on the Mac and are swallowed while

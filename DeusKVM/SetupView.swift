@@ -8,7 +8,6 @@ struct SetupView: View {
     @EnvironmentObject private var names: DeviceNameStore
     @EnvironmentObject private var companion: CompanionService
     @AppStorage(AppSettings.developerModeKey) private var developerMode = false
-    @AppStorage(AppSettings.precisionTouchpadKey) private var precisionTouchpad = false
     @AppStorage(AppSettings.networkPointerKey) private var networkPointer = true
     @StateObject private var login = LaunchAtLoginController()
     @State private var showReset = false
@@ -36,7 +35,6 @@ struct SetupView: View {
             advancedSection
             if developerMode {
                 diagnosticsSection
-                touchpadSection
             }
             if bluetoothError != nil || (lowEnergy.isHIDServiceAdded && coordinator.lastError != nil) {
                 Section(header: Text(L10n.Section.lastError)) {
@@ -118,48 +116,6 @@ struct SetupView: View {
             row(L10n.Status.connectedPeripherals, Text(central.connected.count, format: .number))
             row(L10n.Status.hostLEDs, Text(verbatim: lowEnergy.keyboardLEDs.localizedLabel))
             row("Network pointer", Text(verbatim: coordinator.networkPointerState))
-        }
-    }
-
-    /// The precision touchpad experiment: advertise the collection, show what Windows wrote
-    /// back and whether a session is streaming the trackpad, and send scripted gestures.
-    private var touchpadSection: some View {
-        Section {
-            Toggle("Advertise a precision touchpad to Windows", isOn: $precisionTouchpad)
-            if precisionTouchpad != lowEnergy.isTouchpadAdvertised {
-                Text(
-                    "Takes effect after DeusKVM is reopened. Windows keeps the old HID descriptor until the Mac is " +
-                        "removed in Windows Bluetooth settings and paired again."
-                )
-                .font(.caption).foregroundStyle(.secondary)
-            }
-            if lowEnergy.isTouchpadAdvertised {
-                row("Windows input mode", Text(verbatim: touchpadModeLabel))
-                row("Contact reports", Text(verbatim: lowEnergy.touchpadSubscribed ? "Subscribed" : "Not subscribed"))
-                row("Precision mode", Text(verbatim: lowEnergy.isPrecisionTouchpad ? "On (Windows drives the trackpad)" : "Off"))
-                row("Contacts", Text(verbatim: lowEnergy.touchpadStreaming ? "Streaming" : "Idle"))
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), alignment: .leading)], alignment: .leading) {
-                    ForEach(TouchpadScript.allCases) { script in
-                        Button(script.title) { lowEnergy.playTouchpadScript(script) }
-                    }
-                }
-                .disabled(lowEnergy.hostPolicy.target == nil)
-            }
-        } header: {
-            Text("Precision touchpad experiment")
-        } footer: {
-            Text(
-                "Each button sends one scripted gesture to the PC as touchpad contacts. Watch the Windows pointer; " +
-                    "what Windows reads and writes is in the diagnostics log."
-            )
-        }
-    }
-
-    private var touchpadModeLabel: String {
-        switch lowEnergy.touchpadInputMode {
-        case nil: "Not written yet"
-        case TouchpadReport.inputModePrecisionTouchpad?: "3 (precision touchpad)"
-        case let mode?: "\(mode) (mouse)"
         }
     }
 

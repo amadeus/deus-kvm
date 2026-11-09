@@ -23,11 +23,10 @@ final class EdgeSwitchCoordinator: ObservableObject {
         forward: { [transport = lowEnergy.transport] in
             transport.input($1, generation: $0, capturedAt: $2)
         },
-        presence: { [transport = lowEnergy.transport] in transport.touchpadPresence() },
         network: { [server = networkPointer.server] in server.carrier },
         stats: diagnostics.tapStats
     )
-    private lazy var networkPointer = NetworkPointer(contacts: lowEnergy.transport.touchpadSource)
+    private lazy var networkPointer = NetworkPointer()
     @Published private(set) var networkPointerState = "off"
     private var timer: Timer?
     private var companionDeadlineTimer: Timer?
@@ -154,12 +153,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
             .merge(with: lowEnergy.companion.objectWillChange.map { _ in () })
             .sink { [weak self] in
                 DispatchQueue.main.async { self?._refresh() }
-            }.store(in: &subscriptions)
-        // Precision mode and the live stream decide how the tap routes the trackpad.
-        lowEnergy.$isPrecisionTouchpad.map { _ in () }
-            .merge(with: lowEnergy.$touchpadStreaming.map { _ in () })
-            .sink { [weak self] in
-                DispatchQueue.main.async { self?._configure() }
             }.store(in: &subscriptions)
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -331,8 +324,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
             targetAvailable: canSwitch,
             edgeEnabled: edgeEnabled && !locked && !recordingShortcut,
             geometry: geometry,
-            shortcut: recordingShortcut ? ToggleShortcut(enabled: false) : shortcut,
-            precisionTouchpad: lowEnergy.isPrecisionTouchpad && lowEnergy.touchpadStreaming
+            shortcut: recordingShortcut ? ToggleShortcut(enabled: false) : shortcut
         ))
     }
 

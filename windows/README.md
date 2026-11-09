@@ -39,23 +39,15 @@ acknowledged takeover protocol still require an update.
    ownership. A stalled handoff waits for release acknowledgement or an actual
    Bluetooth disconnect; a heartbeat timeout alone cannot grant overlapping control.
 
-6. **Mac trackpad** in the companion's Settings window sets Windows' cursor speed,
-   touchpad sensitivity and scrolling direction for a Mac trackpad presented as a
-   precision touchpad (the Windows Settings app does not list that touchpad on a
-   desktop PC). The values are the per-user precision touchpad settings Windows
-   itself uses; mouse settings stay in Windows Settings. On Windows 11 24H2 and
-   later the companion applies a change at once through the touchpad parameters
-   API; older builds read the values at the next sign-in. The group also shows
-   whether Windows reports a precision touchpad as present.
-
-7. **Network pointer.** When the Mac's "Send pointer motion to Windows over the local
+6. **Network pointer.** When the Mac's "Send pointer motion to Windows over the local
    network" setting is on (the default) and both machines share a private network, the
    desktop worker connects to a listener on the Mac, the same way file paste does, and
-   receives the trackpad's single-finger motion and clicks at the pad's own rate; they are
+   receives the trackpad's pointer motion and clicks at the pad's own rate; they are
    injected as mouse input, so the Windows Mouse settings apply and Windows edge return
-   works from them. Two or more fingers keep going over Bluetooth as touchpad contacts.
-   The Settings window's status line shows "Network pointer: up" while the stream runs;
-   without it everything falls back to Bluetooth.
+   works from them. Scrolling uses the normal mouse wheel. The Settings window's status
+   line shows "Network pointer: up" while the stream runs; without it the pointer falls
+   back to Bluetooth. A UAC prompt or the lock screen keeps the fast pointer through the
+   SYSTEM secure-input helper, or Bluetooth if that helper cannot run.
 
 If both Macs are connected before the service starts, it prefers the last active
 enabled Mac, then stable endpoint-ID order. Disabled Macs stay disabled. Windows

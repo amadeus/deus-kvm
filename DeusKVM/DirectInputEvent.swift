@@ -11,8 +11,6 @@ struct DirectInputEvent: Sendable {
         case mouseMove(Int32, Int32)
         case mouseButton(MouseButtons, Bool)
         case scroll(wheel: Int8, pan: Int8)
-        /// The trackpad's physical click while Windows drives the pad from its contacts.
-        case touchpadButton(Bool)
         /// Pointer motion and buttons the tap routed to the local-network stream; the
         /// controller sends them over Bluetooth instead if the stream is not up.
         case networkMove(Int32, Int32)

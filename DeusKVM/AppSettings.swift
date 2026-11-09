@@ -7,8 +7,6 @@ enum AppSettings {
     static let autoAdvertiseKey = "DeusKVM.autoAdvertise"
     static let developerModeKey = "DeusKVM.developerMode"
     static let useServiceChangedKey = "DeusKVM.useServiceChanged"
-    /// Developer experiment: advertise a Windows Precision Touchpad collection (needs a re-pair).
-    static let precisionTouchpadKey = "DeusKVM.precisionTouchpad"
     /// Pointer motion and buttons over the local network when the companion offers it (default on).
     static let networkPointerKey = "DeusKVM.networkPointer"
     static let deviceNamesKey = "DeusKVM.deviceNames"

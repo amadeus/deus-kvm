@@ -13,9 +13,7 @@ final class NetworkPointer {
     var note: ((String) -> Void)?
     private var offered: (target: UUID, port: UInt16)?
 
-    init(contacts: TouchpadSource) {
-        // While the stream is up a lone finger is the network's, not a contact for Windows.
-        server.onUpChanged = { [contacts] up in contacts.setHidesLoneFinger(up) }
+    init() {
         server.onStateChange = { [weak self] text in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.changed(text) } }
         }

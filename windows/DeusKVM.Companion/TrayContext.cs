@@ -100,7 +100,7 @@ internal sealed class TrayContext : ApplicationContext
 
     private void ShowSettings()
     {
-        if (settings is null || settings.IsDisposed) settings = new SettingsForm(ControlAsync, ConnectMac, RemoveAsync, new TrackpadRegistry());
+        if (settings is null || settings.IsDisposed) settings = new SettingsForm(ControlAsync, ConnectMac, RemoveAsync);
         settings.Show();
         if (settings.WindowState == FormWindowState.Minimized) settings.WindowState = FormWindowState.Normal;
         settings.Activate();

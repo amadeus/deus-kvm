@@ -92,10 +92,7 @@ targets:
       - DeusKVM/BluetoothLinkLog.swift
       - DeusKVM/LowEnergy/TransportStats.swift
       - DeusKVM/TrackpadGesture.swift
-      - DeusKVM/LowEnergy/TouchpadReports.swift
-      - DeusKVM/TouchpadScript.swift
-      - DeusKVM/TouchpadTracker.swift
-      - DeusKVM/TouchpadRouting.swift
+      - DeusKVM/PointerRouting.swift
       - DeusKVM/NetworkInput.swift
     settings:
       base:
