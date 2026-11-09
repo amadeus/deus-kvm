@@ -35,6 +35,11 @@ internal static class Program
             return 0;
         }
 
+        // SYSTEM in the console session: injection only, onto the current (possibly secure)
+        // desktop. Headless, no message loop. Spawned by the service; fails safe to Bluetooth.
+        if (args is ["--secure-worker", var securePipe, var secureParent] && int.TryParse(secureParent, out var securePid))
+            return new SecureInputWorker(securePipe, securePid).Run();
+
         try
         {
             if (args is ["--remove"])

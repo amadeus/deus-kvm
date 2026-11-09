@@ -11,7 +11,7 @@ internal sealed class DesktopWorker : ApplicationContext
 {
     private readonly NamedPipeClientStream pipe;
     private readonly CancellationTokenSource shutdown = new();
-    private readonly Channel<DesktopMessage> output = Channel.CreateBounded<DesktopMessage>(32);
+    private readonly Channel<DesktopMessage> output = Channel.CreateBounded<DesktopMessage>(128);
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     private readonly RawWindow window;
     private DesktopClipboard? clipboard;
@@ -33,6 +33,9 @@ internal sealed class DesktopWorker : ApplicationContext
     // there, so the Mac is told to use the Bluetooth mouse. Re-checked every 100 ms while
     // records arrive, on every record while blocked, and on each idle ping.
     private volatile bool injectBlocked;
+    // The service says a SYSTEM secure-input worker is ready to inject on the secure desktop;
+    // while blocked and relayable, records are forwarded there instead of dropped.
+    private volatile bool secureRelay;
     private double lastDesktopCheck;
     private const double DesktopCheckMs = 100;
     // Injected motion since the desktop thread last ran the edge test; one post at a time.
@@ -171,6 +174,7 @@ internal sealed class DesktopWorker : ApplicationContext
                 break;
             case "input-offer": StartNetwork(message.Report); break;
             case "input-revoke": StopNetwork("no offer"); break;
+            case "secure-ready": secureRelay = message.SecureReady; break;
             case "resume":
                 // Reattach to current Mac ownership after login/worker startup.
                 // Never replay entry placement over the user's current cursor.
@@ -317,17 +321,27 @@ internal sealed class DesktopWorker : ApplicationContext
     private bool Inject(InputEvent record)
     {
         var now = DesktopNative.Milliseconds();
-        if (record.Type == InputRecord.Ping) { CheckInputDesktop(now, force: true); return !injectBlocked; }
+        // The Mac should fall back to Bluetooth only when neither this worker nor the secure
+        // worker can inject: blocked by the secure desktop with no relay available.
+        if (record.Type == InputRecord.Ping) { CheckInputDesktop(now, force: true); return CanHandle; }
         lock (networkGate)
         {
             arrivals.Observe(now);
-            if (handoff.Active is null) { arrivals.Discarded++; return !injectBlocked; }
+            if (handoff.Active is null) { arrivals.Discarded++; return CanHandle; }
             CheckInputDesktop(now, force: injectBlocked);
-            if (injectBlocked) { arrivals.Discarded++; return false; }
+            if (injectBlocked)
+            {
+                // The user desktop cannot inject on the secure desktop; hand the record to the
+                // SYSTEM relay if it is ready, otherwise tell the Mac to use Bluetooth.
+                if (!secureRelay) { arrivals.Discarded++; return false; }
+                ForwardSecure(record);
+                arrivals.Injected++;
+                return true;
+            }
             if (record.IsMotion)
             {
                 if (DesktopNative.InjectMouse(record.Dx, record.Dy, DesktopNative.MouseMove)) arrivals.Injected++;
-                else { CheckInputDesktop(now, force: true); if (injectBlocked) { arrivals.Discarded++; return false; } }
+                else { CheckInputDesktop(now, force: true); if (injectBlocked) return CanHandle ? Relay(record) : Drop(); }
                 pendingDx += record.Dx; pendingDy += record.Dy;
             }
             else if (record.IsButton)
@@ -340,6 +354,20 @@ internal sealed class DesktopWorker : ApplicationContext
         }
         if (Interlocked.Exchange(ref observePosted, 1) == 0) context?.Post(_ => ObserveInjected(), null);
         return true;
+    }
+
+    // Whether the pointer can be delivered to the PC at all (locally or via the secure relay).
+    private bool CanHandle => !injectBlocked || secureRelay;
+    private bool Relay(InputEvent record) { ForwardSecure(record); arrivals.Injected++; return true; }
+    private bool Drop() { arrivals.Discarded++; return false; }
+
+    // Best-effort: a record for the SYSTEM secure-input worker, as a compact DesktopMessage.
+    // A full pipe drops the record rather than tearing the connection down (motion tolerates it).
+    private void ForwardSecure(InputEvent record)
+    {
+        var bytes = record.IsMotion ? SecureInputRecord.EncodeMotion(record.Dx, record.Dy)
+            : SecureInputRecord.EncodeButton(record.Button, record.Down);
+        output.Writer.TryWrite(new DesktopMessage("secure-input", Input: bytes));
     }
 
     private void CheckInputDesktop(double now, bool force)

@@ -26,6 +26,11 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     private DesktopHost? desktop;
     private MonitorInfo[] monitors = [];
     private byte[]? inputOffer;
+    // SYSTEM secure-input worker: injects on the secure desktop (UAC, lock screen) when the
+    // user desktop worker cannot. Spawned while a Mac is active; its readiness is pushed to the
+    // desktop worker so it relays or falls back to Bluetooth.
+    private SecureInputHost? secureInput;
+    private bool lastSecureReady;
     private EdgeConfiguration? config => handoff.Configuration;
     private long lastSeen, connectedAt;
     private bool subscribing, ready, writing, helloSent, disposed;
@@ -88,6 +93,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     {
         if (disposed) return;
         RefreshDesktop(address);
+        RefreshSecureInput();
         UpdateClipboardSession();
         if (clipboardEnabled) Clipboard.Tick(ClipboardNow);
         if (active && desktop?.Connected == false) SetDetail(desktop.Detail);
@@ -117,6 +123,25 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
             { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null));
         }
         desktop.Refresh(address);
+        RefreshSecureInput();
+    }
+
+    // Keeps the SYSTEM secure-input worker running while active, and tells the desktop worker
+    // whether it is ready so the Mac knows whether a secure desktop still has a fast path.
+    private void RefreshSecureInput()
+    {
+        if (disposed) return;
+        if (!active) { secureInput?.Dispose(); secureInput = null; PushSecureReady(false); return; }
+        secureInput ??= new SecureInputHost(text => { SetDetail(text); EdgeDiagnostics.Write(text); });
+        secureInput.Refresh();
+        PushSecureReady(secureInput.Ready);
+    }
+
+    private void PushSecureReady(bool ready)
+    {
+        if (ready == lastSecureReady) return;
+        lastSecureReady = ready;
+        desktop?.Send(new DesktopMessage("secure-ready", SecureReady: ready));
     }
 
     public void SetActive(bool value, bool notify = true)
@@ -128,6 +153,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         if (!value)
         {
             desktopGeneration++;
+            secureInput?.Dispose(); secureInput = null; lastSecureReady = false;
             handoff.Reset(); UpdateClipboardSession(true);
             desktop?.Dispose(); desktop = null; monitors = []; blind = 4;
             clipboardDesktopAvailable = clipboardDefaultDesktop = false;
@@ -323,13 +349,16 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 handoff.DesktopChanged(); blind = 4;
                 clipboardDesktopAvailable = clipboardDefaultDesktop = false; UpdateClipboardSession(true);
                 SendState([4, 2, 0]);
-                if (message.Kind == "connected") ForwardInputOffer();
+                if (message.Kind == "connected") { ForwardInputOffer(); lastSecureReady = false; RefreshSecureInput(); }
                 break;
             case "screens":
                 if (message.Monitors is not { Length: > 0 and <= 32 } screens ||
                     screens.Any(item => item.W is < 5 or > 32768 || item.H is < 5 or > 32768 || item.Id.Length > 256)) return;
                 handoff.DesktopChanged(); monitors = screens;
                 if (ready) SendScreens();
+                break;
+            case "secure-input":
+                if (message.Input is { Length: > 0 } records) secureInput?.Forward(records);
                 break;
             case "state":
                 clipboardDefaultDesktop = message.Desktop == 0; UpdateClipboardSession();
@@ -448,6 +477,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         stateReport.Reset();
         SupportsTakeover = false; RequestSerial = 0; requestedEpoch = disabledEpoch = ReleaseAcknowledged = null;
         handoff.Reset(); UpdateClipboardSession(true); clipboardPeer = false; inputOffer = null; desktop?.Send(new DesktopMessage("reset"));
+        secureInput?.Dispose(); secureInput = null; lastSecureReady = false;
     }
     public void Dispose() { if (disposed) return; disposed = true; ResetLink(); desktop?.Dispose(); desktop = null; }
 }
