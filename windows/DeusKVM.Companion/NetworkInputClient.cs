@@ -6,10 +6,13 @@ namespace DeusKVM.Companion;
 
 /// <summary>
 /// The PC's end of the Mac's pointer stream (NETWORK_POINTER_PLAN.md): connects to the offered
-/// listener, runs the nonce handshake under the "input" key purpose, delivers each record from
-/// the receiving thread and acknowledges once per read (cumulative, so a 1000 Hz mouse does not
-/// cost an acknowledgement per step). Reconnects with backoff while the offer stands; disposing
-/// ends it. Deliveries arrive on the thread pool; the caller must be safe for that.
+/// listener, runs the nonce handshake under the "input" key purpose, and delivers each record.
+/// It runs on a dedicated thread with blocking sockets rather than the thread pool, so a pointer
+/// step is not delayed by a scheduler wake-up, and it acknowledges each read before injecting, so
+/// the round trip the Mac measures excludes the injection work (which periodically probes the
+/// input desktop). The acknowledgement is cumulative, so a 1000 Hz mouse costs one ack per read,
+/// not one per step. Reconnects with backoff while the offer stands; disposing ends it.
+/// Deliveries arrive on this thread; the caller must be safe for that.
 /// </summary>
 internal sealed class NetworkInputClient : IDisposable
 {
@@ -19,57 +22,65 @@ internal sealed class NetworkInputClient : IDisposable
     private readonly Func<InputEvent, bool> deliver;
     private readonly Action<string> status;
     private readonly CancellationTokenSource lifetime = new();
-    private TcpClient? client;
+    private readonly Thread thread;
+    private Socket? socket;
 
     public NetworkInputClient(FileNetworkOffer offer, Func<InputEvent, bool> deliver, Action<string> status)
     {
         this.offer = offer; this.deliver = deliver; this.status = status;
-        _ = Task.Run(Run);
+        thread = new Thread(Run) { IsBackground = true, Name = "DeusKVM network input", Priority = ThreadPriority.AboveNormal };
+        thread.Start();
     }
 
-    public void Dispose() { lifetime.Cancel(); client?.Dispose(); }
+    public void Dispose()
+    {
+        lifetime.Cancel();
+        try { socket?.Close(); } catch (ObjectDisposedException) { }
+    }
 
-    private async Task Run()
+    private void Run()
     {
         var attempt = 0;
         while (!lifetime.IsCancellationRequested)
         {
-            try { await Session().ConfigureAwait(false); attempt = 0; }
+            try { Session(); attempt = 0; }
             catch (Exception error) when (error is SocketException or IOException or OperationCanceledException or
                 CryptographicException or InvalidDataException or ObjectDisposedException or FormatException)
             { if (!lifetime.IsCancellationRequested) status("closed (" + error.Message + ")"); }
             if (lifetime.IsCancellationRequested) break;
-            try { await Task.Delay(Backoff[Math.Min(attempt++, Backoff.Length - 1)], lifetime.Token).ConfigureAwait(false); }
-            catch (OperationCanceledException) { break; }
+            if (lifetime.Token.WaitHandle.WaitOne(Backoff[Math.Min(attempt++, Backoff.Length - 1)])) break;
         }
     }
 
-    private async Task Session()
+    private void Session()
     {
+        Socket? connected = null;
         foreach (var host in offer.Hosts)
         {
             lifetime.Token.ThrowIfCancellationRequested();
-            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-            attempt.CancelAfter(1000);
-            var next = new TcpClient(AddressFamily.InterNetwork) { NoDelay = true };
-            try { await next.ConnectAsync(IPAddress.Parse(host), offer.Port, attempt.Token).ConfigureAwait(false); }
-            catch (Exception error) when (error is SocketException or IOException or OperationCanceledException)
-            { next.Dispose(); continue; }
-            client = next;
-            try { await Stream(next).ConfigureAwait(false); }
-            finally { client = null; next.Dispose(); }
-            return;
+            var next = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            try
+            {
+                var result = next.BeginConnect(IPAddress.Parse(host), offer.Port, null, null);
+                if (!result.AsyncWaitHandle.WaitOne(1000) || !next.Connected) { next.Close(); continue; }
+                next.EndConnect(result);
+                connected = next;
+                break;
+            }
+            catch (SocketException) { next.Close(); }
         }
-        throw new SocketException(10061); // nothing reachable: WSAECONNREFUSED
+        if (connected is null) throw new SocketException((int)SocketError.ConnectionRefused);
+        socket = connected;
+        try { Stream(connected); }
+        finally { try { connected.Close(); } catch (ObjectDisposedException) { } socket = null; }
     }
 
-    private async Task Stream(TcpClient tcp)
+    private void Stream(Socket wire)
     {
-        var wire = tcp.GetStream();
         var clientNonce = RuntimeCompat.RandomBytes(32);
         var serverNonce = new byte[32];
-        await wire.WriteAsync(clientNonce, lifetime.Token).ConfigureAwait(false);
-        await wire.ReadExactlyAsync(serverNonce, lifetime.Token).ConfigureAwait(false);
+        wire.Send(clientNonce);
+        ReceiveExactly(wire, serverNonce, 32);
         var secret = Convert.FromBase64String(offer.Key);
         FileNetworkCrypto incoming, outgoing;
         try
@@ -85,31 +96,47 @@ internal sealed class NetworkInputClient : IDisposable
             var buffer = new byte[4096];
             var filled = 0;
             var ack = new byte[InputRecord.SealedAckLength];
-            while (true)
+            var canInject = true; // last injection outcome; the ack reports it without waiting for this batch
+            while (!lifetime.IsCancellationRequested)
             {
-                // One read takes whatever arrived: a single step at rest, a burst under load.
-                var read = await wire.ReadAsync(buffer, filled, buffer.Length - filled, lifetime.Token).ConfigureAwait(false);
+                var read = wire.Receive(buffer, filled, buffer.Length - filled, SocketFlags.None);
                 if (read <= 0) throw new IOException("Stream closed");
                 filled += read;
                 var offset = 0;
                 uint? last = null;
-                var accepted = true;
+                var records = new List<InputEvent>();
                 while (filled - offset >= 1 && filled - offset >= 1 + buffer[offset])
                 {
                     int length = buffer[offset];
                     if (length < 16) throw new InvalidDataException("Short record");
                     var plain = incoming.Open(buffer.AsSpan(offset + 1, length).ToArray());
                     if (!InputRecord.TryParse(plain, out var record)) throw new InvalidDataException("Unknown record");
-                    accepted &= deliver(record);
+                    records.Add(record);
                     last = record.Sequence;
                     offset += 1 + length;
                 }
                 if (offset > 0) { Buffer.BlockCopy(buffer, offset, buffer, 0, filled - offset); filled -= offset; }
                 if (filled == buffer.Length) throw new InvalidDataException("Oversized record");
                 if (last is not { } sequence) continue;
-                outgoing.Seal(InputRecord.Ack(sequence, InputRecord.Clock(), !accepted), ack);
-                await wire.WriteAsync(ack, 0, ack.Length, lifetime.Token).ConfigureAwait(false);
+                // Acknowledge first, so the round trip the Mac measures is the wire, not the
+                // injection that follows; the blocked flag reports the previous batch's outcome.
+                outgoing.Seal(InputRecord.Ack(sequence, InputRecord.Clock(), !canInject), ack);
+                wire.Send(ack);
+                var ok = true;
+                foreach (var record in records) ok &= deliver(record);
+                canInject = ok;
             }
+        }
+    }
+
+    private void ReceiveExactly(Socket wire, byte[] into, int count)
+    {
+        var got = 0;
+        while (got < count)
+        {
+            var read = wire.Receive(into, got, count - got, SocketFlags.None);
+            if (read <= 0) throw new IOException("Handshake closed");
+            got += read;
         }
     }
 }
