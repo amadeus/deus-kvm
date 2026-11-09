@@ -1,3 +1,4 @@
+import CoreWLAN
 import Foundation
 import Network
 
@@ -142,11 +143,15 @@ final class FileNetworkServer: @unchecked Sendable {
         }
     }
 
+    /// Private IPv4 addresses of this Mac, wired interfaces first so a peer connects over
+    /// Ethernet rather than Wi-Fi when both reach the same network (Wi-Fi adds milliseconds).
     static func addresses() -> [String] {
         var first: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&first) == 0 else { return [] }
         defer { freeifaddrs(first) }
-        var result: [String] = []
+        let wifi = CWWiFiClient.shared().interface()?.interfaceName
+        var wired: [String] = []
+        var wireless: [String] = []
         var item = first
         while let entry = item {
             defer { item = entry.pointee.ifa_next }
@@ -161,8 +166,13 @@ final class FileNetworkServer: @unchecked Sendable {
             guard octets.count == 4,
                   octets[0] == 10 || (octets[0] == 172 && (16 ... 31).contains(octets[1])) ||
                   (octets[0] == 192 && octets[1] == 168) || (octets[0] == 169 && octets[1] == 254) else { continue }
-            if !result.contains(value) { result.append(value) }
+            let name = String(cString: entry.pointee.ifa_name)
+            if name == wifi {
+                if !wireless.contains(value) { wireless.append(value) }
+            } else if !wired.contains(value) {
+                wired.append(value)
+            }
         }
-        return Array(result.prefix(4))
+        return Array((wired + wireless).prefix(4))
     }
 }

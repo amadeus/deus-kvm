@@ -114,8 +114,9 @@ final class InputNetworkServer: @unchecked Sendable {
 
     private func start() {
         var startThread: Thread?
+        var alreadyRunning = false
         lock.withLock {
-            guard !running else { return }
+            guard !running else { alreadyRunning = true; return }
             let fd = socket(AF_INET, SOCK_STREAM, 0)
             guard fd >= 0 else { return }
             var yes: Int32 = 1
@@ -140,6 +141,7 @@ final class InputNetworkServer: @unchecked Sendable {
             thread.name = "io.github.amadeus.deuskvm.network-input"
             startThread = thread
         }
+        guard !alreadyRunning else { return }
         guard let startThread else { note("listener unavailable"); return }
         note("listening")
         startThread.start()
