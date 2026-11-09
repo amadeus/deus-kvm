@@ -18,7 +18,10 @@ public static class Protocol
         ClipGrab = 0x20, ClipGet = 0x21, ClipData = 0x22, ClipState = 0x23, FileOffer = 0x24, FileGet = 0x25, FileData = 0x26, FileAccept = 0x27,
         // Problem report: the Mac asks (control stream, u32 token); Windows answers on the bulk
         // stream with the token and UTF-8 diagnostic text. Offered via HELLO `report: 1`.
-        ReportRequest = 0x30, Report = 0x31, Nack = 0x7F
+        ReportRequest = 0x30, Report = 0x31,
+        // The Mac's local-network pointer listener (bulk stream, JSON like a file offer's
+        // network part). Offered via HELLO `inputNetwork: 1`.
+        InputOffer = 0x32, Nack = 0x7F
     }
     public sealed record Packet(byte Stream, byte Type, byte[] Payload);
     public static Guid Uuid(int id) => new($"d5df{id:x4}-fd35-4b5c-8fc9-39dd1c43cb1d");

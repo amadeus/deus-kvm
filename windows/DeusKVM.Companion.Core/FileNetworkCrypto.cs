@@ -32,12 +32,14 @@ public sealed class FileNetworkCrypto : IDisposable
     private readonly AesGcm aes;
 #endif
     private ulong counter;
-    public FileNetworkCrypto(byte[] secret, byte[] client, byte[] server, string direction)
+    // `purpose` separates the file transfer keys from the pointer stream's ("input").
+    public FileNetworkCrypto(byte[] secret, byte[] client, byte[] server, string direction, string purpose = "file")
     {
-        if (secret.Length != 32 || client.Length != 32 || server.Length != 32 || direction is not ("client" or "server"))
+        if (secret.Length != 32 || client.Length != 32 || server.Length != 32 || direction is not ("client" or "server") ||
+            purpose is not ("file" or "input"))
             throw new InvalidDataException("Invalid network key context");
         var key = RuntimeCompat.DeriveFileKey(secret, client.Concat(server).ToArray(),
-            Encoding.UTF8.GetBytes("DeusKVM file v1 " + direction));
+            Encoding.UTF8.GetBytes("DeusKVM " + purpose + " v1 " + direction));
         try
         {
 #if NETFRAMEWORK

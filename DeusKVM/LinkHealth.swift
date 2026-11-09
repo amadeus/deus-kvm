@@ -40,10 +40,18 @@ final class TapStats: @unchecked Sendable {
         var lagSumMs = 0.0
         var lagMaxMs = 0.0
         var warps = 0
+        /// Pointer motion events captured while remote, and the spacing between consecutive
+        /// ones within a stroke (gaps over `strokeGap` are a lifted finger, not jitter).
+        var motion = 0
+        var motionGaps = 0
+        var motionGapSumMs = 0.0
+        var motionGapMaxMs = 0.0
     }
 
+    static let strokeGap: TimeInterval = 0.25
     private let lock = NSLock()
     private var current = Interval()
+    private var lastMotionAt: TimeInterval?
 
     func event(lagNanoseconds: UInt64?) {
         lock.withLock {
@@ -58,6 +66,20 @@ final class TapStats: @unchecked Sendable {
 
     func warp() {
         lock.withLock { current.warps += 1 }
+    }
+
+    /// One pointer motion event while remote; measures the pad's real delivery rate.
+    func motion(now: TimeInterval) {
+        lock.withLock {
+            current.motion += 1
+            if let last = lastMotionAt, now - last <= Self.strokeGap {
+                let gap = (now - last) * 1000
+                current.motionGaps += 1
+                current.motionGapSumMs += gap
+                current.motionGapMaxMs = max(current.motionGapMaxMs, gap)
+            }
+            lastMotionAt = now
+        }
     }
 
     func take() -> Interval {
@@ -163,7 +185,9 @@ struct HealthSample {
             "hidSent=\(link.hidSent)", "stallMs=\(Int(link.stallMs))", "stallMaxMs=\(Int(link.stallMaxMs))",
             "tapLagMaxMs=\(Self.ms(tap.lagMaxMs))", "tapLagAvgMs=\(Self.ms(lagAverage))", "warps=\(tap.warps)",
             "compOut=\(link.framesOut)/\(link.bytesOut)", "compIn=\(link.framesIn)/\(link.bytesIn)",
-            "rttMaxMs=\(Self.ms(ping.rttMaxMs))", "pingLost=\(ping.lost)"
+            "rttMaxMs=\(Self.ms(ping.rttMaxMs))", "pingLost=\(ping.lost)",
+            "motion=\(tap.motion)", "motionGapAvgMs=\(Self.ms(Self.average(tap.motionGapSumMs, tap.motionGaps)))",
+            "motionGapMaxMs=\(Self.ms(tap.motionGapMaxMs))"
         ]
         return fields.joined(separator: " ")
     }
@@ -207,6 +231,10 @@ struct HealthSummary {
         tap.lagSumMs += sample.tap.lagSumMs
         tap.lagMaxMs = max(tap.lagMaxMs, sample.tap.lagMaxMs)
         tap.warps += sample.tap.warps
+        tap.motion += sample.tap.motion
+        tap.motionGaps += sample.tap.motionGaps
+        tap.motionGapSumMs += sample.tap.motionGapSumMs
+        tap.motionGapMaxMs = max(tap.motionGapMaxMs, sample.tap.motionGapMaxMs)
         ping.replies += sample.ping.replies
         ping.rttSumMs += sample.ping.rttSumMs
         ping.rttMaxMs = max(ping.rttMaxMs, sample.ping.rttMaxMs)
@@ -225,7 +253,9 @@ struct HealthSummary {
             "hidPendingMax=\(link.hidPendingMax)", "stallMs=\(Int(link.stallMs))", "stallMaxMs=\(Int(link.stallMaxMs))",
             "compOut=\(link.framesOut)/\(link.bytesOut)", "compIn=\(link.framesIn)/\(link.bytesIn)",
             "companionQueuedMax=\(link.companionQueued)", "pings=\(ping.replies)",
-            "rttAvgMs=\(HealthSample.ms(rttAverage))", "rttMaxMs=\(HealthSample.ms(ping.rttMaxMs))", "pingLost=\(ping.lost)"
+            "rttAvgMs=\(HealthSample.ms(rttAverage))", "rttMaxMs=\(HealthSample.ms(ping.rttMaxMs))", "pingLost=\(ping.lost)",
+            "motion=\(tap.motion)", "motionGapAvgMs=\(HealthSample.ms(HealthSample.average(tap.motionGapSumMs, tap.motionGaps)))",
+            "motionGapMaxMs=\(HealthSample.ms(tap.motionGapMaxMs))"
         ]
         return "minute: " + fields.joined(separator: " ")
     }

@@ -47,6 +47,7 @@ final class CompanionService: ObservableObject {
         var supportsSelection = false
         var supportsTakeover = false
         var supportsReport = false
+        var supportsInputNetwork = false
     }
 
     func build() -> CBMutableService {
@@ -254,6 +255,7 @@ final class CompanionService: ObservableObject {
         clients[id]?.supportsSelection = hello.selection == 1
         clients[id]?.supportsTakeover = hello.takeover == true
         clients[id]?.supportsReport = hello.report == 1
+        clients[id]?.supportsInputNetwork = hello.inputNetwork == 1
         if let central = clients[id]?.central {
             // Our HELLO already went out at 20 bytes; later bulk frames fit both receive limits.
             clients[id]?.bulkEncoder.chunkSize = CompanionProtocol.frameLimit(min(hello.chunk, central.maximumUpdateValueLength))
@@ -286,6 +288,11 @@ final class CompanionService: ObservableObject {
 
     func supportsReport(_ id: UUID) -> Bool {
         ready.contains(id) && clients[id]?.supportsReport == true
+    }
+
+    /// The companion's desktop worker can connect to the Mac's pointer stream.
+    func supportsInputNetwork(_ id: UUID) -> Bool {
+        ready.contains(id) && clients[id]?.supportsInputNetwork == true
     }
 
     func requestReport(_ id: UUID, token: UInt32) {

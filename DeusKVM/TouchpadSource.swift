@@ -91,6 +91,8 @@ final class TouchpadSource: @unchecked Sendable {
     private var faulted = false
     private var tracker = TouchpadTracker()
     private var activity = TouchpadActivity()
+    /// The network pointer stream is up: a lone finger is not reported as a contact.
+    private var hidesLoneFinger = false
     private var deliver: Delivery?
     private var fault: Fault?
     /// The device list keeps its devices alive; both go away when the session stops.
@@ -168,6 +170,11 @@ final class TouchpadSource: @unchecked Sendable {
         return lifted
     }
 
+    /// Any thread: whether lone fingers stay out of the contact reports (see `TouchpadTracker.track`).
+    func setHidesLoneFinger(_ value: Bool) {
+        lock.withLock { hidesLoneFinger = value }
+    }
+
     /// Any thread: what the tap should assume about the pad right now.
     func presence(now: TimeInterval) -> TouchpadPresence {
         lock.withLock { running && !faulted ? activity.presence(now: now) : .none }
@@ -207,8 +214,8 @@ final class TouchpadSource: @unchecked Sendable {
                 verified = true
                 frameClockOffset = now - timestamp
             }
-            activity.update(touching: frame.contains(where: \.isTouching), now: now)
-            return Outcome(contacts: tracker.track(frame), deliver: deliver)
+            activity.update(touching: frame.filter(\.isTouching).count, now: now)
+            return Outcome(contacts: tracker.track(frame, hidingLoneFinger: hidesLoneFinger), deliver: deliver)
         }
         if let fault = outcome.fault, let first = frame.first {
             fault("record layout mismatch: id=\(first.identifier) state=\(first.state) x=\(first.x) y=\(first.y)")

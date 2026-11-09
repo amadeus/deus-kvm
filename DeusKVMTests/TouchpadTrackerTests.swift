@@ -88,15 +88,36 @@ final class TouchpadTrackerTests: XCTestCase {
     func testPresenceFollowsTouchesWithAGraceAfterTheLift() {
         var activity = TouchpadActivity()
         XCTAssertEqual(activity.presence(now: 10), .none)
-        activity.update(touching: true, now: 10)
-        XCTAssertEqual(activity.presence(now: 10.5), .touching)
-        activity.update(touching: false, now: 11)
+        activity.update(touching: 1, now: 10)
+        XCTAssertEqual(activity.presence(now: 10.5), .touching(1))
+        activity.update(touching: 3, now: 10.6)
+        XCTAssertEqual(activity.presence(now: 10.6), .touching(3))
+        activity.update(touching: 0, now: 11)
         XCTAssertEqual(activity.presence(now: 11.1), .recent)
         XCTAssertEqual(activity.presence(now: 11 + TouchpadActivity.grace), .none)
-        activity.update(touching: false, now: 12)
+        activity.update(touching: 0, now: 12)
         XCTAssertEqual(activity.presence(now: 12.01), .none, "staying lifted does not renew the grace")
-        activity.update(touching: true, now: 13)
-        XCTAssertEqual(activity.presence(now: 13), .touching)
+        activity.update(touching: 2, now: 13)
+        XCTAssertEqual(activity.presence(now: 13), .touching(2))
+    }
+
+    func testHidingTheLoneFingerReportsOnlyTwoOrMoreAndLiftsWhenOneRemains() {
+        var tracker = TouchpadTracker()
+        XCTAssertEqual(tracker.track([raw(1)], hidingLoneFinger: true), [], "a lone finger is the network's")
+        XCTAssertFalse(tracker.isTouching)
+        let landed = tracker.track([raw(1, x: 0.2), raw(2, x: 0.4)], hidingLoneFinger: true)
+        XCTAssertEqual(landed.map(\.id), [1, 2], "the second finger brings the first with it")
+        XCTAssertEqual(landed[0].x, TouchpadTracker.logical(0.2))
+        let lifted = tracker.track([raw(1, x: 0.25)], hidingLoneFinger: true)
+        XCTAssertEqual(lifted.map { "\($0.id):\($0.tip)" }, ["1:false", "2:false"], "dropping to one lifts both")
+        XCTAssertEqual(lifted[0].x, TouchpadTracker.logical(0.2), "at the last reported position")
+        XCTAssertEqual(tracker.track([raw(1, x: 0.3)], hidingLoneFinger: true), [])
+        XCTAssertEqual(tracker.track([raw(1, x: 0.3)], hidingLoneFinger: false).map(\.id), [1], "policy off: it lands")
+        XCTAssertEqual(
+            tracker.track([raw(1, x: 0.3)], hidingLoneFinger: true).map { "\($0.id):\($0.tip)" },
+            ["1:false"],
+            "policy on: it lifts"
+        )
     }
 
     func testOnlyFramesWithoutLiftsOrButtonChangesAreDroppable() {

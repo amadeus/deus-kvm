@@ -48,6 +48,15 @@ acknowledged takeover protocol still require an update.
    API; older builds read the values at the next sign-in. The group also shows
    whether Windows reports a precision touchpad as present.
 
+7. **Network pointer.** When the Mac's "Send pointer motion to Windows over the local
+   network" setting is on (the default) and both machines share a private network, the
+   desktop worker connects to a listener on the Mac, the same way file paste does, and
+   receives the trackpad's single-finger motion and clicks at the pad's own rate; they are
+   injected as mouse input, so the Windows Mouse settings apply and Windows edge return
+   works from them. Two or more fingers keep going over Bluetooth as touchpad contacts.
+   The Settings window's status line shows "Network pointer: up" while the stream runs;
+   without it everything falls back to Bluetooth.
+
 If both Macs are connected before the service starts, it prefers the last active
 enabled Mac, then stable endpoint-ID order. Disabled Macs stay disabled. Windows
 does not provide the historical connection order through this initial enumeration. New connections afterward

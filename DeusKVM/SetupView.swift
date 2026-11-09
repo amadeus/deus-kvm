@@ -9,6 +9,7 @@ struct SetupView: View {
     @EnvironmentObject private var companion: CompanionService
     @AppStorage(AppSettings.developerModeKey) private var developerMode = false
     @AppStorage(AppSettings.precisionTouchpadKey) private var precisionTouchpad = false
+    @AppStorage(AppSettings.networkPointerKey) private var networkPointer = true
     @StateObject private var login = LaunchAtLoginController()
     @State private var showReset = false
     @AppStorage(AppSettings.hasSeenWelcomeKey) private var hasSeenWelcome = false
@@ -101,6 +102,7 @@ struct SetupView: View {
     private var advancedSection: some View {
         Section(header: Text(L10n.Settings.advanced)) {
             Toggle(L10n.Settings.developerMode, isOn: $developerMode)
+            Toggle("Send pointer motion to Windows over the local network", isOn: $networkPointer)
             Button(role: .destructive) { showReset = true } label: {
                 Label(L10n.Settings.reset, systemImage: "trash")
             }
@@ -115,6 +117,7 @@ struct SetupView: View {
             row(L10n.Status.subscribedCentrals, Text(lowEnergy.subscribedCentrals.count, format: .number))
             row(L10n.Status.connectedPeripherals, Text(central.connected.count, format: .number))
             row(L10n.Status.hostLEDs, Text(verbatim: lowEnergy.keyboardLEDs.localizedLabel))
+            row("Network pointer", Text(verbatim: coordinator.networkPointerState))
         }
     }
 

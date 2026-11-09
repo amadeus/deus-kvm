@@ -18,9 +18,17 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private let diagnostics: CaptureDiagnostics
     /// Remote input goes from the tap thread straight to the Bluetooth queue; only crossings,
     /// returns and tap lifecycle events come here.
-    private lazy var tap = InputTap(output: { [weak self] event in self?._receive(event) }, forward: { [transport = lowEnergy.transport] in
-        transport.input($1, generation: $0, capturedAt: $2)
-    }, presence: { [transport = lowEnergy.transport] in transport.touchpadPresence() }, stats: diagnostics.tapStats)
+    private lazy var tap = InputTap(
+        output: { [weak self] event in self?._receive(event) },
+        forward: { [transport = lowEnergy.transport] in
+            transport.input($1, generation: $0, capturedAt: $2)
+        },
+        presence: { [transport = lowEnergy.transport] in transport.touchpadPresence() },
+        network: { [server = networkPointer.server] in server.isUp },
+        stats: diagnostics.tapStats
+    )
+    private lazy var networkPointer = NetworkPointer(contacts: lowEnergy.transport.touchpadSource)
+    @Published private(set) var networkPointerState = "off"
     private var timer: Timer?
     private var companionDeadlineTimer: Timer?
     private var started = false
@@ -110,6 +118,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
         started = true
         diagnostics.started(enabled: isEnabled)
         wireDiagnostics()
+        networkPointer.note = { [weak self] in self?.diagnostics.note($0) }
+        networkPointer.onStateChange = { [weak self] in self?.networkPointerState = $0 }
         lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion(); self?._refresh() }
         lowEnergy.companion.onActivity = { [weak self] id in
             guard let self, started, isEnabled, id == currentTarget else { return }
@@ -244,7 +254,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         cursor.restore(at: point)
         if wasRemote { tap.observeReturn(since: startedAt) }
         lowEnergy.transport.stopInput()
-        if wasRemote { isRemote = false }
+        if wasRemote { isRemote = false; networkPointer.logSession() }
         captureTarget = nil
         refreshClipboard()
         scheduleChecks()
@@ -252,18 +262,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
             let duration = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
             diagnostics.ended("return: \(reason) localRestoreMs=\(duration)")
         }
-    }
-
-    var shortcutLabel: String {
-        guard shortcut.enabled else { return L10n.Layout.disabledString }
-        let flags = CGEventFlags(rawValue: shortcut.modifiers)
-        var label = ""
-        if flags.contains(.maskControl) { label += "⌃" }
-        if flags.contains(.maskAlternate) { label += "⌥" }
-        if flags.contains(.maskShift) { label += "⇧" }
-        if flags.contains(.maskCommand) { label += "⌘" }
-        if flags.contains(.maskSecondaryFn) { label += "fn " }
-        return label + (shortcut.keyCode == 53 ? "⎋" : L10n.Layout.keyCodeString(shortcut.keyCode))
     }
 
     private var geometry: EdgeGeometry? {
@@ -304,6 +302,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         if targetAvailable != available { targetAvailable = available }
         refreshCaptureReadiness()
         if isEnabled { _refreshCompanion() } else if companionStatus != "DeusKVM is disabled" { companionStatus = "DeusKVM is disabled" }
+        networkPointer.refresh(enabled: isEnabled, target: currentTarget, companion: lowEnergy.companion)
         _refreshConnectionState()
         refreshClipboard()
         if isRemote, !canSwitch || captureTarget != currentTarget {
@@ -434,7 +433,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
             }
             // Input captured since the crossing waits on the Bluetooth queue until this point,
             // so it follows ENTER and never forwards for a refused crossing.
-            lowEnergy.transport.startInput(generation: generation)
+            lowEnergy.transport.startInput(generation: generation, network: networkPointer.server)
         case let .end(generation):
             if tap.isCurrent(generation) { returnLocal(reason: "toggle hotkey") }
         case .disabled:

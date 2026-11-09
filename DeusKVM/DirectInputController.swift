@@ -17,6 +17,10 @@ final class DirectInputController {
     private var sendConsumer: ((ConsumerReport) -> Void)?
     private var sendMouse: ((MouseReport) -> Void)?
     private var sendTouchpadButton: ((Bool) -> Void)?
+    private var sendNetwork: ((NetworkInputEvent) -> Void)?
+    private var networkReady: (() -> Bool)?
+    /// Buttons pressed over the network stream, released there when capture stops.
+    private var networkButtons: MouseButtons = []
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -29,6 +33,8 @@ final class DirectInputController {
         sendMouse = hid.sendMouse
         sendConsumer = hid.sendConsumer
         sendTouchpadButton = hid.sendTouchpadButton
+        sendNetwork = hid.sendNetwork
+        networkReady = hid.networkReady
         capsLock = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift)
         isCapturing = true
     }
@@ -41,6 +47,12 @@ final class DirectInputController {
         sendKeyboard?(.zero)
         sendMouse?(.zero)
         sendConsumer?(.zero)
+        for button: MouseButtons in [.left, .right, .middle] where networkButtons.contains(button) {
+            sendNetwork?(.button(button, false))
+        }
+        networkButtons = []
+        sendNetwork = nil
+        networkReady = nil
         sendKeyboard = nil
         sendMouse = nil
         sendConsumer = nil
@@ -78,14 +90,13 @@ final class DirectInputController {
             let current = pressedConsumerKeys.last
             if previous != current { sendConsumer?(ConsumerReport(key: current ?? .none)) }
         case let .mouseMove(dx, dy):
-            sendMouse?(MouseReport(buttons: pressedMouseButtons, dX: dx, dY: dy))
+            mouseMove(dx, dy)
         case let .mouseButton(button, isDown):
-            if isDown {
-                pressedMouseButtons.insert(button)
-            } else {
-                pressedMouseButtons.remove(button)
-            }
-            sendMouse?(MouseReport(buttons: pressedMouseButtons))
+            mouseButton(button, isDown)
+        case let .networkMove(dx, dy):
+            networkMove(dx, dy)
+        case let .networkButton(button, isDown):
+            networkButton(button, isDown)
         case let .scroll(wheel, pan):
             // Source deltas are already clamped to -127...127, so negation is safe.
             // Read on each scroll so settings changes apply during capture too.
@@ -97,6 +108,41 @@ final class DirectInputController {
         case let .touchpadButton(down):
             sendTouchpadButton?(down)
         }
+    }
+
+    /// The report carries 8-bit deltas; larger steps lose the excess, as they always did.
+    private func mouseMove(_ dx: Int32, _ dy: Int32) {
+        sendMouse?(MouseReport(buttons: pressedMouseButtons, dX: Self.clamp(dx), dY: Self.clamp(dy)))
+    }
+
+    /// The stream may have dropped since the tap decided: Bluetooth carries the event then.
+    private func networkMove(_ dx: Int32, _ dy: Int32) {
+        if networkReady?() == true { sendNetwork?(.motion(dx, dy)) } else { mouseMove(dx, dy) }
+    }
+
+    private func networkButton(_ button: MouseButtons, _ isDown: Bool) {
+        if isDown, networkReady?() == true {
+            networkButtons.insert(button)
+            sendNetwork?(.button(button, true))
+        } else if !isDown, networkButtons.contains(button) {
+            networkButtons.remove(button)
+            sendNetwork?(.button(button, false))
+        } else {
+            mouseButton(button, isDown)
+        }
+    }
+
+    private static func clamp(_ value: Int32) -> Int8 {
+        Int8(max(-127, min(127, value)))
+    }
+
+    private func mouseButton(_ button: MouseButtons, _ isDown: Bool) {
+        if isDown {
+            pressedMouseButtons.insert(button)
+        } else {
+            pressedMouseButtons.remove(button)
+        }
+        sendMouse?(MouseReport(buttons: pressedMouseButtons))
     }
 
     private func sendKeyboardReport() {

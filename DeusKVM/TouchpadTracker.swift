@@ -35,14 +35,16 @@ struct TouchpadTracker: Sendable, Equatable {
     /// The contacts to report for one raw frame: each finger still down at its new position,
     /// one tip-off report for each finger that lifted or vanished, then fingers that landed
     /// while fewer than `TouchpadReport.maximumContacts` are tracked. Empty when nothing is
-    /// down and nothing landed.
-    mutating func track(_ frame: [TouchpadRawContact]) -> [TouchpadContact] {
+    /// down and nothing landed. With `hidingLoneFinger` a single finger counts as lifted: the
+    /// network pointer path carries it, and Windows only sees two or more (its gestures).
+    mutating func track(_ frame: [TouchpadRawContact], hidingLoneFinger: Bool = false) -> [TouchpadContact] {
         var touching: [UInt8: TouchpadRawContact] = [:]
         var arrivals: [UInt8] = []
         for contact in frame where contact.isTouching {
             let id = Self.identifier(contact.identifier)
             if touching.updateValue(contact, forKey: id) == nil { arrivals.append(id) }
         }
+        if hidingLoneFinger, touching.count <= 1 { touching.removeAll(); arrivals.removeAll() }
         var reports: [TouchpadContact] = []
         for id in order {
             guard var known = down[id] else { continue }
@@ -99,9 +101,10 @@ struct TouchpadTracker: Sendable, Equatable {
 enum TouchpadPresence: Sendable, Equatable {
     /// No finger for longer than the grace period: the event comes from another device.
     case none
-    /// A finger lifted within the grace period: macOS may still be emitting its tail.
+    /// Every finger lifted within the grace period: macOS may still be emitting its tail.
     case recent
-    case touching
+    /// Fingers on the surface, with their count.
+    case touching(Int)
 }
 
 /// Presence derived from raw frames, with a grace period after the last lift that absorbs the
@@ -109,16 +112,16 @@ enum TouchpadPresence: Sendable, Equatable {
 struct TouchpadActivity: Sendable, Equatable {
     static let grace: TimeInterval = 0.15
 
-    private(set) var touching = false
+    private(set) var fingers = 0
     private(set) var liftedAt: TimeInterval?
 
-    mutating func update(touching next: Bool, now: TimeInterval) {
-        if touching, !next { liftedAt = now }
-        touching = next
+    mutating func update(touching next: Int, now: TimeInterval) {
+        if fingers > 0, next == 0 { liftedAt = now }
+        fingers = next
     }
 
     func presence(now: TimeInterval) -> TouchpadPresence {
-        if touching { return .touching }
+        if fingers > 0 { return .touching(fingers) }
         if let liftedAt, now - liftedAt < Self.grace { return .recent }
         return .none
     }

@@ -25,6 +25,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     private GattCharacteristic? controlRead, controlWrite, bulkRead, bulkWrite;
     private DesktopHost? desktop;
     private MonitorInfo[] monitors = [];
+    private byte[]? inputOffer;
     private EdgeConfiguration? config => handoff.Configuration;
     private long lastSeen, connectedAt;
     private bool subscribing, ready, writing, helloSent, disposed;
@@ -132,8 +133,25 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
             clipboardDesktopAvailable = clipboardDefaultDesktop = false;
         }
         if (notify && availability.Negotiated) Send(Protocol.Message.Selection, availability.Selection(active));
-        if (value) { disabledEpoch = null; ReleaseAcknowledged = null; }
+        if (value) { disabledEpoch = null; ReleaseAcknowledged = null; ForwardInputOffer(); }
         SetDetail(active ? "Active Mac; preparing desktop" : "Waiting for Windows priority");
+    }
+
+    // The Mac's pointer stream listener. Kept for the life of the link and handed to the desktop
+    // worker whenever it is connected and this Mac is active, since only the worker may inject.
+    private void ReceiveInputOffer(byte[] payload)
+    {
+        if (payload.Length > 4096) throw new InvalidDataException("Oversized input offer");
+        var offer = JsonSerializer.Deserialize<FileNetworkOffer>(payload, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        if (offer is not { Valid: true }) throw new InvalidDataException("Invalid input offer");
+        inputOffer = payload;
+        ForwardInputOffer();
+    }
+
+    private void ForwardInputOffer()
+    {
+        if (inputOffer is { } offer && active && desktop?.Connected == true)
+            desktop.Send(new DesktopMessage("input-offer", Report: System.Text.Encoding.UTF8.GetString(offer)));
     }
 
     public void RequestDisable(uint? epoch = null)
@@ -193,7 +211,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 imagesPeer = hello.RootElement.TryGetProperty("images", out var images) && images.TryGetInt32(out var imageVersion) && imageVersion == 1;
                 var chunk = Protocol.FrameLimit(maxPduSize() - 3); // ATT write/notify value limit
                 SendJson(Protocol.Message.Hello, new { v = 1, role = "pc", name = "DeusKVM Companion",
-                    computerName = Environment.MachineName, chunk, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, images = 1, selection = 1, takeover = true, report = 1 });
+                    computerName = Environment.MachineName, chunk, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, images = 1, selection = 1, takeover = true, report = 1, inputNetwork = 1 });
                 // HELLO itself stays at the 20-byte bootstrap size; later bulk frames fit both receive limits.
                 bulkEncoder.ChunkSize = Protocol.FrameLimit(Math.Min(chunk, hello.RootElement.GetProperty("chunk").GetInt32()));
                 UpdateClipboardSession(true);
@@ -212,6 +230,11 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 {
                     if (packet.Stream != (type == Protocol.Message.ClipData ? 1 : 0)) throw new InvalidDataException("Wrong clipboard stream");
                     ReceiveClipboard(type, packet.Payload);
+                }
+                else if (type == Protocol.Message.InputOffer)
+                {
+                    if (packet.Stream != 1) throw new InvalidDataException("Invalid input offer stream");
+                    ReceiveInputOffer(packet.Payload);
                 }
                 else Handle(type, packet.Payload);
             }
@@ -300,6 +323,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 handoff.DesktopChanged(); blind = 4;
                 clipboardDesktopAvailable = clipboardDefaultDesktop = false; UpdateClipboardSession(true);
                 SendState([4, 2, 0]);
+                if (message.Kind == "connected") ForwardInputOffer();
                 break;
             case "screens":
                 if (message.Monitors is not { Length: > 0 and <= 32 } screens ||
@@ -311,7 +335,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 clipboardDefaultDesktop = message.Desktop == 0; UpdateClipboardSession();
                 blind = message.Blind;
                 SendState([blind, message.Desktop, (byte)(message.MousePresent ? 1 : 0)]);
-                SetDetail(message.Detail ?? "Desktop status received");
+                SetDetail((message.Detail ?? "Desktop status received") + (message.Network is { Length: > 0 } network ? "\n" + network : ""));
                 break;
             case "ack" when handoff.Accept(message.SwitchId):
                 var ack = new byte[7]; ack[0] = message.SwitchId; ack[1] = message.Ok ? (byte)1 : (byte)0;
@@ -423,7 +447,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         availability = new();
         stateReport.Reset();
         SupportsTakeover = false; RequestSerial = 0; requestedEpoch = disabledEpoch = ReleaseAcknowledged = null;
-        handoff.Reset(); UpdateClipboardSession(true); clipboardPeer = false; desktop?.Send(new DesktopMessage("reset"));
+        handoff.Reset(); UpdateClipboardSession(true); clipboardPeer = false; inputOffer = null; desktop?.Send(new DesktopMessage("reset"));
     }
     public void Dispose() { if (disposed) return; disposed = true; ResetLink(); desktop?.Dispose(); desktop = null; }
 }

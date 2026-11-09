@@ -54,17 +54,21 @@ final class InputTap: @unchecked Sendable {
     private let forward: @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
     /// Whether a finger is on the trackpad, asked only while precision mode is on.
     private let presence: @Sendable () -> TouchpadPresence
+    /// Whether the local-network pointer stream is up, asked per pointer event.
+    private let network: @Sendable () -> Bool
     private let stats: TapStats
 
     init(
         output: @escaping @MainActor @Sendable (TapOutput) -> Void,
         forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void,
         presence: @escaping @Sendable () -> TouchpadPresence = { .none },
+        network: @escaping @Sendable () -> Bool = { false },
         stats: TapStats = TapStats()
     ) {
         self.output = output
         self.forward = forward
         self.presence = presence
+        self.network = network
         self.stats = stats
     }
 
@@ -372,6 +376,7 @@ final class InputTap: @unchecked Sendable {
                 edgeArmed = false
             } else if motion { _checkEdge(event) }
         } else if motion {
+            stats.motion(now: ProcessInfo.processInfo.systemUptime)
             if let point = configuration.geometry?.parkingPoint,
                TapWorkSchedule.needsCursorCorrection(location: event.location, parkingPoint: point)
             {
@@ -385,22 +390,6 @@ final class InputTap: @unchecked Sendable {
         }
         if wasRemote { _forwardRemote(type: type, event: event) }
         return wasRemote
-    }
-
-    /// Called with the lock held. Pointer events are routed between the mouse collection and
-    /// the pad (`TouchpadRouter`); everything else is forwarded as it is.
-    private func _forwardRemote(type: CGEventType, event: CGEvent) {
-        guard let input = DirectInputEvent(type: type, event: event) else { return }
-        stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
-        let continuous = type == .scrollWheel && event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
-        let routed: DirectInputEvent? = switch router.route(
-            TouchpadRouter.Event(input.kind, continuous: continuous), enabled: configuration.precisionTouchpad, presence: presence
-        ) {
-        case .forward: input
-        case .drop: nil
-        case let .padButton(down): DirectInputEvent(kind: .touchpadButton(down), modifiers: input.modifiers)
-        }
-        if let routed { forward(generation, routed, ProcessInfo.processInfo.systemUptime) }
     }
 
     private func _suppressRawAlias(code: UInt16, down: Bool, flags: CGEventFlags) -> Bool {
@@ -476,6 +465,25 @@ final class InputTap: @unchecked Sendable {
 }
 
 extension InputTap {
+    /// Called with the lock held. Pointer events are routed between the mouse collection and
+    /// the pad (`TouchpadRouter`); everything else is forwarded as it is.
+    private func _forwardRemote(type: CGEventType, event: CGEvent) {
+        guard let input = DirectInputEvent(type: type, event: event) else { return }
+        stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
+        let continuous = type == .scrollWheel && event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
+        let routerEvent = TouchpadRouter.Event(input.kind, continuous: continuous)
+        let networkUp = routerEvent == .other ? false : network()
+        let routed: DirectInputEvent? = switch router.route(
+            routerEvent, enabled: configuration.precisionTouchpad, network: networkUp, presence: presence
+        ) {
+        case .forward: input
+        case .network: input.networked
+        case .drop: nil
+        case let .padButton(down): DirectInputEvent(kind: .touchpadButton(down), modifiers: input.modifiers)
+        }
+        if let routed { forward(generation, routed, ProcessInfo.processInfo.systemUptime) }
+    }
+
     /// Called with the tap lock held. Gestures pass through on the Mac and are swallowed while
     /// controlling Windows.
     private func _gesture(type: CGEventType, event _: CGEvent) -> Bool {

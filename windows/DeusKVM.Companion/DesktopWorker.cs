@@ -21,6 +21,13 @@ internal sealed class DesktopWorker : ApplicationContext
     private readonly HandoffSession handoff = new();
     private readonly DesktopRecoveryPoll recoveryPoll = new();
     private readonly MouseIdentityCache devices = new();
+    // The Mac's network pointer stream: injected here, the only process in the user's session.
+    private readonly InputArrivalStats arrivals = new();
+    private NetworkInputClient? network;
+    private SynchronizationContext? context;
+    private string networkStatus = "Network pointer: no offer";
+    private uint heldNetworkButtons; // MOUSEEVENTF up flags still owed
+    private bool defaultDesktop;
     private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests, rejectedLeaves;
     private long lastEdgeReport, lastRejectionLog;
     // Recent edge/desktop decisions for a problem report requested from the Mac; memory only.
@@ -51,7 +58,7 @@ internal sealed class DesktopWorker : ApplicationContext
             await pipe.ConnectAsync(10000, shutdown.Token);
             if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid) || pid != parent)
                 throw new InvalidDataException("Unexpected desktop pipe server");
-            var context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            var context = this.context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
             clipboard = new DesktopClipboard(Send);
             var connection = Task.Run(async () =>
             {
@@ -85,6 +92,7 @@ internal sealed class DesktopWorker : ApplicationContext
     private void Refresh()
     {
         var state = DesktopNative.DesktopState();
+        defaultDesktop = state.Desktop == 0;
         if (state.Desktop != 0)
         {
             UpdateDesktopState(state);
@@ -127,7 +135,7 @@ internal sealed class DesktopWorker : ApplicationContext
         if (blind != 0) cursor.Reveal();
         Send(new DesktopMessage("state", Blind: blind, Desktop: state.Desktop, MousePresent: mouse,
             Detail: !accessible ? "Secure desktop; use the Mac hotkey" : !mouse ?
-                "Waiting for the active Mac's HID mouse" : "Windows edge return ready"));
+                "Waiting for the active Mac's HID mouse" : "Windows edge return ready", Network: networkStatus));
     }
 
     private void Handle(DesktopMessage message)
@@ -141,15 +149,19 @@ internal sealed class DesktopWorker : ApplicationContext
                 config = message.Config is { Edge: < 4 } ? message.Config : null;
                 history.Add($"config: edge={config?.Edge} monitor={Describe(monitors.FirstOrDefault(item => item.Id == config?.Monitor))}");
                 break;
-            case "reset": cursor.Reveal(); handoff.Exit(); history.Add("reset"); break;
+            case "reset": cursor.Reveal(); handoff.Exit(); StopNetwork("no offer"); history.Add("reset"); break;
             case "exit":
                 if (handoff.Accept(message.SwitchId))
                 {
                     handoff.Exit();
+                    ReleaseNetworkButtons();
                     if (blind == 0) cursor.Hide();
-                    history.Add($"exit: switch={message.SwitchId}");
+                    history.Add($"exit: switch={message.SwitchId} network={arrivals.Summary}");
+                    arrivals.Reset();
                 }
                 break;
+            case "input-offer": StartNetwork(message.Report); break;
+            case "input-revoke": StopNetwork("no offer"); break;
             case "resume":
                 // Reattach to current Mac ownership after login/worker startup.
                 // Never replay entry placement over the user's current cursor.
@@ -209,6 +221,7 @@ internal sealed class DesktopWorker : ApplicationContext
             var device = Marshal.ReadIntPtr(buffer, 8);
             var selected = devices.Resolve(device, candidate => DesktopNative.IsMacMouse(candidate, address));
             var mouse = buffer + (int)headerSize;
+            if (Marshal.ReadInt32(mouse, 20) == unchecked((int)DesktopNative.InjectTag)) return; // our own injected step
             var dx = Marshal.ReadInt32(mouse, 12);
             var dy = Marshal.ReadInt32(mouse, 16);
             var buttons = Marshal.ReadInt16(mouse, 4);
@@ -221,34 +234,99 @@ internal sealed class DesktopWorker : ApplicationContext
                 if (dx != 0 || dy != 0 || buttons != 0) cursor.Reveal();
                 return;
             }
-            if (handoff.Active is not { } id || config is null || !handoff.CanReturn ||
-                (Marshal.ReadInt16(mouse) & 1) != 0 || !DesktopNative.GetCursorPos(out var point)) return;
-            if (dx == 0 && dy == 0) return;
-            var monitor = monitors.FirstOrDefault(item => item.Id == config.Monitor);
-            if (monitor is null) return;
-            var held = new[] { 1, 2, 4, 5, 6 }.Any(key => DesktopNative.GetAsyncKeyState(key) < 0);
-            var clipped = !DesktopNative.GetClipCursor(out var clip) || clip.Left > monitor.X || clip.Top > monitor.Y ||
-                clip.Right < monitor.X + monitor.W || clip.Bottom < monitor.Y + monitor.H;
-            if (held) heldMotion++;
-            if (clipped) clippedMotion++;
-            var previous = lastPoint;
-            lastPoint = point;
-            if (EdgeDetector.Observe(monitor, monitors, config, point.X, point.Y, dx, dy, held, clipped))
-            {
-                var live = DesktopNative.MonitorAt(point.X, point.Y);
-                var verdict = EdgeDetector.Confirm(monitor, live, monitors, config, point.X, point.Y, dx, dy);
-                var detail = LeaveDetail(verdict, monitor, live, point, previous, dx, dy);
-                if (verdict == EdgeVerdict.Leave)
-                {
-                    leaveRequests++;
-                    history.Add(detail);
-                    Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
-                        Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
-                }
-                else RejectLeave(detail);
-            }
+            if ((Marshal.ReadInt16(mouse) & 1) != 0) return; // absolute motion carries no edge direction
+            ObserveMotion(dx, dy);
         }
         finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+
+    // The edge test for one pointer step the Mac produced, whether it came as a Raw Input packet
+    // from the Bluetooth mouse or was injected from the network stream a moment ago.
+    private void ObserveMotion(int dx, int dy)
+    {
+        if (handoff.Active is not { } id || config is null || !handoff.CanReturn || !DesktopNative.GetCursorPos(out var point)) return;
+        if (dx == 0 && dy == 0) return;
+        var monitor = monitors.FirstOrDefault(item => item.Id == config.Monitor);
+        if (monitor is null) return;
+        var held = new[] { 1, 2, 4, 5, 6 }.Any(key => DesktopNative.GetAsyncKeyState(key) < 0);
+        var clipped = !DesktopNative.GetClipCursor(out var clip) || clip.Left > monitor.X || clip.Top > monitor.Y ||
+            clip.Right < monitor.X + monitor.W || clip.Bottom < monitor.Y + monitor.H;
+        if (held) heldMotion++;
+        if (clipped) clippedMotion++;
+        var previous = lastPoint;
+        lastPoint = point;
+        if (EdgeDetector.Observe(monitor, monitors, config, point.X, point.Y, dx, dy, held, clipped))
+        {
+            var live = DesktopNative.MonitorAt(point.X, point.Y);
+            var verdict = EdgeDetector.Confirm(monitor, live, monitors, config, point.X, point.Y, dx, dy);
+            var detail = LeaveDetail(verdict, monitor, live, point, previous, dx, dy);
+            if (verdict == EdgeVerdict.Leave)
+            {
+                leaveRequests++;
+                history.Add(detail);
+                Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
+                    Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
+            }
+            else RejectLeave(detail);
+        }
+    }
+
+    private void StartNetwork(string? json)
+    {
+        StopNetwork("connecting");
+        FileNetworkOffer? offer = null;
+        try { if (json is not null) offer = System.Text.Json.JsonSerializer.Deserialize<FileNetworkOffer>(json, FileClipboardOffer.WireJson); }
+        catch (System.Text.Json.JsonException) { }
+        if (offer is not { Valid: true } || context is not { } post) { SetNetworkStatus("invalid offer"); return; }
+        history.Add($"network: offer port={offer.Port} hosts={offer.Hosts.Length}");
+        network = new NetworkInputClient(offer, record => post.Post(_ => Inject(record), null),
+            text => post.Post(_ => { if (text.StartsWith("closed", StringComparison.Ordinal)) ReleaseNetworkButtons(); SetNetworkStatus(text); }, null));
+    }
+
+    private void StopNetwork(string reason)
+    {
+        network?.Dispose(); network = null;
+        ReleaseNetworkButtons();
+        SetNetworkStatus(reason);
+    }
+
+    private void SetNetworkStatus(string text)
+    {
+        var next = "Network pointer: " + text;
+        if (next == networkStatus) return;
+        networkStatus = next;
+        history.Add(next);
+        UpdateDesktopState(DesktopNative.DesktopState());
+    }
+
+    // One record from the stream, on the desktop thread. Only while the Mac owns the handoff and
+    // the default desktop is up; otherwise it is counted and dropped (the Mac keeps acks flowing).
+    private void Inject(InputEvent record)
+    {
+        if (record.Type == InputRecord.Ping) return;
+        arrivals.Observe(DesktopNative.Milliseconds());
+        if (handoff.Active is null || !defaultDesktop) { arrivals.Discarded++; return; }
+        if (record.IsMotion)
+        {
+            if (DesktopNative.InjectMouse(record.Dx, record.Dy, DesktopNative.MouseMove)) arrivals.Injected++;
+            ObserveMotion(record.Dx, record.Dy);
+        }
+        else if (record.IsButton)
+        {
+            var (down, up) = DesktopNative.ButtonFlags(record.Button);
+            if (record.Down) heldNetworkButtons |= up; else heldNetworkButtons &= ~up;
+            if (DesktopNative.InjectMouse(0, 0, record.Down ? down : up)) arrivals.Injected++;
+        }
+    }
+
+    // A button pressed from the stream is released here when the stream, the handoff or the
+    // worker ends, so Windows never keeps one that the Mac can no longer release.
+    private void ReleaseNetworkButtons()
+    {
+        if (heldNetworkButtons == 0) return;
+        DesktopNative.InjectMouse(0, 0, heldNetworkButtons);
+        heldNetworkButtons = 0;
     }
 
     // A layout that disagrees with Windows' live monitor is re-read, and the durable log gets a
@@ -292,6 +370,7 @@ internal sealed class DesktopWorker : ApplicationContext
         {
             $"desktop worker: awareness={DesktopNative.DpiAwareness()} blind={blind} mouse={devices.HasMatch} handoff={handoff.Active is not null} " +
                 $"hidden={cursor.Hidden} edge={config?.Edge} configured={Describe(configured)}",
+            $"{networkStatus.ToLowerInvariant()} {arrivals.Summary}",
             $"cached layout: {Describe(monitors)}",
             $"live layout: {Describe(DesktopNative.Monitors())}",
             cursorLine,
@@ -323,6 +402,8 @@ internal sealed class DesktopWorker : ApplicationContext
         if (disposing)
         {
             Application.Idle -= Start;
+            network?.Dispose();
+            ReleaseNetworkButtons();
             clipboard?.Dispose();
             cursor.Dispose();
             shutdown.Cancel(); timer.Dispose(); pipe.Dispose(); window.DestroyHandle(); shutdown.Dispose();

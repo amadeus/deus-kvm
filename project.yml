@@ -96,6 +96,7 @@ targets:
       - DeusKVM/TouchpadScript.swift
       - DeusKVM/TouchpadTracker.swift
       - DeusKVM/TouchpadRouting.swift
+      - DeusKVM/NetworkInput.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

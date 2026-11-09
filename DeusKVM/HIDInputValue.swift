@@ -10,4 +10,7 @@ struct HIDInput {
     let activeError: String?
     /// The pad's button in the touchpad collection; nil when no precision touchpad is live.
     var sendTouchpadButton: ((Bool) -> Void)?
+    /// The local-network pointer stream and whether it is up right now; nil without one.
+    var sendNetwork: ((NetworkInputEvent) -> Void)?
+    var networkReady: (() -> Bool)?
 }

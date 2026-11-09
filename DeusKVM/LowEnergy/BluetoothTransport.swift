@@ -240,16 +240,20 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
         }
     }
 
-    /// The coordinator approved the crossing and queued ENTER: forward this session, oldest first.
-    func startInput(generation: Int) {
+    /// The coordinator approved the crossing and queued ENTER: forward this session, oldest
+    /// first. Pointer events the tap routes to the network go to `network` while it is up.
+    func startInput(generation: Int, network: InputNetworkServer? = nil) {
         queue.async { [self] in
             controller.start(HIDInput(
                 sendMouse: { [weak self] in self?.sendMouse($0) },
                 sendKeyboard: { [weak self] in self?.sendKeyboard($0) },
                 sendConsumer: { [weak self] in self?.sendConsumer($0) },
                 isActive: true, isConnected: true, activeError: nil,
-                sendTouchpadButton: { [weak self] in self?.touchpad.button($0) }
+                sendTouchpadButton: { [weak self] in self?.touchpad.button($0) },
+                sendNetwork: { [weak network] in network?.send($0) },
+                networkReady: { [weak network] in network?.isUp ?? false }
             ))
+            network?.resetSession()
             touchpad.startSession()
             for (event, captured) in gate.start(generation) {
                 forward(event, captured)

@@ -7,11 +7,16 @@ struct DirectInputEvent: Sendable {
         case keyUp(Keycode)
         case flagsChanged(capsLock: Bool)
         case consumer(ConsumerKey, down: Bool)
-        case mouseMove(Int8, Int8)
+        /// Pointer deltas as macOS reported them; the Bluetooth mouse report clamps them to 8 bits.
+        case mouseMove(Int32, Int32)
         case mouseButton(MouseButtons, Bool)
         case scroll(wheel: Int8, pan: Int8)
         /// The trackpad's physical click while Windows drives the pad from its contacts.
         case touchpadButton(Bool)
+        /// Pointer motion and buttons the tap routed to the local-network stream; the
+        /// controller sends them over Bluetooth instead if the stream is not up.
+        case networkMove(Int32, Int32)
+        case networkButton(MouseButtons, Bool)
     }
 
     let kind: Kind
@@ -25,7 +30,7 @@ struct DirectInputEvent: Sendable {
     /// Motion and scroll hold no state on the host, so losing one cannot leave anything pressed.
     var isRelative: Bool {
         switch kind {
-        case .mouseMove, .scroll: true
+        case .mouseMove, .scroll, .networkMove: true
         default: false
         }
     }
@@ -55,8 +60,8 @@ struct DirectInputEvent: Sendable {
         case .flagsChanged:
             kind = .flagsChanged(capsLock: flags.contains(.maskAlphaShift))
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
-            let dx = Self.clampInt8(event.getIntegerValueField(.mouseEventDeltaX))
-            let dy = Self.clampInt8(event.getIntegerValueField(.mouseEventDeltaY))
+            let dx = Int32(clamping: event.getIntegerValueField(.mouseEventDeltaX))
+            let dy = Int32(clamping: event.getIntegerValueField(.mouseEventDeltaY))
             guard dx != 0 || dy != 0 else { return nil }
             kind = .mouseMove(dx, dy)
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -15,6 +16,26 @@ internal static class DesktopNative
     private struct PropertyKey { public Guid Format; public uint Id; }
     [StructLayout(LayoutKind.Sequential)]
     internal struct DeviceEntry { public IntPtr Handle; public uint Type; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MouseInput { public int Dx, Dy; public uint Data, Flags, Time; public IntPtr Extra; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Input { public uint Type; public MouseInput Mouse; }
+
+    // Pointer steps from the Mac's network stream are injected as relative mouse input, tagged
+    // so the raw-input handler can tell them from the PC's own mouse (RAWMOUSE.ulExtraInformation).
+    internal const uint MouseMove = 0x0001, InjectTag = 0x44455553; // "DEUS"
+    internal static (uint Down, uint Up) ButtonFlags(byte button) => button switch
+    {
+        1 => (0x0002u, 0x0004u), // left
+        2 => (0x0008u, 0x0010u), // right
+        _ => (0x0020u, 0x0040u) // middle
+    };
+    internal static bool InjectMouse(int dx, int dy, uint flags)
+    {
+        var input = new Input { Type = 0, Mouse = new MouseInput { Dx = dx, Dy = dy, Flags = flags, Extra = (IntPtr)InjectTag } };
+        return SendInput(1, [input], Marshal.SizeOf<Input>()) == 1;
+    }
+    internal static double Milliseconds() => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
 
     internal static bool IsMacMouse(IntPtr device, string address)
     {
@@ -148,6 +169,8 @@ internal static class DesktopNative
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetCursorPos(int x, int y);

@@ -13,11 +13,12 @@ struct FileNetworkCrypto {
     let key: SymmetricKey
     private var counter: UInt64 = 0
 
-    init(secret: Data, client: Data, server: Data, direction: String) {
+    /// `purpose` separates the file transfer keys from the pointer stream's ("input").
+    init(secret: Data, client: Data, server: Data, direction: String, purpose: String = "file") {
         key = HKDF<SHA256>.deriveKey(
             inputKeyMaterial: SymmetricKey(data: secret),
             salt: client + server,
-            info: Data("DeusKVM file v1 \(direction)".utf8),
+            info: Data("DeusKVM \(purpose) v1 \(direction)".utf8),
             outputByteCount: 32
         )
     }
