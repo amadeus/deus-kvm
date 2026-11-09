@@ -14,14 +14,34 @@ struct InputNetworkOffer: Codable, Sendable, Equatable {
     let key: String
 }
 
+/// What the stream can do for the tap right now.
+enum NetworkCarrier: Sendable, Equatable {
+    /// No connection: Bluetooth as before.
+    case down
+    /// Connected and the PC injects: pointer events go over the network.
+    case up
+    /// Connected but the PC cannot inject (a UAC prompt or the lock screen holds the secure
+    /// desktop): everything goes over the Bluetooth mouse, which Windows takes anywhere.
+    case unavailable
+}
+
+/// The PC's acknowledgement: everything up to `sequence` arrived at `received` on its clock,
+/// and whether it could inject at that moment.
+struct InputAck: Sendable, Equatable {
+    let sequence: UInt32
+    let received: UInt32
+    let blocked: Bool
+}
+
 /// The wire records of the input stream (NETWORK_POINTER_PLAN.md). Little-endian; each Mac to
 /// PC record is sealed with AES-GCM and prefixed by its sealed length in one byte; the PC answers
-/// every record with a sealed 8-byte acknowledgement.
+/// with a sealed 12-byte acknowledgement (cumulative) per read.
 enum InputRecord {
     static let motion: UInt8 = 1
     static let button: UInt8 = 2
     static let ping: UInt8 = 3
-    static let ackLength = 8
+    static let ackLength = 12
+    static let ackBlockedFlag: UInt32 = 1
     /// A sealed acknowledgement: the record plus the 16-byte tag.
     static let sealedAckLength = ackLength + 16
 
@@ -43,10 +63,9 @@ enum InputRecord {
         Data([ping]) + u32(sequence) + u32(captured)
     }
 
-    /// Sequence the PC last received and its own clock at that moment.
-    static func ack(_ data: Data) -> (sequence: UInt32, received: UInt32)? {
+    static func ack(_ data: Data) -> InputAck? {
         guard data.count == ackLength else { return nil }
-        return (read32(data, 0), read32(data, 4))
+        return InputAck(sequence: read32(data, 0), received: read32(data, 4), blocked: read32(data, 8) & ackBlockedFlag != 0)
     }
 
     /// 1 left, 2 right, 3 middle; the PC maps them to its button flags.

@@ -37,8 +37,9 @@ public sealed class NetworkInputTests
     [Fact]
     public void AcknowledgementsCarrySequenceAndClock()
     {
-        Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0 }, InputRecord.Ack(0x10, 0x20));
-        Assert.Equal(24, InputRecord.SealedAckLength);
+        Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 0, 0, 0, 0 }, InputRecord.Ack(0x10, 0x20, false));
+        Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0, 0, 0 }, InputRecord.Ack(0x10, 0x20, true));
+        Assert.Equal(28, InputRecord.SealedAckLength);
         var first = InputRecord.Clock();
         Thread.Sleep(2);
         Assert.True(unchecked(InputRecord.Clock() - first) >= 10, "the clock counts 100 µs ticks");

@@ -223,3 +223,21 @@ final class TouchpadRouterTests: XCTestCase {
         controller.stop()
     }
 }
+
+final class NetworkCarrierTests: XCTestCase {
+    func testUnavailableCarrierMeansMouseModeForTheRouter() {
+        // The tap maps `.unavailable` to precision off and network off, which the router already
+        // handles as plain Bluetooth mouse forwarding; this pins that mapping's inputs.
+        var router = TouchpadRouter()
+        let carrier = NetworkCarrier.unavailable
+        let enabled = true && carrier != .unavailable
+        let network = carrier == .up
+        XCTAssertFalse(enabled)
+        XCTAssertFalse(network)
+        XCTAssertEqual(router.route(.motion, enabled: enabled, network: network, presence: { .touching(1) }), .forward)
+        XCTAssertEqual(router.route(.button(.left, down: true), enabled: enabled, network: network, presence: { .touching(1) }), .forward)
+        XCTAssertEqual(router.route(.button(.left, down: false), enabled: enabled, network: network, presence: { .touching(1) }), .forward)
+        XCTAssertEqual(NetworkCarrier.up == .up, true)
+        XCTAssertNotEqual(NetworkCarrier.down, NetworkCarrier.unavailable)
+    }
+}

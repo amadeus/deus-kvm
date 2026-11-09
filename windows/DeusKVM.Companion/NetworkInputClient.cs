@@ -15,12 +15,13 @@ internal sealed class NetworkInputClient : IDisposable
 {
     private static readonly int[] Backoff = [500, 1000, 2000, 5000];
     private readonly FileNetworkOffer offer;
-    private readonly Action<InputEvent> deliver;
+    // Returns whether the PC could inject; a false answer flags the next acknowledgement.
+    private readonly Func<InputEvent, bool> deliver;
     private readonly Action<string> status;
     private readonly CancellationTokenSource lifetime = new();
     private TcpClient? client;
 
-    public NetworkInputClient(FileNetworkOffer offer, Action<InputEvent> deliver, Action<string> status)
+    public NetworkInputClient(FileNetworkOffer offer, Func<InputEvent, bool> deliver, Action<string> status)
     {
         this.offer = offer; this.deliver = deliver; this.status = status;
         _ = Task.Run(Run);
@@ -92,20 +93,21 @@ internal sealed class NetworkInputClient : IDisposable
                 filled += read;
                 var offset = 0;
                 uint? last = null;
+                var accepted = true;
                 while (filled - offset >= 1 && filled - offset >= 1 + buffer[offset])
                 {
                     int length = buffer[offset];
                     if (length < 16) throw new InvalidDataException("Short record");
                     var plain = incoming.Open(buffer.AsSpan(offset + 1, length).ToArray());
                     if (!InputRecord.TryParse(plain, out var record)) throw new InvalidDataException("Unknown record");
-                    deliver(record);
+                    accepted &= deliver(record);
                     last = record.Sequence;
                     offset += 1 + length;
                 }
                 if (offset > 0) { Buffer.BlockCopy(buffer, offset, buffer, 0, filled - offset); filled -= offset; }
                 if (filled == buffer.Length) throw new InvalidDataException("Oversized record");
                 if (last is not { } sequence) continue;
-                outgoing.Seal(InputRecord.Ack(sequence, InputRecord.Clock()), ack);
+                outgoing.Seal(InputRecord.Ack(sequence, InputRecord.Clock(), !accepted), ack);
                 await wire.WriteAsync(ack, 0, ack.Length, lifetime.Token).ConfigureAwait(false);
             }
         }

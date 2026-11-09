@@ -24,7 +24,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
             transport.input($1, generation: $0, capturedAt: $2)
         },
         presence: { [transport = lowEnergy.transport] in transport.touchpadPresence() },
-        network: { [server = networkPointer.server] in server.isUp },
+        network: { [server = networkPointer.server] in server.carrier },
         stats: diagnostics.tapStats
     )
     private lazy var networkPointer = NetworkPointer(contacts: lowEnergy.transport.touchpadSource)

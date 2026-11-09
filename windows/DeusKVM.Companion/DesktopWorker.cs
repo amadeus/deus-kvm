@@ -29,6 +29,12 @@ internal sealed class DesktopWorker : ApplicationContext
     private readonly object networkGate = new();
     private uint heldNetworkButtons; // MOUSEEVENTF up flags still owed; under networkGate
     private volatile bool defaultDesktop;
+    // The input desktop is not the default one (UAC prompt, lock screen): injection is refused
+    // there, so the Mac is told to use the Bluetooth mouse. Re-checked every 100 ms while
+    // records arrive, on every record while blocked, and on each idle ping.
+    private volatile bool injectBlocked;
+    private double lastDesktopCheck;
+    private const double DesktopCheckMs = 100;
     // Injected motion since the desktop thread last ran the edge test; one post at a time.
     private int pendingDx, pendingDy, observePosted;
     private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests, rejectedLeaves;
@@ -96,6 +102,7 @@ internal sealed class DesktopWorker : ApplicationContext
     {
         var state = DesktopNative.DesktopState();
         defaultDesktop = state.Desktop == 0;
+        injectBlocked = !defaultDesktop;
         if (state.Desktop != 0)
         {
             UpdateDesktopState(state);
@@ -303,19 +310,24 @@ internal sealed class DesktopWorker : ApplicationContext
     }
 
     // One record from the stream, on the receiving thread: injected at once, since SendInput
-    // needs no particular thread, and only while the Mac owns the handoff and the default
-    // desktop is up (otherwise counted and dropped; the Mac keeps acknowledgements flowing).
-    // The edge test runs on the desktop thread over the motion accumulated since its last turn.
-    private void Inject(InputEvent record)
+    // needs no particular thread, while the Mac owns the handoff and the default desktop is the
+    // input desktop. Returns whether the PC can inject right now; false rides on the next
+    // acknowledgement so the Mac switches to the Bluetooth mouse within a round trip. The edge
+    // test runs on the desktop thread over the motion accumulated since its last turn.
+    private bool Inject(InputEvent record)
     {
-        if (record.Type == InputRecord.Ping) return;
+        var now = DesktopNative.Milliseconds();
+        if (record.Type == InputRecord.Ping) { CheckInputDesktop(now, force: true); return !injectBlocked; }
         lock (networkGate)
         {
-            arrivals.Observe(DesktopNative.Milliseconds());
-            if (handoff.Active is null || !defaultDesktop) { arrivals.Discarded++; return; }
+            arrivals.Observe(now);
+            if (handoff.Active is null) { arrivals.Discarded++; return !injectBlocked; }
+            CheckInputDesktop(now, force: injectBlocked);
+            if (injectBlocked) { arrivals.Discarded++; return false; }
             if (record.IsMotion)
             {
                 if (DesktopNative.InjectMouse(record.Dx, record.Dy, DesktopNative.MouseMove)) arrivals.Injected++;
+                else { CheckInputDesktop(now, force: true); if (injectBlocked) { arrivals.Discarded++; return false; } }
                 pendingDx += record.Dx; pendingDy += record.Dy;
             }
             else if (record.IsButton)
@@ -323,10 +335,23 @@ internal sealed class DesktopWorker : ApplicationContext
                 var (down, up) = DesktopNative.ButtonFlags(record.Button);
                 if (record.Down) heldNetworkButtons |= up; else heldNetworkButtons &= ~up;
                 if (DesktopNative.InjectMouse(0, 0, record.Down ? down : up)) arrivals.Injected++;
-                return;
+                return true;
             }
         }
         if (Interlocked.Exchange(ref observePosted, 1) == 0) context?.Post(_ => ObserveInjected(), null);
+        return true;
+    }
+
+    private void CheckInputDesktop(double now, bool force)
+    {
+        if (!force && now - lastDesktopCheck < DesktopCheckMs) return;
+        lastDesktopCheck = now;
+        var blocked = !DesktopNative.IsDefaultDesktop();
+        if (blocked != injectBlocked)
+        {
+            injectBlocked = blocked;
+            context?.Post(_ => history.Add(blocked ? "network: secure desktop, injection paused" : "network: injection resumed"), null);
+        }
     }
 
     private void ObserveInjected()

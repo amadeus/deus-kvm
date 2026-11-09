@@ -54,15 +54,15 @@ final class InputTap: @unchecked Sendable {
     private let forward: @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
     /// Whether a finger is on the trackpad, asked only while precision mode is on.
     private let presence: @Sendable () -> TouchpadPresence
-    /// Whether the local-network pointer stream is up, asked per pointer event.
-    private let network: @Sendable () -> Bool
+    /// What the local-network pointer stream can do, asked per pointer event.
+    private let network: @Sendable () -> NetworkCarrier
     private let stats: TapStats
 
     init(
         output: @escaping @MainActor @Sendable (TapOutput) -> Void,
         forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void,
         presence: @escaping @Sendable () -> TouchpadPresence = { .none },
-        network: @escaping @Sendable () -> Bool = { false },
+        network: @escaping @Sendable () -> NetworkCarrier = { .down },
         stats: TapStats = TapStats()
     ) {
         self.output = output
@@ -472,9 +472,11 @@ extension InputTap {
         stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
         let continuous = type == .scrollWheel && event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
         let routerEvent = TouchpadRouter.Event(input.kind, continuous: continuous)
-        let networkUp = routerEvent == .other ? false : network()
+        let carrier = routerEvent == .other ? .down : network()
+        // A PC that cannot inject (secure desktop) takes only the Bluetooth mouse: mouse mode.
         let routed: DirectInputEvent? = switch router.route(
-            routerEvent, enabled: configuration.precisionTouchpad, network: networkUp, presence: presence
+            routerEvent, enabled: configuration.precisionTouchpad && carrier != .unavailable, network: carrier == .up,
+            presence: presence
         ) {
         case .forward: input
         case .network: input.networked

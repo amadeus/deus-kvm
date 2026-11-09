@@ -13,12 +13,15 @@ public readonly record struct InputEvent(byte Type, uint Sequence, uint Captured
 /// <summary>
 /// The wire records of the pointer stream (NETWORK_POINTER_PLAN.md), little-endian. The Mac
 /// sends each one sealed and prefixed by its sealed length; the PC answers every record with a
-/// sealed eight-byte acknowledgement carrying the sequence and its own clock.
+/// sealed twelve-byte acknowledgement per read carrying the last sequence, its own clock and
+/// flags: bit 0 says the PC cannot inject right now (secure desktop), so the Mac should use the
+/// Bluetooth mouse until it clears.
 /// </summary>
 public static class InputRecord
 {
     public const byte Motion = 1, Button = 2, Ping = 3;
-    public const int AckLength = 8, SealedAckLength = AckLength + 16;
+    public const int AckLength = 12, SealedAckLength = AckLength + 16;
+    public const uint AckBlocked = 1;
 
     public static bool TryParse(ReadOnlySpan<byte> plain, out InputEvent record)
     {
@@ -44,11 +47,12 @@ public static class InputRecord
         }
     }
 
-    public static byte[] Ack(uint sequence, uint received)
+    public static byte[] Ack(uint sequence, uint received, bool blocked)
     {
         var ack = new byte[AckLength];
         BinaryPrimitives.WriteUInt32LittleEndian(ack, sequence);
         BinaryPrimitives.WriteUInt32LittleEndian(ack.AsSpan(4), received);
+        BinaryPrimitives.WriteUInt32LittleEndian(ack.AsSpan(8), blocked ? AckBlocked : 0);
         return ack;
     }
 

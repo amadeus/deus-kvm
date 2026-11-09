@@ -15,12 +15,16 @@ final class NetworkInputTests: XCTestCase {
         XCTAssertEqual(Array(InputRecord.button(sequence: 7, captured: 9, button: .middle, down: false).suffix(2)), [3, 0])
         XCTAssertEqual(InputRecord.buttonCode(.left), 1)
         XCTAssertEqual(Array(InputRecord.ping(sequence: 2, captured: 3)), [3, 2, 0, 0, 0, 3, 0, 0, 0])
-        XCTAssertEqual(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0]))?.sequence, 0x10)
-        XCTAssertEqual(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0]))?.received, 0x20)
+        XCTAssertEqual(
+            InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 0, 0, 0, 0])),
+            InputAck(sequence: 0x10, received: 0x20, blocked: false)
+        )
+        XCTAssertEqual(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0, 0, 0]))?.blocked, true, "bit 0: the PC cannot inject")
+        XCTAssertNil(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0])), "the old eight-byte form is rejected")
         XCTAssertNil(InputRecord.ack(Data([1, 2, 3])))
         XCTAssertEqual(InputRecord.clock(uptime: 0.0015), 15)
         XCTAssertEqual(InputRecord.clock(uptime: 429_496.7296), 0, "wraps at 32 bits of 100 µs ticks")
-        XCTAssertEqual(InputRecord.sealedAckLength, 24)
+        XCTAssertEqual(InputRecord.sealedAckLength, 28)
     }
 
     func testMotionFlowsWhileThePCKeepsUpAndCoalescesOnceItIsBehind() throws {

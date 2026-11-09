@@ -12,6 +12,7 @@ final class InputNetworkServer: @unchecked Sendable {
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "NetworkInput")
     private let lock = NSLock()
     private var up = false
+    private var blocked = false
     private var port: UInt16?
     private var listener: NWListener?
     private var secret: Data?
@@ -27,11 +28,17 @@ final class InputNetworkServer: @unchecked Sendable {
 
     /// Short state text for the settings view ("listening", "up", "stalled"), any thread.
     var onStateChange: (@Sendable (String) -> Void)?
-    /// The stream went up or down; the tracker's lone-finger policy follows it. Any thread.
+    /// The connection came or went; the tracker's lone-finger policy follows it. Any thread.
     var onUpChanged: (@Sendable (Bool) -> Void)?
 
+    /// Connected and the PC injects: the controller sends pointer events here.
     var isUp: Bool {
-        lock.withLock { up }
+        lock.withLock { up && !blocked }
+    }
+
+    /// For the tap's routing: down, up, or connected but unable to inject.
+    var carrier: NetworkCarrier {
+        lock.withLock { up ? (blocked ? .unavailable : .up) : .down }
     }
 
     var currentPort: UInt16? {
@@ -136,10 +143,20 @@ final class InputNetworkServer: @unchecked Sendable {
 
     private func setUp(_ value: Bool) {
         let changed: Bool = lock.withLock {
-            defer { up = value }
+            defer { up = value; if !value { blocked = false } }
             return up != value
         }
         if changed { onUpChanged?(value) }
+    }
+
+    /// The PC reported whether it can inject; a secure desktop (UAC, lock screen) says no.
+    private func setBlocked(_ value: Bool) {
+        let changed: Bool = lock.withLock {
+            defer { blocked = value }
+            return blocked != value
+        }
+        guard changed else { return }
+        note(value ? "blocked (secure desktop)" : "up")
     }
 
     private func note(_ text: String) {
@@ -217,6 +234,7 @@ final class InputNetworkServer: @unchecked Sendable {
             guard let self, connectionID == id else { return }
             do {
                 guard let plain = try incoming?.open(sealed), let ack = InputRecord.ack(plain) else { close(reason: "bad ack"); return }
+                setBlocked(ack.blocked)
                 if let record = state
                     .acked(ack.sequence, received: ack.received, now: ProcessInfo.processInfo.systemUptime) { transmit(record) }
                 readAcks(id)
