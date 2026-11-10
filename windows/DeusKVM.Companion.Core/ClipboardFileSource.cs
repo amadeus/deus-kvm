@@ -28,15 +28,28 @@ public sealed record ClipboardFileSource(string Path, string Name, int Size, Dat
             Buffer.BlockCopy(image, (int)offset, block, 0, block.Length);
             return block;
         }
-        if (offset > Size || count is <= 0 or > FileNetworkCrypto.MaximumBlock || Capture(Path) != this) return null;
+        if (offset > Size || count is <= 0 or > FileNetworkCrypto.MaximumBlock || !Unchanged()) return null;
         try
         {
             using var file = new FileStream(Path, FileMode.Open, FileAccess.Read, FileShare.Read);
             if (file.Length != Size) return null;
             file.Position = offset;
             var data = new byte[Math.Min(count, Size - (int)offset)]; file.ReadExactly(data);
-            return Capture(Path) == this ? data : null;
+            return Unchanged() ? data : null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    // The copied file is still the one captured: same kind, size and timestamps. This runs around
+    // every block, so it compares metadata directly; the name was already validated by Capture.
+    private bool Unchanged()
+    {
+        try
+        {
+            var info = new FileInfo(Path);
+            return info.Exists && (info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0 &&
+                info.Length == Size && info.Name == Name && info.LastWriteTimeUtc == Modified && info.CreationTimeUtc == Created;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
     }
 }

@@ -35,7 +35,7 @@ final class FileNetworkServer: @unchecked Sendable {
         // The previous accept thread notices the new generation and closes its own socket.
         lock.withLock { generation += 1; port = nil }
         revoke()
-        guard enabled, let (listener, bound) = Self.openListener() else { return }
+        guard enabled, let (listener, bound) = LocalSocket.openListener() else { return }
         let current: Int = lock.withLock { port = bound; return generation }
         let thread = Thread { [weak self] in
             guard let self else { close(listener); return }
@@ -67,28 +67,6 @@ final class FileNetworkServer: @unchecked Sendable {
     }
 
     // MARK: Listener
-
-    private static func openListener() -> (Int32, UInt16)? {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return nil }
-        var yes: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_addr.s_addr = 0 // INADDR_ANY
-        address.sin_port = 0 // ephemeral
-        let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-        }
-        guard bound == 0, listen(fd, 4) == 0 else { close(fd); return nil }
-        var local = sockaddr_in()
-        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let named = withUnsafeMutablePointer(to: &local) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
-        }
-        guard named == 0 else { close(fd); return nil }
-        return (fd, UInt16(bigEndian: local.sin_port))
-    }
 
     /// Polls so a reconfigure is noticed within 250 ms; this thread alone closes the listener,
     /// so its descriptor is never reused under a blocked accept.
@@ -124,12 +102,12 @@ final class FileNetworkServer: @unchecked Sendable {
             lock.withLock { _ = clients.remove(fd) }
             close(fd)
         }
-        Self.tune(fd)
+        LocalSocket.tune(fd, sendBuffer: Self.sendBuffer)
         guard let client = receive(fd, 32, seconds: 3), let key = lock.withLock({ secret }) else { return }
         let server = FileNetworkCrypto.random()
         var incoming = FileNetworkCrypto(secret: key, client: client, server: server, direction: "client")
         var outgoing = FileNetworkCrypto(secret: key, client: client, server: server, direction: "server")
-        guard sendAll(fd, server) else { return }
+        guard LocalSocket.sendAll(fd, server) else { return }
         var stats = TransferStats()
         defer { if stats.blocks > 0 { note?("file-network: \(stats.summary)") } }
         // A request is a u32 length (always 32) and four sealed u32 fields with their tag.
@@ -148,46 +126,15 @@ final class FileNetworkServer: @unchecked Sendable {
             var frame = CompanionProtocol.u32(UInt32(response.count))
             frame.append(response)
             // A source failure is answered with its status byte, then the connection ends.
-            guard sendAll(fd, frame), let data else { return }
+            guard LocalSocket.sendAll(fd, frame), let data else { return }
             stats.add(bytes: data.count, read: sealedAt - began, send: DispatchTime.now().uptimeNanoseconds - sealedAt)
         }
     }
 
-    private static func tune(_ fd: Int32) {
-        var one: Int32 = 1
-        setsockopt(fd, Int32(IPPROTO_TCP), TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-        var size = sendBuffer
-        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, socklen_t(MemoryLayout<Int32>.size))
-        var timeout = timeval(tv_sec: 1, tv_usec: 0) // wake to re-check revocation and the deadline
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-    }
-
     private func receive(_ fd: Int32, _ count: Int, seconds: Double) -> Data? {
         let deadline = ProcessInfo.processInfo.systemUptime + seconds
-        var buffer = Data(count: count)
-        var got = 0
-        while got < count {
-            let n = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress!.advanced(by: got), count - got, 0) }
-            if n > 0 { got += n; continue }
-            if n == 0 { return nil } // peer closed
-            guard errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK,
-                  ProcessInfo.processInfo.systemUptime < deadline,
-                  lock.withLock({ clients.contains(fd) }) else { return nil }
-        }
-        return buffer
-    }
-
-    private func sendAll(_ fd: Int32, _ data: Data) -> Bool {
-        data.withUnsafeBytes { raw -> Bool in
-            var sent = 0
-            while sent < raw.count {
-                let n = Darwin.send(fd, raw.baseAddress!.advanced(by: sent), raw.count - sent, 0)
-                if n > 0 { sent += n; continue }
-                if n < 0, errno == EINTR { continue }
-                return false
-            }
-            return true
+        return LocalSocket.receive(fd, count) {
+            ProcessInfo.processInfo.systemUptime < deadline && lock.withLock { clients.contains(fd) }
         }
     }
 
@@ -222,6 +169,74 @@ final class FileNetworkServer: @unchecked Sendable {
             }
         }
         return Array((wired + wireless).prefix(4))
+    }
+}
+
+/// Blocking BSD socket helpers shared by the clipboard file server and receiver.
+enum LocalSocket {
+    /// An IPv4 listener on an ephemeral port. A receive buffer set here, before listen, is
+    /// inherited by accepted connections and sizes the window they negotiate.
+    static func openListener(receiveBuffer: Int32? = nil) -> (Int32, UInt16)? {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        setOption(fd, SOL_SOCKET, SO_REUSEADDR, 1)
+        if let receiveBuffer { setOption(fd, SOL_SOCKET, SO_RCVBUF, receiveBuffer) }
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = 0 // INADDR_ANY
+        address.sin_port = 0 // ephemeral
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        guard bound == 0, listen(fd, 4) == 0 else { close(fd); return nil }
+        var local = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+        }
+        guard named == 0 else { close(fd); return nil }
+        return (fd, UInt16(bigEndian: local.sin_port))
+    }
+
+    /// No Nagle, no SIGPIPE, and a 1 s receive timeout so blocked reads wake to re-check
+    /// revocation, cancellation and deadlines.
+    static func tune(_ fd: Int32, sendBuffer: Int32? = nil) {
+        setOption(fd, Int32(IPPROTO_TCP), TCP_NODELAY, 1)
+        setOption(fd, SOL_SOCKET, SO_NOSIGPIPE, 1)
+        if let sendBuffer { setOption(fd, SOL_SOCKET, SO_SNDBUF, sendBuffer) }
+        var timeout = timeval(tv_sec: 1, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    }
+
+    static func setOption(_ fd: Int32, _ level: Int32, _ name: Int32, _ value: Int32) {
+        var value = value
+        setsockopt(fd, level, name, &value, socklen_t(MemoryLayout<Int32>.size))
+    }
+
+    /// Exactly `count` bytes, or nil on close, error, or once `keepWaiting` says to stop.
+    static func receive(_ fd: Int32, _ count: Int, keepWaiting: () -> Bool) -> Data? {
+        var buffer = Data(count: count)
+        var got = 0
+        while got < count {
+            let n = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress!.advanced(by: got), count - got, 0) }
+            if n > 0 { got += n; continue }
+            if n == 0 { return nil } // peer closed
+            guard errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK, keepWaiting() else { return nil }
+        }
+        return buffer
+    }
+
+    static func sendAll(_ fd: Int32, _ data: Data) -> Bool {
+        data.withUnsafeBytes { raw -> Bool in
+            var sent = 0
+            while sent < raw.count {
+                let n = Darwin.send(fd, raw.baseAddress!.advanced(by: sent), raw.count - sent, 0)
+                if n > 0 { sent += n; continue }
+                if n < 0, errno == EINTR { continue }
+                return false
+            }
+            return true
+        }
     }
 }
 

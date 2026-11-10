@@ -156,6 +156,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
                 requestPoll()
             }
         })
+        receiver.note = { DiagnosticsLog.shared.write($0) }
         imageReceiver = receiver; receiver.start()
     }
 

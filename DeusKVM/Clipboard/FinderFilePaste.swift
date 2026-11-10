@@ -158,6 +158,7 @@ final class FinderFilePaste: NSObject {
         }, completion: { [weak self] message in
             Task { @MainActor in self?.finishPaste(token, message: message) }
         })
+        next.note = { DiagnosticsLog.shared.write($0) }
         receiver = next; next.start()
     }
 
