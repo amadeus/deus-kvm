@@ -130,14 +130,20 @@ final class FileNetworkServer: @unchecked Sendable {
                     guard count > 0, count <= FileNetworkCrypto.maximumBlock else { close(id); return }
                     let data = read(scope.epoch, scope.sequence, offset, count)
                     let response = try outgoing.seal(Data([data == nil ? 1 : 0]) + (data ?? Data()))
-                    let nextIncoming = incoming, nextOutgoing = outgoing
+                    // Hand the block to the stack and serve the next request without waiting for
+                    // this send to complete. Network.framework's per-send completion runs tens of
+                    // milliseconds behind the wire; gating each block on it serialized the transfer
+                    // to a few MB/s. Replies stay in request order because NWConnection preserves
+                    // send order and the crypto counter advanced above, so the next seal follows.
+                    let failed = data == nil
                     connection.send(
                         content: CompanionProtocol.u32(UInt32(response.count)) + response,
                         completion: .contentProcessed { [weak self] error in
-                            guard error == nil, data != nil else { self?.close(id); return }
-                            self?.request(id, incoming: nextIncoming, outgoing: nextOutgoing)
+                            if error != nil || failed { self?.close(id) }
                         }
                     )
+                    guard !failed else { return }
+                    request(id, incoming: incoming, outgoing: outgoing)
                 } catch { close(id) }
             }
         }

@@ -10,9 +10,10 @@ public sealed class NetworkUnavailableException() : IOException("File transfer r
 // Lazy, persistent connection. Creation and clipboard metadata inspection do no I/O.
 public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? diagnostic = null) : IFileBlockReader
 {
-    // Sequential reads keep a few block requests ahead: one 256 KiB round trip at a time
-    // idles the link for the RTT plus both ends' processing. Replies stay in request order.
-    private const int ReadAhead = 2;
+    // Sequential reads keep many block requests ahead so the Mac server (which now streams
+    // replies without waiting for each send to complete) always has work queued and the link
+    // stays full across its send-completion latency. Replies stay in request order.
+    private const int ReadAhead = 16;
     private readonly CancellationTokenSource lifetime = new();
     private readonly Queue<(uint Offset, int Count)> requested = new();
     private TcpClient? client;
@@ -78,6 +79,7 @@ public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? 
         try { socket.IOControl(unchecked((int)0x98000017), BitConverter.GetBytes(1), null); }
         catch (SocketException) { }
         catch (ObjectDisposedException) { }
+        catch (PlatformNotSupportedException) { }
     }
 
     private async Task<byte[]> ReadAsync(uint offset)
