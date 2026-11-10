@@ -48,6 +48,7 @@ public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? 
             try
             {
                 await next.ConnectAsync(IPAddress.Parse(host), endpoint.Port, attempt.Token).ConfigureAwait(false);
+                QuickAck(next.Client);
                 var wire = next.GetStream();
                 var clientNonce = RuntimeCompat.RandomBytes(32); var serverNonce = new byte[32];
                 await wire.WriteAsync(clientNonce, attempt.Token).ConfigureAwait(false);
@@ -66,6 +67,17 @@ public sealed class NetworkFileReader(FileClipboardOffer offer, Action<string>? 
             { send?.Dispose(); receive?.Dispose(); next.Dispose(); }
         }
         throw new NetworkUnavailableException();
+    }
+
+    // Each 256 KiB block is one burst that ends with a lone tail segment; Windows holds its ACK
+    // for the 200 ms delayed-ACK timer, which stalls the Mac's send-completion and serializes the
+    // whole transfer to ~1 MB/s. Ask the stack to ACK every segment so the sender never waits on
+    // that timer. SIO_TCP_SET_ACK_FREQUENCY; harmless/no-op where the control code is unsupported.
+    private static void QuickAck(Socket socket)
+    {
+        try { socket.IOControl(unchecked((int)0x98000017), BitConverter.GetBytes(1), null); }
+        catch (SocketException) { }
+        catch (ObjectDisposedException) { }
     }
 
     private async Task<byte[]> ReadAsync(uint offset)
