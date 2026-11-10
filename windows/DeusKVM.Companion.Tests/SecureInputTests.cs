@@ -6,6 +6,40 @@ namespace DeusKVM.Companion.Tests;
 public sealed class SecureInputTests
 {
     [Fact]
+    public void BatchCutsFramesOnlyBetweenRecordsAndUnderTheLimit()
+    {
+        var records = new List<byte>();
+        for (var i = 0; i < 2000; i++)
+            records.AddRange(i % 7 == 0 ? SecureInputRecord.EncodeButton(1, i % 2 == 0) : SecureInputRecord.EncodeMotion(i, -i));
+        var bytes = records.ToArray();
+
+        var frames = SecureFrame.Batch(bytes, bytes.Length);
+        var bodies = SecureFrame.Parse(frames, frames.Length, out var consumed).ToList();
+
+        Assert.Equal(frames.Length, consumed);
+        Assert.True(bodies.Count > 1);
+        Assert.All(bodies, body => Assert.InRange(body.Length, 1, SecureFrame.MaxFrame));
+        Assert.Equal(bytes, bodies.SelectMany(body => body).ToArray());
+        foreach (var body in bodies)
+        {
+            var offset = 0;
+            while (offset < body.Length) offset += SecureInputRecord.Length(body[offset]);
+            Assert.Equal(body.Length, offset); // no record split across frames
+        }
+    }
+
+    [Fact]
+    public void BatchDropsATruncatedOrUnknownTail()
+    {
+        var motion = SecureInputRecord.EncodeMotion(3, 4);
+        var truncated = motion.Concat(new byte[] { SecureInputRecord.Motion, 1 }).ToArray();
+        Assert.Equal(SecureFrame.Wrap(motion), SecureFrame.Batch(truncated, truncated.Length));
+        var unknown = motion.Concat(new byte[] { 9, 9, 9 }).ToArray();
+        Assert.Equal(SecureFrame.Wrap(motion), SecureFrame.Batch(unknown, unknown.Length));
+        Assert.Empty(SecureFrame.Batch(motion, 0));
+    }
+
+    [Fact]
     public void MotionAndButtonRecordsRoundTrip()
     {
         var motion = SecureInputRecord.EncodeMotion(-2, 300);

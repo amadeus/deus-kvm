@@ -3,7 +3,6 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
-using System.Threading.Channels;
 using DeusKVM.Companion.Core;
 using Microsoft.Win32.SafeHandles;
 
@@ -11,27 +10,34 @@ namespace DeusKVM.Companion;
 
 /// <summary>
 /// Service-side supervisor for the SYSTEM secure-input worker (NETWORK_POINTER_PLAN.md). It owns
-/// a SYSTEM-only pipe to the worker, forwards relative pointer records to it, and exposes whether
-/// the worker can inject on the current (possibly secure) desktop. If the worker cannot be
-/// started or reports it cannot inject, `Ready` is false and the caller keeps the Bluetooth
-/// fallback. The only channel that reaches the worker is this SYSTEM-only pipe: no process
-/// without SYSTEM rights can cause secure-desktop injection.
+/// a SYSTEM-only pipe to the worker and forwards relative pointer records to it. Records are
+/// written by a dedicated thread with blocking writes, coalescing whatever queued meanwhile, so a
+/// busy service thread or the thread pool never delays the pointer on the secure desktop.
+/// Connection changes and every injection status the worker reports are raised as they happen
+/// (on a background thread), so the desktop worker can fall back to Bluetooth or resume the relay
+/// without waiting for the next refresh. The only channel that reaches the worker is this
+/// SYSTEM-only pipe: no process without SYSTEM rights can cause secure-desktop injection.
 /// </summary>
-internal sealed class SecureInputHost(Action<string>? note = null) : IDisposable
+internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>? connectedChanged = null,
+    Action<bool>? status = null) : IDisposable
 {
+    private const int MaxPending = 65536;
+    private readonly object gate = new();
+    private readonly AutoResetEvent pending = new(false); // never disposed: Forward may race Dispose
+    private byte[] buffer = new byte[4096];
+    private int buffered;
     private SecureInputProcess? process;
     private NamedPipeServerStream? pipe;
     private CancellationTokenSource? lifetime;
-    private Channel<byte[]>? outgoing;
     private uint sessionId = uint.MaxValue;
     private volatile bool connected;
-    private volatile bool workerReady;
+    private bool lastInjecting = true;
     private bool disposed;
 
-    public bool Ready => connected && workerReady;
+    public bool Connected => connected;
 
     // Keeps a worker running for the console session; started on demand, replaced if the session
-    // changes or the worker exits. Never throws: a failure leaves Ready false.
+    // changes or the worker exits. Never throws: a failure leaves Connected false.
     public void Refresh()
     {
         if (disposed) return;
@@ -51,9 +57,7 @@ internal sealed class SecureInputHost(Action<string>? note = null) : IDisposable
                 PipeOptions.Asynchronous, 16384, 16384, security);
             process = SecureInputProcess.Launch(console.Id, name);
             lifetime = new CancellationTokenSource();
-            outgoing = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(256)
-                { FullMode = BoundedChannelFullMode.DropOldest });
-            _ = RunAsync(pipe, process.Id, outgoing, lifetime.Token);
+            _ = RunAsync(pipe, process.Id, lifetime.Token);
             process.Resume();
             note?.Invoke("secure worker: starting");
         }
@@ -64,70 +68,116 @@ internal sealed class SecureInputHost(Action<string>? note = null) : IDisposable
         }
     }
 
-    // One batch of records to inject on the secure desktop. Dropped silently when no worker is
-    // connected (the caller only forwards while Ready).
+    // Records (any number, whole records) to inject on the secure desktop; any thread. Queued for
+    // the writer thread; dropped while no worker is connected or behind a stuck worker.
     public void Forward(byte[] records)
     {
-        if (records.Length == 0) return;
-        try { outgoing?.Writer.TryWrite(SecureFrame.Wrap(records)); }
-        catch (InvalidOperationException) { }
+        if (records.Length == 0 || !connected) return;
+        lock (gate)
+        {
+            if (buffered + records.Length > MaxPending) return;
+            if (buffered + records.Length > buffer.Length)
+                Array.Resize(ref buffer, Math.Max(buffer.Length * 2, buffered + records.Length));
+            Buffer.BlockCopy(records, 0, buffer, buffered, records.Length);
+            buffered += records.Length;
+        }
+        pending.Set();
     }
 
-    private async Task RunAsync(NamedPipeServerStream connection, int pid, Channel<byte[]> queue, CancellationToken stop)
+    private async Task RunAsync(NamedPipeServerStream connection, int pid, CancellationToken stop)
     {
+        var up = false;
         try
         {
             await connection.WaitForConnectionAsync(stop).WaitAsync(TimeSpan.FromSeconds(10), stop);
             if (!GetNamedPipeClientProcessId(connection.SafePipeHandle, out var peer) || peer != pid)
                 throw new InvalidDataException("Unexpected secure pipe client");
-            connected = true; workerReady = true; // connected and not yet told otherwise
+            lock (gate) buffered = 0;
+            connected = up = true;
             note?.Invoke("secure worker: ready");
-            var writer = WriteAsync();
-            try
+            connectedChanged?.Invoke(true);
+            new Thread(() => WriteLoop(connection, stop))
+                { IsBackground = true, Name = "DeusKVM secure relay", Priority = ThreadPriority.AboveNormal }.Start();
+            var input = new byte[256];
+            var filled = 0;
+            while (!stop.IsCancellationRequested)
             {
-                var buffer = new byte[256];
-                var filled = 0;
-                while (!stop.IsCancellationRequested)
-                {
-                    var read = await connection.ReadAsync(buffer.AsMemory(filled, buffer.Length - filled), stop);
-                    if (read <= 0) break;
-                    filled += read;
-                    var frames = SecureFrame.Parse(buffer, filled, out var consumed);
-                    foreach (var frame in frames) if (frame.Length == 1) SetReady(frame[0] == 1);
-                    if (consumed > 0) { Buffer.BlockCopy(buffer, consumed, buffer, 0, filled - consumed); filled -= consumed; }
-                    if (filled == buffer.Length) break;
-                }
+                var read = await connection.ReadAsync(input.AsMemory(filled, input.Length - filled), stop);
+                if (read <= 0) break;
+                filled += read;
+                var frames = SecureFrame.Parse(input, filled, out var consumed);
+                foreach (var frame in frames) if (frame.Length == 1) Report(frame[0] == 1);
+                if (consumed > 0) { Buffer.BlockCopy(input, consumed, input, 0, filled - consumed); filled -= consumed; }
+                if (filled == input.Length) break;
             }
-            finally { queue.Writer.TryComplete(); await writer; }
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or TimeoutException or InvalidDataException)
         {
             if (!stop.IsCancellationRequested) note?.Invoke("secure worker: disconnected (" + error.Message + ")");
         }
-        finally { connected = false; workerReady = false; }
-
-        async Task WriteAsync()
+        finally
         {
-            try { await foreach (var frame in queue.Reader.ReadAllAsync(stop)) await connection.WriteAsync(frame, stop); }
-            catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException) { connection.Dispose(); }
+            if (up)
+            {
+                connected = false;
+                pending.Set(); // the writer notices the closed or cancelled connection
+                connectedChanged?.Invoke(false);
+            }
         }
     }
 
-    private void SetReady(bool ready)
+    // Blocking writes on their own thread: everything queued since the last write goes out as one
+    // write of record-aligned frames.
+    private void WriteLoop(Stream connection, CancellationToken stop)
     {
-        if (workerReady == ready) return;
-        workerReady = ready;
-        note?.Invoke(ready ? "secure worker: injecting" : "secure worker: cannot inject here, Bluetooth fallback");
+        try
+        {
+            while (!stop.IsCancellationRequested && connected)
+            {
+                pending.WaitOne(250);
+                byte[] records;
+                int count;
+                lock (gate)
+                {
+                    if (buffered == 0) continue;
+                    count = buffered;
+                    records = new byte[count];
+                    Buffer.BlockCopy(buffer, 0, records, 0, count);
+                    buffered = 0;
+                }
+                var frames = SecureFrame.Batch(records, count);
+                if (frames.Length > 0) connection.Write(frames, 0, frames.Length);
+            }
+        }
+        catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            try { connection.Dispose(); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    // Every status the worker sends is passed on: the worker reports at the start of each burst
+    // and on every change, and the desktop worker times failures per secure-desktop episode.
+    private void Report(bool injecting)
+    {
+        if (injecting != lastInjecting)
+        {
+            lastInjecting = injecting;
+            note?.Invoke(injecting ? "secure worker: injecting" : "secure worker: cannot inject here");
+        }
+        status?.Invoke(injecting);
     }
 
     public void Stop()
     {
-        connected = false; workerReady = false;
+        var was = connected;
+        connected = false;
         lifetime?.Cancel(); lifetime?.Dispose(); lifetime = null;
-        outgoing?.Writer.TryComplete(); outgoing = null;
         pipe?.Dispose(); pipe = null;
         process?.Dispose(); process = null;
         sessionId = uint.MaxValue;
+        lock (gate) buffered = 0;
+        pending.Set();
+        if (was) connectedChanged?.Invoke(false);
     }
 
     public void Dispose() { disposed = true; Stop(); }

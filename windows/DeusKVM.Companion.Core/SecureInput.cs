@@ -66,6 +66,31 @@ public static class SecureFrame
     }
 
     /// <summary>
+    /// Frames for a run of records: as few as possible, each at most <see cref="MaxFrame"/> and cut
+    /// only between records. A truncated or unknown record ends the run (it is dropped).
+    /// </summary>
+    public static byte[] Batch(byte[] records, int count)
+    {
+        using var output = new MemoryStream(count + 16);
+        int start = 0, offset = 0;
+        while (offset < count)
+        {
+            var length = SecureInputRecord.Length(records[offset]);
+            if (length == 0 || offset + length > count) break;
+            if (offset + length - start > MaxFrame) { Append(start, offset); start = offset; }
+            offset += length;
+        }
+        if (offset > start) Append(start, offset);
+        return output.ToArray();
+
+        void Append(int from, int to)
+        {
+            var frame = Wrap(records.AsSpan(from, to - from));
+            output.Write(frame, 0, frame.Length);
+        }
+    }
+
+    /// <summary>
     /// Complete frame bodies in <paramref name="buffer"/> up to <paramref name="filled"/>; the
     /// returned offset is how many bytes were consumed, which the caller compacts away.
     /// </summary>

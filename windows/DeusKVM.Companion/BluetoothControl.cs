@@ -27,9 +27,10 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     private MonitorInfo[] monitors = [];
     private byte[]? inputOffer;
     // SYSTEM secure-input worker: injects on the secure desktop (UAC, lock screen) when the
-    // user desktop worker cannot. Spawned while a Mac is active; its readiness is pushed to the
-    // desktop worker so it relays or falls back to Bluetooth.
-    private SecureInputHost? secureInput;
+    // user desktop worker cannot. Spawned while a Mac is active; its connection and each injection
+    // status are pushed to the desktop worker so it relays or falls back to Bluetooth. Volatile:
+    // the desktop pipe's reader thread forwards pointer records to it directly.
+    private volatile SecureInputHost? secureInput;
     private bool lastSecureReady;
     private EdgeConfiguration? config => handoff.Configuration;
     private long lastSeen, connectedAt;
@@ -119,8 +120,18 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         if (desktop is null)
         {
             var epoch = ++desktopGeneration;
-            desktop = new DesktopHost(message => context.Post(_ =>
-            { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null));
+            desktop = new DesktopHost(message =>
+            {
+                // Secure-desktop pointer records go straight from the pipe reader to the SYSTEM
+                // worker: queued behind this service thread they stalled while it handled the
+                // desktop switch.
+                if (message.Kind == "secure-input")
+                {
+                    if (message.Input is { Length: > 0 } records) secureInput?.Forward(records);
+                    return;
+                }
+                context.Post(_ => { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null);
+            });
         }
         desktop.Refresh(address);
         RefreshSecureInput();
@@ -132,9 +143,13 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     {
         if (disposed) return;
         if (!active) { secureInput?.Dispose(); secureInput = null; PushSecureReady(false); return; }
-        secureInput ??= new SecureInputHost(text => { SetDetail(text); EdgeDiagnostics.Write(text); });
+        secureInput ??= new SecureInputHost(
+            text => { EdgeDiagnostics.Write(text); context.Post(_ => { if (!disposed) SetDetail(text); }, null); },
+            _ => context.Post(_ => { if (!disposed && active) PushSecureReady(secureInput?.Connected == true); }, null),
+            injecting => context.Post(_ =>
+            { if (!disposed && active) desktop?.Send(new DesktopMessage("secure-status", Ok: injecting)); }, null));
         secureInput.Refresh();
-        PushSecureReady(secureInput.Ready);
+        PushSecureReady(secureInput.Connected);
     }
 
     private void PushSecureReady(bool ready)
@@ -356,9 +371,6 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                     screens.Any(item => item.W is < 5 or > 32768 || item.H is < 5 or > 32768 || item.Id.Length > 256)) return;
                 handoff.DesktopChanged(); monitors = screens;
                 if (ready) SendScreens();
-                break;
-            case "secure-input":
-                if (message.Input is { Length: > 0 } records) secureInput?.Forward(records);
                 break;
             case "state":
                 clipboardDefaultDesktop = message.Desktop == 0; UpdateClipboardSession();

@@ -21,6 +21,10 @@ internal sealed class SecureInputWorker
     private readonly int parent;
     private readonly SecureInjector injector = new();
     private byte lastStatus = 2; // neither ready(1) nor blocked(0) yet
+    // Records only arrive while a secure desktop is up, so a pause starts a new episode; its
+    // first batch always reports, even if the status matches the end of the last one.
+    private const long EpisodeGapMs = 500;
+    private long lastBatch = long.MinValue / 2;
 
     public SecureInputWorker(string pipeName, int parent)
     {
@@ -61,6 +65,9 @@ internal sealed class SecureInputWorker
     // (could we inject?) is reported to the service only when it changes.
     private void Apply(byte[] body, PipeStream pipe)
     {
+        var now = RuntimeCompat.TickCount64;
+        if (now - lastBatch > EpisodeGapMs) lastStatus = 2;
+        lastBatch = now;
         var ok = true;
         var offset = 0;
         while (offset < body.Length)
