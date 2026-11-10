@@ -23,11 +23,11 @@ public sealed class WindowsGcm : IDisposable
         catch { algorithm.Dispose(); throw; }
     }
     public void Encrypt(byte[] nonce, ReadOnlySpan<byte> plain, Span<byte> cipher, Span<byte> tag) => Transform(true, nonce, plain, cipher, tag);
-    public void Decrypt(byte[] nonce, ReadOnlySpan<byte> cipher, ReadOnlySpan<byte> tag, byte[] plain)
+    public void Decrypt(byte[] nonce, ReadOnlySpan<byte> cipher, ReadOnlySpan<byte> tag, Span<byte> plain)
     {
         var tagBuffer = tag.ToArray();
         try { Transform(false, nonce, cipher, plain, tagBuffer); }
-        catch { RuntimeCompat.ZeroMemory(plain); throw; }
+        catch { plain.Clear(); throw; }
     }
     private unsafe void Transform(bool encrypt, byte[] nonce, ReadOnlySpan<byte> input, Span<byte> output, Span<byte> tag)
     {

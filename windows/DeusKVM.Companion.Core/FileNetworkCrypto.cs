@@ -72,5 +72,11 @@ public sealed class FileNetworkCrypto : IDisposable
         var result = new byte[data.Length - 16];
         aes.Decrypt(Nonce(), data.AsSpan(0, result.Length), data.AsSpan(result.Length), result); return result;
     }
+    // Opens into a caller-owned buffer of exactly the plaintext length; no per-record allocation.
+    public void Open(ReadOnlySpan<byte> data, Span<byte> plain)
+    {
+        if (data.Length < 16 || plain.Length != data.Length - 16) throw new InvalidDataException("Invalid encrypted record");
+        aes.Decrypt(Nonce(), data.Slice(0, plain.Length), data.Slice(plain.Length), plain);
+    }
     public void Dispose() => aes.Dispose();
 }

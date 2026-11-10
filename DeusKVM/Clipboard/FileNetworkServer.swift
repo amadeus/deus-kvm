@@ -1,151 +1,193 @@
 import CoreWLAN
+import Darwin
 import Foundation
-import Network
 
-/// All state and source reads are confined to the clipboard queue, never input/main.
+/// Serves clipboard file blocks to the PC. A BSD listener runs on its own thread and each
+/// connection is served on another, with blocking I/O and a large send buffer: a block goes
+/// to the kernel the moment it is sealed. Network.framework's per-send completion lagged the
+/// wire by tens of milliseconds and held Mac->PC pastes to a few MB/s on a gigabit link.
+/// Source reads still run on the clipboard queue, which owns the pasteboard state they check.
 final class FileNetworkServer: @unchecked Sendable {
     typealias Read = @Sendable (UInt32, UInt32, UInt32, Int) -> Data?
+    private static let sendBuffer: Int32 = 4 * 1024 * 1024
     private let queue: DispatchQueue
     private let read: Read
-    private var listener: NWListener?
+    private let lock = NSLock()
+    private var generation = 0
     private var port: UInt16?
-    private var startingAt: TimeInterval = 0
     private var secret: Data?
     private var scope: (epoch: UInt32, sequence: UInt32)?
-    private var clients: [UUID: NWConnection] = [:]
-    private var deadlines: [UUID: UInt64] = [:]
+    private var clients: Set<Int32> = []
+
+    /// One line per finished transfer (counts and timings only) for the diagnostics log.
+    var note: (@Sendable (String) -> Void)?
 
     init(queue: DispatchQueue, read: @escaping Read) {
         self.queue = queue; self.read = read
     }
 
+    /// The listener binds synchronously, so an offer never waits for it to start.
     var starting: Bool {
-        listener != nil && port == nil && ProcessInfo.processInfo.systemUptime - startingAt < 1
+        false
     }
 
     func configure(_ enabled: Bool) {
-        listener?.cancel(); listener = nil; port = nil; revoke()
-        guard enabled else { return }
-        do {
-            let tcp = NWProtocolTCP.Options()
-            tcp.noDelay = true // each reply is one complete record; don't hold its tail for ACKs
-            let parameters = NWParameters(tls: nil, tcp: tcp)
-            parameters.includePeerToPeer = false
-            let next = try NWListener(using: parameters, on: .any)
-            listener = next; startingAt = ProcessInfo.processInfo.systemUptime
-            next.stateUpdateHandler = { [weak self, weak next] state in
-                guard let self, let next, listener === next else { return }
-                if case .ready = state { port = next.port?.rawValue }
-                if case .failed = state { port = nil; listener = nil; next.cancel(); revoke() }
-            }
-            next.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
-            next.start(queue: queue)
-        } catch { listener = nil }
+        // The previous accept thread notices the new generation and closes its own socket.
+        lock.withLock { generation += 1; port = nil }
+        revoke()
+        guard enabled, let (listener, bound) = Self.openListener() else { return }
+        let current: Int = lock.withLock { port = bound; return generation }
+        let thread = Thread { [weak self] in
+            guard let self else { close(listener); return }
+            acceptLoop(listener, generation: current)
+        }
+        thread.name = "io.github.amadeus.deuskvm.file-network"
+        thread.start()
     }
 
     func revoke() {
-        secret = nil; scope = nil
-        for connection in clients.values {
-            connection.cancel()
+        lock.withLock {
+            secret = nil; scope = nil
+            // Each serving thread closes its own socket; shutting down here only wakes it.
+            for fd in clients {
+                shutdown(fd, SHUT_RDWR)
+            }
+            clients.removeAll()
         }
-        clients.removeAll(); deadlines.removeAll()
     }
 
     func offer(epoch: UInt32, sequence: UInt32, file: Bool) -> FileNetworkOffer? {
         revoke()
-        guard file, let port else { return nil }
+        guard file, let port = lock.withLock({ port }) else { return nil }
         let hosts = Self.addresses()
         guard !hosts.isEmpty else { return nil }
         let key = FileNetworkCrypto.random()
-        secret = key; scope = (epoch, sequence)
+        lock.withLock { secret = key; scope = (epoch, sequence) }
         return FileNetworkOffer(hosts: hosts, port: port, key: key.base64EncodedString())
     }
 
-    private func accept(_ connection: NWConnection) {
-        guard secret != nil, clients.count < 2 else { connection.cancel(); return }
-        let id = UUID()
-        clients[id] = connection
-        connection.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
-            switch state {
-            case .ready: hello(id)
-            case .failed, .cancelled: close(id)
-            default: break
+    // MARK: Listener
+
+    private static func openListener() -> (Int32, UInt16)? {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        var yes: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = 0 // INADDR_ANY
+        address.sin_port = 0 // ephemeral
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        guard bound == 0, listen(fd, 4) == 0 else { close(fd); return nil }
+        var local = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+        }
+        guard named == 0 else { close(fd); return nil }
+        return (fd, UInt16(bigEndian: local.sin_port))
+    }
+
+    /// Polls so a reconfigure is noticed within 250 ms; this thread alone closes the listener,
+    /// so its descriptor is never reused under a blocked accept.
+    private func acceptLoop(_ listener: Int32, generation mine: Int) {
+        defer { close(listener) }
+        var poller = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+        while lock.withLock({ generation == mine }) {
+            poller.revents = 0
+            let ready = poll(&poller, 1, 250)
+            if ready < 0, errno != EINTR { return }
+            guard ready > 0 else { continue }
+            let fd = accept(listener, nil, nil)
+            guard fd >= 0 else { continue }
+            let admitted: Bool = lock.withLock {
+                guard generation == mine, secret != nil, clients.count < 2 else { return false }
+                clients.insert(fd)
+                return true
             }
-        }
-        connection.start(queue: queue)
-        timeout(id, seconds: 3)
-    }
-
-    private func close(_ id: UUID) {
-        let connection = clients.removeValue(forKey: id)
-        deadlines.removeValue(forKey: id); connection?.cancel()
-    }
-
-    private func timeout(_ id: UUID, seconds: Double) {
-        let token = (deadlines[id] ?? 0) + 1
-        deadlines[id] = token
-        queue.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            guard let self, deadlines[id] == token else { return }
-            close(id)
-        }
-    }
-
-    private func receive(_ id: UUID, count: Int, done: @escaping @Sendable (Data) -> Void) {
-        guard let connection = clients[id] else { return }
-        connection.receive(minimumIncompleteLength: count, maximumLength: count) { [weak self] data, _, _, error in
-            guard let self, clients[id] != nil else { return }
-            guard error == nil, let data, data.count == count else { close(id); return }
-            done(data)
-        }
-    }
-
-    private func hello(_ id: UUID) {
-        receive(id, count: 32) { [weak self] client in
-            guard let self, let key = secret, let connection = clients[id] else { return }
-            let server = FileNetworkCrypto.random()
-            let incoming = FileNetworkCrypto(secret: key, client: client, server: server, direction: "client")
-            let outgoing = FileNetworkCrypto(secret: key, client: client, server: server, direction: "server")
-            connection.send(content: server, completion: .contentProcessed { [weak self] error in
-                guard error == nil else { self?.close(id); return }
-                self?.request(id, incoming: incoming, outgoing: outgoing)
-            })
-        }
-    }
-
-    private func request(_ id: UUID, incoming: FileNetworkCrypto, outgoing: FileNetworkCrypto) {
-        timeout(id, seconds: 15)
-        receive(id, count: 4) { [weak self] header in
-            guard let self else { return }
-            // A request is exactly four u32 fields plus the authentication tag.
-            guard CompanionProtocol.read32(header, 0) == 32 else { close(id); return }
-            receive(id, count: 32) { [weak self] ciphertext in
-                guard let self, let scope, let connection = clients[id] else { return }
-                var incoming = incoming, outgoing = outgoing
-                do {
-                    let plain = try incoming.open(ciphertext)
-                    guard plain.count == 16, CompanionProtocol.read32(plain, 0) == scope.epoch,
-                          CompanionProtocol.read32(plain, 4) == scope.sequence else { close(id); return }
-                    let offset = CompanionProtocol.read32(plain, 8), count = Int(CompanionProtocol.read32(plain, 12))
-                    guard count > 0, count <= FileNetworkCrypto.maximumBlock else { close(id); return }
-                    let data = read(scope.epoch, scope.sequence, offset, count)
-                    let response = try outgoing.seal(Data([data == nil ? 1 : 0]) + (data ?? Data()))
-                    // Hand the block to the stack and serve the next request without waiting for
-                    // this send to complete. Network.framework's per-send completion runs tens of
-                    // milliseconds behind the wire; gating each block on it serialized the transfer
-                    // to a few MB/s. Replies stay in request order because NWConnection preserves
-                    // send order and the crypto counter advanced above, so the next seal follows.
-                    let failed = data == nil
-                    connection.send(
-                        content: CompanionProtocol.u32(UInt32(response.count)) + response,
-                        completion: .contentProcessed { [weak self] error in
-                            if error != nil || failed { self?.close(id) }
-                        }
-                    )
-                    guard !failed else { return }
-                    request(id, incoming: incoming, outgoing: outgoing)
-                } catch { close(id) }
+            guard admitted else { close(fd); continue }
+            let thread = Thread { [weak self] in
+                guard let self else { close(fd); return }
+                serve(fd)
             }
+            thread.name = "io.github.amadeus.deuskvm.file-network.client"
+            thread.start()
+        }
+    }
+
+    // MARK: Connection
+
+    private func serve(_ fd: Int32) {
+        defer {
+            lock.withLock { _ = clients.remove(fd) }
+            close(fd)
+        }
+        Self.tune(fd)
+        guard let client = receive(fd, 32, seconds: 3), let key = lock.withLock({ secret }) else { return }
+        let server = FileNetworkCrypto.random()
+        var incoming = FileNetworkCrypto(secret: key, client: client, server: server, direction: "client")
+        var outgoing = FileNetworkCrypto(secret: key, client: client, server: server, direction: "server")
+        guard sendAll(fd, server) else { return }
+        var stats = TransferStats()
+        defer { if stats.blocks > 0 { note?("file-network: \(stats.summary)") } }
+        // A request is a u32 length (always 32) and four sealed u32 fields with their tag.
+        while let request = receive(fd, 36, seconds: 15) {
+            guard CompanionProtocol.read32(request, 0) == 32,
+                  let plain = try? incoming.open(Data(request.dropFirst(4))), plain.count == 16,
+                  let scope = lock.withLock({ self.scope }),
+                  CompanionProtocol.read32(plain, 0) == scope.epoch,
+                  CompanionProtocol.read32(plain, 4) == scope.sequence else { return }
+            let offset = CompanionProtocol.read32(plain, 8), count = Int(CompanionProtocol.read32(plain, 12))
+            guard count > 0, count <= FileNetworkCrypto.maximumBlock else { return }
+            let began = DispatchTime.now().uptimeNanoseconds
+            let data = queue.sync { read(scope.epoch, scope.sequence, offset, count) }
+            let sealedAt = DispatchTime.now().uptimeNanoseconds
+            guard let response = try? outgoing.seal(Data([data == nil ? 1 : 0]) + (data ?? Data())) else { return }
+            var frame = CompanionProtocol.u32(UInt32(response.count))
+            frame.append(response)
+            // A source failure is answered with its status byte, then the connection ends.
+            guard sendAll(fd, frame), let data else { return }
+            stats.add(bytes: data.count, read: sealedAt - began, send: DispatchTime.now().uptimeNanoseconds - sealedAt)
+        }
+    }
+
+    private static func tune(_ fd: Int32) {
+        var one: Int32 = 1
+        setsockopt(fd, Int32(IPPROTO_TCP), TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+        var size = sendBuffer
+        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, socklen_t(MemoryLayout<Int32>.size))
+        var timeout = timeval(tv_sec: 1, tv_usec: 0) // wake to re-check revocation and the deadline
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    }
+
+    private func receive(_ fd: Int32, _ count: Int, seconds: Double) -> Data? {
+        let deadline = ProcessInfo.processInfo.systemUptime + seconds
+        var buffer = Data(count: count)
+        var got = 0
+        while got < count {
+            let n = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress!.advanced(by: got), count - got, 0) }
+            if n > 0 { got += n; continue }
+            if n == 0 { return nil } // peer closed
+            guard errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK,
+                  ProcessInfo.processInfo.systemUptime < deadline,
+                  lock.withLock({ clients.contains(fd) }) else { return nil }
+        }
+        return buffer
+    }
+
+    private func sendAll(_ fd: Int32, _ data: Data) -> Bool {
+        data.withUnsafeBytes { raw -> Bool in
+            var sent = 0
+            while sent < raw.count {
+                let n = Darwin.send(fd, raw.baseAddress!.advanced(by: sent), raw.count - sent, 0)
+                if n > 0 { sent += n; continue }
+                if n < 0, errno == EINTR { continue }
+                return false
+            }
+            return true
         }
     }
 
@@ -180,5 +222,27 @@ final class FileNetworkServer: @unchecked Sendable {
             }
         }
         return Array((wired + wireless).prefix(4))
+    }
+}
+
+/// Per-connection throughput: where a served block's time went (source read vs socket send).
+private struct TransferStats {
+    private(set) var blocks = 0
+    private var bytes = 0
+    private var readNanos: UInt64 = 0
+    private var sendNanos: UInt64 = 0
+    private let start = DispatchTime.now().uptimeNanoseconds
+
+    mutating func add(bytes count: Int, read: UInt64, send: UInt64) {
+        blocks += 1; bytes += count; readNanos += read; sendNanos += send
+    }
+
+    var summary: String {
+        let seconds = max(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9, 0.000_001)
+        let megabytes = Double(bytes) / 1_000_000
+        return String(
+            format: "served MB=%.1f s=%.2f MBps=%.1f blocks=%d readMs=%.0f sendMs=%.0f",
+            megabytes, seconds, megabytes / seconds, blocks, Double(readNanos) / 1e6, Double(sendNanos) / 1e6
+        )
     }
 }

@@ -46,9 +46,13 @@ final class ClipboardPasteboard: @unchecked Sendable {
     private var file: ClipboardFile?
     private var imageReceiver: FileNetworkReceiver?
     private var imageLease: ClipboardImageLease?
-    private lazy var network = FileNetworkServer(queue: queue) { [weak self] epoch, sequence, offset, count in
-        self?.fileBytes(epoch: epoch, sequence: sequence, offset: offset, count: count)
-    }
+    private lazy var network: FileNetworkServer = {
+        let server = FileNetworkServer(queue: queue) { [weak self] epoch, sequence, offset, count in
+            self?.fileBytes(epoch: epoch, sequence: sequence, offset: offset, count: count)
+        }
+        server.note = { DiagnosticsLog.shared.write($0) }
+        return server
+    }()
 
     var remoteFile: (@Sendable (ClipboardFileOffer, Int, UInt64) -> Void)?
     var requestImage: (@Sendable (ClipboardFileOffer, UInt64) -> Void)?
