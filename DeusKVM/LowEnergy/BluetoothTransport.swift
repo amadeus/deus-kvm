@@ -444,7 +444,7 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
         // fallback for restored characteristics
         guard characteristic.uuid == HIDProfile.report,
               let descriptor = (characteristic as? CBMutableCharacteristic)?.descriptors?
-              .first(where: { $0.uuid == HIDProfile.reportReference }),
+                  .first(where: { $0.uuid == HIDProfile.reportReference }),
               let value = descriptor.value as? Data else { return nil }
         return value.first
     }

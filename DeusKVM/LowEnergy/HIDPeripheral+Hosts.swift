@@ -120,8 +120,8 @@ extension HIDPeripheral {
         // fallback for restored characteristics
         if char.uuid == HIDProfile.report,
            let descriptor = (char as? CBMutableCharacteristic)?
-           .descriptors?
-           .first(where: { $0.uuid == HIDProfile.reportReference }),
+               .descriptors?
+               .first(where: { $0.uuid == HIDProfile.reportReference }),
            let value = descriptor.value as? Data,
            let id = value.first
         {

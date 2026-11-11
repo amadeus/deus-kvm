@@ -227,13 +227,13 @@ struct SetupView: View {
 private extension CBManagerState {
     var localizedLabel: LocalizedStringKey {
         switch self {
-        case .unknown: return L10n.BluetoothState.unknown
-        case .resetting: return L10n.BluetoothState.resetting
-        case .unsupported: return L10n.BluetoothState.unsupported
-        case .unauthorized: return L10n.BluetoothState.unauthorized
-        case .poweredOff: return L10n.BluetoothState.poweredOff
-        case .poweredOn: return L10n.BluetoothState.poweredOn
-        @unknown default: return L10n.BluetoothState.unavailable
+        case .unknown: L10n.BluetoothState.unknown
+        case .resetting: L10n.BluetoothState.resetting
+        case .unsupported: L10n.BluetoothState.unsupported
+        case .unauthorized: L10n.BluetoothState.unauthorized
+        case .poweredOff: L10n.BluetoothState.poweredOff
+        case .poweredOn: L10n.BluetoothState.poweredOn
+        @unknown default: L10n.BluetoothState.unavailable
         }
     }
 }

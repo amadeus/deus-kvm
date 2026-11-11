@@ -196,8 +196,8 @@ final class MacClipboardSync {
             if !enabled { acknowledge(id, enabled: false) }
         } else if enabled, primed, type == .fileOffer {
             guard data.count <= 4096, let offer = try? JSONDecoder().decode(ClipboardFileOffer.self, from: data), offer.valid,
-                  offer.epoch == epoch, offer.clipboardSequence == peerSequence, deliveredFile != offer.sequence else { return }
-            guard !offer.isImage || service.supportsImages(id) else { return }
+                  offer.epoch == epoch, offer.clipboardSequence == peerSequence, deliveredFile != offer.sequence,
+                  !offer.isImage || service.supportsImages(id) else { return }
             deliveredFile = offer.sequence
             pasteboard.writeFile(offer, revision: peerRevision)
         } else if type == .fileGet || type == .fileData {

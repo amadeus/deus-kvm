@@ -154,9 +154,11 @@ final class FileNetworkServer: @unchecked Sendable {
                   entry.pointee.ifa_flags & UInt32(IFF_UP) != 0,
                   entry.pointee.ifa_flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            guard getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0
-            else { continue }
-            guard let value = String(bytes: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, encoding: .utf8) else { continue }
+            guard getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0,
+                  let value = String(
+                      bytes: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+                      encoding: .utf8
+                  ) else { continue }
             let octets = value.split(separator: ".").compactMap { Int($0) }
             guard octets.count == 4,
                   octets[0] == 10 || (octets[0] == 172 && (16 ... 31).contains(octets[1])) ||

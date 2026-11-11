@@ -232,8 +232,7 @@ final class InputTap: @unchecked Sendable {
     /// Called with the lock held. Runs a resync on the tap thread after this callback returns,
     /// at most every `ResyncGate.interval` unless forced.
     private func _requestResync(_ reason: String, force: Bool = false) {
-        guard runState.isRunning, let runLoop else { return }
-        guard force || resyncGate.allow(now: ProcessInfo.processInfo.systemUptime) else { return }
+        guard runState.isRunning, let runLoop, force || resyncGate.allow(now: ProcessInfo.processInfo.systemUptime) else { return }
         CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { [weak self] in self?._resync(reason) }
         CFRunLoopWakeUp(runLoop)
     }
