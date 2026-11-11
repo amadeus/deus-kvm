@@ -91,7 +91,7 @@ a private temporary directory, runs the existing setup flow, then cleans up.
 Installed dependencies stay under Program Files. Installation verifies the
 complete payload and rolls back replaced files if the update fails.
 
-The 2026-11-11 EXE is 942,592 bytes; its 14 installed runtime files total
+The 2026-11-11 EXE is about 0.9 MB; its 14 installed runtime files total
 1,942,773 bytes. The user confirmed both the small Framework app and the
 single-EXE launcher work (2026-09-23); Windows CI exercises the EXE's install,
 update, reopen, temporary cleanup and removal. Declining the UAC prompt and

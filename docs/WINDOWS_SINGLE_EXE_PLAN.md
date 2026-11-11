@@ -2,7 +2,7 @@
 
 Status (2026-11-11): shipped. Every companion release since is this single EXE,
 written by `windows/publish.sh` as `releases/DeusKVM-Companion-win-x64-<date>.exe`
-(942,592 bytes on 2026-11-11); the repository root's `DeusKVM-Companion-win-x64.zip`
+(about 0.9 MB on 2026-11-11); the repository root's `DeusKVM-Companion-win-x64.zip`
 carries the current one. The record below is unchanged apart from dated notes.
 
 The user confirmed the small Framework build works and requested the previous

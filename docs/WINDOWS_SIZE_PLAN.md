@@ -11,7 +11,7 @@ pass; actual Framework/Windows hardware execution remains pending. See the
 implementation checkpoint at the end and `WINDOWS_FRAMEWORK_CHECKPOINT.md`.
 (Superseded 2026-11-11: the user confirmed the Framework build on 2026-09-23 and
 it has been the only companion since, shipped as a single EXE per
-`WINDOWS_SINGLE_EXE_PLAN.md`; the 2026-11-11 EXE is 942,592 bytes with a
+`WINDOWS_SINGLE_EXE_PLAN.md`; the 2026-11-11 EXE is about 0.9 MB with a
 1,942,773-byte, 14-file runtime payload. Windows CI runs both test targets and
 the EXE lifecycle. Unchecked items below are not individually recorded.)
 The investigation below preserves the earlier measurements and decision history.
