@@ -67,7 +67,9 @@ internal sealed class DesktopWorker : ApplicationContext
     // Injected motion since the desktop thread last ran the edge test; one post at a time.
     private int pendingDx, pendingDy, observePosted;
     private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests, rejectedLeaves;
-    private long lastEdgeReport, lastRejectionLog;
+    private long lastEdgeReport, lastRejectionLog, lastLeaveSent;
+    private byte lastLeaveSwitch;
+    private const long LeaveIntervalMs = 100;
     // Recent edge/desktop decisions for a problem report requested from the Mac; memory only.
     private readonly DiagnosticHistory history = new();
     private DesktopNative.Point? lastPoint;
@@ -316,9 +318,18 @@ internal sealed class DesktopWorker : ApplicationContext
             if (verdict == EdgeVerdict.Leave)
             {
                 leaveRequests++;
-                history.Add(detail);
-                Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
-                    Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
+                // Every outward step at the edge qualifies, but one request per 100 ms is plenty:
+                // the Mac answers the first it gets. One per step (~120/s) outran a briefly slow
+                // Bluetooth link, and the backlog it built delayed the return by seconds.
+                var now = RuntimeCompat.TickCount64;
+                if (id != lastLeaveSwitch || now - lastLeaveSent >= LeaveIntervalMs)
+                {
+                    lastLeaveSwitch = id;
+                    lastLeaveSent = now;
+                    history.Add(detail);
+                    Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
+                        Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
+                }
             }
             else RejectLeave(detail);
         }

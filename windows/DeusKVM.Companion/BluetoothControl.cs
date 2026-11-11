@@ -16,7 +16,10 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         PropertyNameCaseInsensitive = true
     };
     private readonly SynchronizationContext context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-    private readonly Queue<(GattCharacteristic Characteristic, byte[] Data, bool HelloEnd)> controls = new(), bulk = new();
+    private readonly Queue<(GattCharacteristic Characteristic, byte[] Data, bool HelloEnd, bool Leave)> controls = new(), bulk = new();
+    // A leave request is still waiting in `controls`: a newer one adds nothing (the Mac acts on the
+    // first), and piling them up behind a slow link delays everything else, pings included.
+    private bool leaveQueued;
     private readonly CompanionHandoff handoff = new();
     private readonly StateReporter stateReport = new();
     private (uint Token, string[] Service)? pendingReport;
@@ -383,7 +386,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
             case "report" when pendingReport?.Token == message.Epoch:
                 FinishReport(message.Epoch, message.Report);
                 break;
-            case "leave" when handoff.Accept(message.SwitchId) && message.Edge == config?.Edge && blind == 0:
+            case "leave" when handoff.Accept(message.SwitchId) && message.Edge == config?.Edge && blind == 0 && !leaveQueued:
                 Send(Protocol.Message.Leave, [message.SwitchId, message.Edge, (byte)message.Fraction, (byte)(message.Fraction >> 8)]);
                 break;
         }
@@ -438,9 +441,11 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         if (characteristic is null || NeedsReconnect) return;
         var frames = (stream == 0 ? controlEncoder : bulkEncoder).Encode(new Protocol.Packet(stream, (byte)type, payload));
         if (controls.Count + bulk.Count + frames.Count > 512) { Fail("Companion queue full"); return; }
+        var leave = type == Protocol.Message.Leave && stream == 0;
         for (var index = 0; index < frames.Count; index++)
             (stream == 0 ? controls : bulk).Enqueue((characteristic, frames[index],
-                type == Protocol.Message.Hello && index == frames.Count - 1));
+                type == Protocol.Message.Hello && index == frames.Count - 1, leave && index == frames.Count - 1));
+        if (leave) leaveQueued = true;
         Drain();
     }
 
@@ -457,6 +462,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 var queue = !helloSent ? bulk : controls.Count > 0 ? controls : bulk;
                 if (queue.Count == 0) break;
                 var item = queue.Dequeue();
+                if (item.Leave) leaveQueued = false;
                 using var writer = new DataWriter(); writer.WriteBytes(item.Data);
                 var result = await item.Characteristic.WriteValueAsync(writer.DetachBuffer(),
                     item.Characteristic == controlWrite ? GattWriteOption.WriteWithoutResponse : GattWriteOption.WriteWithResponse)
@@ -478,7 +484,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         if (controlRead is not null) controlRead.ValueChanged -= Notification;
         if (bulkRead is not null) bulkRead.ValueChanged -= Notification;
         controlRead = controlWrite = bulkRead = bulkWrite = null;
-        controls.Clear(); bulk.Clear(); controlEncoder = new(); bulkEncoder = new(); controlDecoder = new(); bulkDecoder = new();
+        controls.Clear(); bulk.Clear(); leaveQueued = false; controlEncoder = new(); bulkEncoder = new(); controlDecoder = new(); bulkDecoder = new();
         ready = subscribing = NeedsReconnect = helloSent = false;
         availability = new();
         stateReport.Reset();
