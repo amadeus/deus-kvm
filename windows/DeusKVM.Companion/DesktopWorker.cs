@@ -67,9 +67,9 @@ internal sealed class DesktopWorker : ApplicationContext
     // Injected motion since the desktop thread last ran the edge test; one post at a time.
     private int pendingDx, pendingDy, observePosted;
     private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests, rejectedLeaves;
-    private long lastEdgeReport, lastRejectionLog, lastLeaveSent;
+    private long lastEdgeReport, lastRejectionLog, lastLeaveSent, firstLeave;
     private byte lastLeaveSwitch;
-    private const long LeaveIntervalMs = 100;
+    private const long LeaveIntervalMs = 100, BluetoothLeaveAfterMs = 150;
     // Recent edge/desktop decisions for a problem report requested from the Mac; memory only.
     private readonly DiagnosticHistory history = new();
     private DesktopNative.Point? lastPoint;
@@ -318,21 +318,28 @@ internal sealed class DesktopWorker : ApplicationContext
             if (verdict == EdgeVerdict.Leave)
             {
                 leaveRequests++;
-                // Every outward step at the edge qualifies, but one request per 100 ms is plenty:
-                // the Mac answers the first it gets. One per step (~120/s) outran a briefly slow
-                // Bluetooth link, and the backlog it built delayed the return by seconds.
-                var now = RuntimeCompat.TickCount64;
-                if (id != lastLeaveSwitch || now - lastLeaveSent >= LeaveIntervalMs)
-                {
-                    lastLeaveSwitch = id;
-                    lastLeaveSent = now;
-                    history.Add(detail);
-                    Send(new DesktopMessage("leave", SwitchId: id, Edge: config.Edge,
-                        Fraction: monitor.Fraction(config.Edge, point.X, point.Y)));
-                }
+                RequestLeave(id, config.Edge, monitor.Fraction(config.Edge, point.X, point.Y), detail);
             }
             else RejectLeave(detail);
         }
+    }
+
+    // Asks the Mac to take the pointer back: on the network stream's acknowledgements (the next
+    // one is a pointer step away), and over Bluetooth only while the stream is down or once the
+    // Mac has not taken it back within 150 ms. Every outward step at the edge qualifies, but
+    // Bluetooth gets at most one per 100 ms: one per step (~120/s) outran a briefly slow link, and
+    // the backlog delayed the return by seconds. The Mac acts on the first that arrives and
+    // ignores the rest (it is no longer remote, or the switch id moved on).
+    private void RequestLeave(byte id, byte edge, ushort fraction, string detail)
+    {
+        var now = RuntimeCompat.TickCount64;
+        if (id != lastLeaveSwitch) { lastLeaveSwitch = id; firstLeave = now; lastLeaveSent = long.MinValue / 2; history.Add(detail); }
+        var network = this.network?.Leave(InputRecord.LeaveFlags(id, edge, fraction)) == true;
+        if (network && now - firstLeave < BluetoothLeaveAfterMs) return;
+        if (now - lastLeaveSent < LeaveIntervalMs) return;
+        lastLeaveSent = now;
+        history.Add(network ? "leave: not taken over the network yet, also over Bluetooth" : "leave: over Bluetooth (network stream down)");
+        Send(new DesktopMessage("leave", SwitchId: id, Edge: edge, Fraction: fraction));
     }
 
     private void StartNetwork(string? json)

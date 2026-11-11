@@ -26,22 +26,34 @@ enum NetworkCarrier: Sendable, Equatable {
 }
 
 /// The PC's acknowledgement: everything up to `sequence` arrived at `received` on its clock,
-/// and whether it could inject at that moment.
+/// whether it could inject at that moment, and possibly an edge-return request.
 struct InputAck: Sendable, Equatable {
     let sequence: UInt32
     let received: UInt32
     let blocked: Bool
+    var leave: InputLeave?
+}
+
+/// An edge-return request carried on an acknowledgement: the same fields as the Bluetooth
+/// leave message, so both paths reach the same checks.
+struct InputLeave: Sendable, Equatable {
+    let switchID: UInt8
+    let edge: UInt8
+    let fraction: UInt16
 }
 
 /// The wire records of the input stream (NETWORK_POINTER_PLAN.md). Little-endian; each Mac to
 /// PC record is sealed with AES-GCM and prefixed by its sealed length in one byte; the PC answers
-/// with a sealed 12-byte acknowledgement (cumulative) per read.
+/// with a sealed 12-byte acknowledgement (cumulative) per read. Its flags: bit 0 the PC cannot
+/// inject; bit 1 an edge-return request, with the edge in bits 2-3, the switch id in 8-15 and the
+/// fraction along the edge in 16-31.
 enum InputRecord {
     static let motion: UInt8 = 1
     static let button: UInt8 = 2
     static let ping: UInt8 = 3
     static let ackLength = 12
     static let ackBlockedFlag: UInt32 = 1
+    static let ackLeaveFlag: UInt32 = 2
     /// A sealed acknowledgement: the record plus the 16-byte tag.
     static let sealedAckLength = ackLength + 16
 
@@ -65,7 +77,10 @@ enum InputRecord {
 
     static func ack(_ data: Data) -> InputAck? {
         guard data.count == ackLength else { return nil }
-        return InputAck(sequence: read32(data, 0), received: read32(data, 4), blocked: read32(data, 8) & ackBlockedFlag != 0)
+        let flags = read32(data, 8)
+        let leave = flags & ackLeaveFlag == 0 ? nil :
+            InputLeave(switchID: UInt8(truncatingIfNeeded: flags >> 8), edge: UInt8((flags >> 2) & 3), fraction: UInt16(flags >> 16))
+        return InputAck(sequence: read32(data, 0), received: read32(data, 4), blocked: flags & ackBlockedFlag != 0, leave: leave)
     }
 
     /// 1 left, 2 right, 3 middle; the PC maps them to its button flags.

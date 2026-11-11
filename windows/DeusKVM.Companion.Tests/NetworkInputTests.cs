@@ -40,6 +40,11 @@ public sealed class NetworkInputTests
         Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 0, 0, 0, 0 }, InputRecord.Ack(0x10, 0x20, false));
         Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0, 0, 0 }, InputRecord.Ack(0x10, 0x20, true));
         Assert.Equal(28, InputRecord.SealedAckLength);
+        // An edge-return request: bit 1, edge in bits 2-3, switch id 8-15, fraction 16-31.
+        var leave = InputRecord.LeaveFlags(0xAB, 3, 0xBEEF);
+        Assert.Equal(0xBEEFAB0Eu, leave);
+        Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x0F, 0xAB, 0xEF, 0xBE }, InputRecord.Ack(0x10, 0x20, true, leave));
+        Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x0E, 0xAB, 0xEF, 0xBE }, InputRecord.Ack(0x10, 0x20, false, leave | 1));
         var first = InputRecord.Clock();
         Thread.Sleep(2);
         Assert.True(unchecked(InputRecord.Clock() - first) >= 10, "the clock counts 100 µs ticks");

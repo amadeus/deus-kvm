@@ -36,6 +36,9 @@ final class InputNetworkServer: @unchecked Sendable {
 
     /// Short state text for the settings view ("listening", "up", "stalled"), any thread.
     var onStateChange: (@Sendable (String) -> Void)?
+    /// An edge-return request the PC carried on an acknowledgement, on the stream's thread. The
+    /// PC repeats it on every acknowledgement for a short while; the receiver acts once.
+    var onLeave: (@Sendable (InputLeave) -> Void)?
 
     /// Connected and the PC injects: the controller sends pointer events here.
     var isUp: Bool {
@@ -199,15 +202,16 @@ final class InputNetworkServer: @unchecked Sendable {
         var reason = "closed"
         acks: while true {
             guard let sealed = recvExact(fd, InputRecord.sealedAckLength) else { break }
-            let outcome: Bool = lock.withLock {
-                guard connFD == fd, let plain = try? incoming?.open(sealed), let ack = InputRecord.ack(plain) else { return false }
+            let outcome: (ok: Bool, leave: InputLeave?) = lock.withLock {
+                guard connFD == fd, let plain = try? incoming?.open(sealed), let ack = InputRecord.ack(plain) else { return (false, nil) }
                 setBlockedLocked(ack.blocked)
                 if let record = state.acked(ack.sequence, received: ack.received, now: ProcessInfo.processInfo.systemUptime) {
                     writeLocked(record)
                 }
-                return true
+                return (true, ack.leave)
             }
-            if !outcome { reason = "bad ack"; break acks }
+            if !outcome.ok { reason = "bad ack"; break acks }
+            if let leave = outcome.leave { onLeave?(leave) }
         }
 
         stopTimer()

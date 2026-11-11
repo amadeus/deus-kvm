@@ -11,11 +11,16 @@ final class NetworkPointer {
     var onStateChange: ((String) -> Void)?
     /// Diagnostics lines: offers, stream transitions and the per-session counters.
     var note: ((String) -> Void)?
+    /// An edge-return request that arrived on the stream, on the main actor.
+    var onLeave: ((InputLeave) -> Void)?
     private var offered: (target: UUID, port: UInt16)?
 
     init() {
         server.onStateChange = { [weak self] text in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.changed(text) } }
+        }
+        server.onLeave = { [weak self] leave in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.onLeave?(leave) } }
         }
     }
 

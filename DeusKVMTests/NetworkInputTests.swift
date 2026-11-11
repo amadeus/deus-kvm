@@ -21,6 +21,12 @@ final class NetworkInputTests: XCTestCase {
         )
         XCTAssertEqual(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0, 0, 0]))?.blocked, true, "bit 0: the PC cannot inject")
         XCTAssertNil(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0])), "the old eight-byte form is rejected")
+        XCTAssertEqual(
+            InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x0F, 0xAB, 0xEF, 0xBE])),
+            InputAck(sequence: 0x10, received: 0x20, blocked: true, leave: InputLeave(switchID: 0xAB, edge: 3, fraction: 0xBEEF)),
+            "bit 1: an edge-return request; edge in bits 2-3, switch id 8-15, fraction 16-31"
+        )
+        XCTAssertNil(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0xAB, 0xEF, 0xBE]))?.leave, "no bit 1, no request")
         XCTAssertNil(InputRecord.ack(Data([1, 2, 3])))
         XCTAssertEqual(InputRecord.clock(uptime: 0.0015), 15)
         XCTAssertEqual(InputRecord.clock(uptime: 429_496.7296), 0, "wraps at 32 bits of 100 µs ticks")

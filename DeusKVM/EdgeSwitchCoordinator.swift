@@ -119,6 +119,11 @@ final class EdgeSwitchCoordinator: ObservableObject {
         wireDiagnostics()
         networkPointer.note = { [weak self] in self?.diagnostics.note($0) }
         networkPointer.onStateChange = { [weak self] in self?.networkPointerState = $0 }
+        // The stream belongs to the capture target, so its requests go through the same checks.
+        networkPointer.onLeave = { [weak self] leave in
+            guard let self, let target = captureTarget else { return }
+            _returnFromPC(target: target, switchID: leave.switchID, edge: leave.edge, fraction: leave.fraction, via: "network")
+        }
         lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion(); self?._refresh() }
         lowEnergy.companion.onActivity = { [weak self] id in
             guard let self, started, isEnabled, id == currentTarget else { return }
@@ -136,7 +141,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
             lowEnergy.afterInputRelease(acknowledge)
         }
         lowEnergy.companion.onLeave = { [weak self] target, switchID, edge, fraction in
-            self?._returnFromPC(target: target, switchID: switchID, edge: edge, fraction: fraction)
+            self?._returnFromPC(target: target, switchID: switchID, edge: edge, fraction: fraction, via: "Bluetooth")
         }
         _refreshDisplays()
         lowEnergy.onTargetWillChange = { [weak self] in
@@ -497,7 +502,9 @@ extension EdgeSwitchCoordinator {
         diagnostics.link(bluetooth: lowEnergy.state, target: targetAvailable, companion: companion)
     }
 
-    private func _returnFromPC(target: UUID, switchID: UInt8, edge: UInt8, fraction: UInt16) {
+    /// An edge-return request from the PC, over the network stream (normally) or Bluetooth (its
+    /// fallback). Whichever arrives first returns; the rest no longer match and are ignored.
+    private func _returnFromPC(target: UUID, switchID: UInt8, edge: UInt8, fraction: UInt16, via: String) {
         guard isRemote, !locked, !recordingShortcut, target == captureTarget, switchID == self.switchID,
               edge == self.edge.opposite.wireValue, let geometry else { return }
         guard tap.acceptCompanionReturn() else {
@@ -508,7 +515,7 @@ extension EdgeSwitchCoordinator {
             }
             return
         }
-        _returnLocal(at: geometry.entryPoint(fraction: fraction), reason: "Windows edge")
+        _returnLocal(at: geometry.entryPoint(fraction: fraction), reason: "Windows edge via \(via)")
     }
 
     /// Secure Input hides key releases from the tap; once it ends, held state is re-read.

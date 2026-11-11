@@ -24,6 +24,30 @@ internal sealed class NetworkInputClient : IDisposable
     private readonly CancellationTokenSource lifetime = new();
     private readonly Thread thread;
     private Socket? socket;
+    private volatile bool up;
+    // An edge-return request for the Mac (InputRecord.LeaveFlags) and until when (Stopwatch ticks)
+    // the acknowledgements keep carrying it; set from the desktop thread.
+    private long leave, leaveUntil;
+    private static readonly long LeaveTicks = System.Diagnostics.Stopwatch.Frequency * 3 / 10;
+
+    /// <summary>The stream is up: acknowledgements are flowing to the Mac.</summary>
+    public bool Up => up;
+
+    /// <summary>
+    /// Carries an edge-return request on the acknowledgements for the next 300 ms (they go out
+    /// with every read, and the cursor is being pushed at the edge, so the next one is a pointer
+    /// step away). False when the stream is down.
+    /// </summary>
+    public bool Leave(uint flags)
+    {
+        if (!up) return false;
+        Interlocked.Exchange(ref leave, flags);
+        Interlocked.Exchange(ref leaveUntil, System.Diagnostics.Stopwatch.GetTimestamp() + LeaveTicks);
+        return true;
+    }
+
+    private uint PendingLeave() =>
+        System.Diagnostics.Stopwatch.GetTimestamp() < Interlocked.Read(ref leaveUntil) ? (uint)Interlocked.Read(ref leave) : 0;
 
     public NetworkInputClient(FileNetworkOffer offer, Func<InputEvent, bool> deliver, Action<string> status)
     {
@@ -72,7 +96,7 @@ internal sealed class NetworkInputClient : IDisposable
         if (connected is null) throw new SocketException((int)SocketError.ConnectionRefused);
         socket = connected;
         try { Stream(connected); }
-        finally { try { connected.Close(); } catch (ObjectDisposedException) { } socket = null; }
+        finally { up = false; try { connected.Close(); } catch (ObjectDisposedException) { } socket = null; }
     }
 
     private void Stream(Socket wire)
@@ -92,6 +116,7 @@ internal sealed class NetworkInputClient : IDisposable
         using (incoming)
         using (outgoing)
         {
+            up = true;
             status("up");
             var buffer = new byte[4096];
             var filled = 0;
@@ -120,7 +145,7 @@ internal sealed class NetworkInputClient : IDisposable
                 if (last is not { } sequence) continue;
                 // Acknowledge first, so the round trip the Mac measures is the wire, not the
                 // injection that follows; the blocked flag reports the previous batch's outcome.
-                outgoing.Seal(InputRecord.Ack(sequence, InputRecord.Clock(), !canInject), ack);
+                outgoing.Seal(InputRecord.Ack(sequence, InputRecord.Clock(), !canInject, PendingLeave()), ack);
                 wire.Send(ack);
                 var ok = true;
                 foreach (var record in records) ok &= deliver(record);
