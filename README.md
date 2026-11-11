@@ -1,24 +1,30 @@
 # DeusKVM
 
-Use your Mac's keyboard, mouse, and trackpad to control a Windows PC over
-Bluetooth. Move through a configured screen edge to switch computers, or use a
-hotkey. A Windows companion service handles reconnecting, cursor placement,
-edge return, and plain-text clipboard sharing, including input control at the
-Windows login screen.
+Use your Mac's keyboard, mouse, and trackpad to control a Windows PC. Move
+through a configured screen edge to switch computers, or use a hotkey. A Windows
+companion service handles reconnecting, cursor placement, edge return, and
+clipboard sharing, including input control at the Windows login screen, UAC
+prompts, and administrator windows.
 
-Keyboard and mouse input use Bluetooth LE HID; the companion control and clipboard channel also uses
-BLE. No LAN connection is required.
+Keyboard and mouse input use Bluetooth LE HID, and the companion's control and
+text clipboard channel also uses BLE, so Bluetooth alone is enough to control
+the PC. When both computers are on the same private local network, DeusKVM also
+uses it: pointer motion and clicks travel over the network (falling back to
+Bluetooth), edge return requests ride the same stream, and screenshot images and
+file paste require it.
 
 ## Setup
 
-1. Open **DeusKVM.app** on the Mac. In **Setup → Permissions**, use each
+1. Unzip **DeusKVM-mac-arm64.zip** and open **DeusKVM.app** on the Mac (Apple
+   Silicon only). In **Setup → Permissions**, use each
    **Allow…** button to grant Bluetooth, Accessibility, and Input Monitoring.
    Each button requests access or opens the relevant System Settings pane.
    If DeusKVM is missing from Accessibility or Input Monitoring, use
    **Show DeusKVM in Finder**, then add that app with **+** in System Settings.
    Reopen DeusKVM after granting Input Monitoring.
-2. On Windows, extract **DeusKVM-Companion-win-x64.zip** and open
-   **DeusKVM.Companion.exe**. Approve the administrator prompt. The EXE installs
+2. On Windows, extract **DeusKVM-Companion-win-x64.zip** and open the
+   **DeusKVM-Companion-win-x64-*date*.exe** inside it (or a downloaded EXE
+   directly). Approve the administrator prompt. The EXE installs
    or updates the service and opens its settings; no scripts or separate .NET
    installation are required.
 3. For first-time pairing, leave **System Settings → Bluetooth** open on the
@@ -30,6 +36,11 @@ BLE. No LAN connection is required.
 5. In **Configuration**, choose the Mac display and exit edge, leave edge switching enabled,
    and select the Windows display. **Setup → Devices** shows **Windows edge return ready**.
    Return through the opposite edge on Windows.
+
+Once every permission is granted and a PC has **Enable control** on, DeusKVM
+starts in the menu bar without opening its window; choose **Open controls…** in
+the menu bar to show it. The window opens by itself at launch only while
+something still needs setting up.
 
 ## Everyday use
 
@@ -55,15 +66,28 @@ BLE. No LAN connection is required.
   supports [on-demand file paste in both directions](docs/FILE_PASTE_CHECKPOINT.md)
   for one regular file up to 2 GB, using networking only. Windows → Mac uses
   Finder Cmd+V with DeusKVM progress/cancel UI. Contents transfer only when pasted.
+- On a shared private network, pointer motion and clicks go to Windows over the
+  local network at the trackpad's own rate, and Windows edge return requests come
+  back the same way; Bluetooth carries them whenever the stream is down. Keyboard
+  and scrolling always use Bluetooth. Turn this off with **Setup → Advanced →
+  Send pointer motion to Windows over the local network** (on by default);
+  with **Developer Mode** on, **Setup → Diagnostics** shows the network pointer's state.
 - Vertical and horizontal scrolling can be inverted independently in **Configuration → Input settings**.
 - **Disable DeusKVM** in **Configuration** or the menu bar restores local input and
   stops advertising, input capture, and clipboard exchange. Enabling reuses
-  saved devices. The menu icon shows searching, connecting, ready, or disabled.
+  saved devices. The menu bar icon shows the connection state (searching,
+  connecting, waiting for Windows, ready, Secure Input, or disabled), and the
+  menu adds a short companion status such as **Edge return ready**.
+- If something misbehaves, choose **Report Problem Now** in the menu bar before
+  restarting either app. It saves recent details from the Mac and the PC.
 - Mac launch-at-login is optional under **Setup → Startup**. On Windows, **Start automatically with
   Windows** controls the service; **Show tray icon at sign-in** controls the
   settings UI separately. Closing either settings window leaves control running.
 
 The Windows service supports control at the login screen and across sign-in.
+A SYSTEM helper injects the pointer on UAC prompts, the lock screen, and
+administrator windows, which ordinary input cannot reach; if the helper cannot
+run there, the pointer falls back to Bluetooth.
 Clipboard access remains limited to the signed-in desktop. See the
 [Windows guide](windows/README.md) for service controls and diagnostics.
 
@@ -88,13 +112,19 @@ Bluetooth pairings are kept.
 
 ## Build
 
-For macOS, install Xcode (26 or later for the current UI), `xcodegen`,
-`swiftformat`, `swiftlint`, and `xcbeautify`, then run:
+For macOS, install Xcode (26 or later for the current UI), `xcodegen`, and
+`xcbeautify`, then run:
 
 ```sh
 ./build.sh
 open .build/DerivedData/Build/Products/Debug/DeusKVM.app
+xcodebuild test -project DeusKVM.xcodeproj -scheme DeusKVM -destination 'platform=macOS,arch=arm64'
 ```
+
+`build.sh` lints with SwiftFormat and SwiftLint before building. It downloads
+the exact versions pinned in `ci_scripts/lint-tools.env` (checksum-verified, into
+`.build/tools/bin`), the same ones CI uses, so a Homebrew install is not used.
+To upgrade either tool, change its version and checksum there.
 
 `project.yml` contains the development signing team; use your own signing
 configuration when building on another Mac. The deployment target is macOS 13.
