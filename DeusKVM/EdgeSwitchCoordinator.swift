@@ -43,7 +43,9 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private var lastReturnRejection: TimeInterval = 0
     @Published private(set) var reportingProblem = false
     @Published private(set) var pcMonitors: [PCMonitor] = []
-    @Published private(set) var companionStatus = "Waiting for Windows companion"
+    /// The full sentence (controls window, diagnostics) and its short form for the menu bar.
+    @Published private(set) var companionStatus = StatusText.companionOffline.detail
+    @Published private(set) var companionLabel = StatusText.companionOffline.label
     /// Settings bindings (the corner slider especially) can repeat unchanged values; only
     /// real changes save, and only the Windows edge/display changes resend CONFIG.
     @Published var pcMonitorID = "" {
@@ -63,6 +65,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var canSwitch = false
     @Published private(set) var captureBlocker: String?
+    private var captureBlockerText: StatusText?
     @Published var edgeEnabled = AppSettings.defaultEdgeSwitchEnabled {
         didSet { if edgeEnabled != oldValue { _save() } }
     }
@@ -299,7 +302,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         let available = currentTarget != nil
         if targetAvailable != available { targetAvailable = available }
         refreshCaptureReadiness()
-        if isEnabled { _refreshCompanion() } else if companionStatus != "DeusKVM is disabled" { companionStatus = "DeusKVM is disabled" }
+        if isEnabled { _refreshCompanion() } else { setCompanionStatus(.disabled) }
         networkPointer.refresh(enabled: isEnabled, target: currentTarget, companion: lowEnergy.companion)
         _refreshConnectionState()
         refreshClipboard()
@@ -358,12 +361,15 @@ final class EdgeSwitchCoordinator: ObservableObject {
         if monitors != pcMonitors { pcMonitors = monitors; _configureCompanion() }
         let ready = currentTarget.map { companion.ready.contains($0) } ?? false
         let blind = currentTarget.flatMap { companion.blind[$0] } ?? 4
-        let status = captureBlocker ?? (ready && fresh ? (blind == 0 ? "Windows edge return ready" :
-                "Windows edge return unavailable — use the hotkey") : "Waiting for Windows companion")
-        if companionStatus != status { companionStatus = status }
+        setCompanionStatus(captureBlockerText ?? (ready && fresh ? (blind == 0 ? .edgeReady : .hotkeyOnly) : .companionOffline))
         if isRemote, companionCapture, !ready || !fresh {
             returnLocal(reason: ready ? "companion heartbeat expired" : "companion disconnected")
         }
+    }
+
+    private func setCompanionStatus(_ status: StatusText) {
+        if companionStatus != status.detail { companionStatus = status.detail }
+        if companionLabel != status.label { companionLabel = status.label }
     }
 
     private func _configureCompanion() {
@@ -588,5 +594,6 @@ extension EdgeSwitchCoordinator {
         )
         if canSwitch != state.canSwitch { canSwitch = state.canSwitch }
         if captureBlocker != state.blocker { captureBlocker = state.blocker }
+        captureBlockerText = state.block
     }
 }
