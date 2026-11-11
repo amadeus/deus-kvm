@@ -39,7 +39,7 @@ struct CaptureReadiness {
             return StatusText(label: "Needs Input Monitoring", detail: "Allow Input Monitoring in Setup, then quit and reopen DeusKVM")
         }
         if !tap { return StatusText(label: "Capture not ready", detail: "Input capture is not ready; check permissions in Setup") }
-        if !display { return StatusText(label: "No display selected", detail: "Choose an available Mac display in Layout") }
+        if !display { return StatusText(label: "No display selected", detail: "Choose an available Mac display in Configuration") }
         if secureInput { return StatusText(label: "Secure Input on", detail: "Secure Input is active on this Mac") }
         if !target { return StatusText(label: "PC not connected", detail: "Waiting for the allowed PC's keyboard and mouse connection") }
         if waiting { return StatusText(label: "Waiting for Windows", detail: "Waiting for Windows to transfer control") }

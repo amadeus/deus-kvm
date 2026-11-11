@@ -11,7 +11,7 @@ public readonly record struct InputEvent(byte Type, uint Sequence, uint Captured
 }
 
 /// <summary>
-/// The wire records of the pointer stream (NETWORK_POINTER_PLAN.md), little-endian. The Mac
+/// The wire records of the pointer stream, little-endian. The Mac
 /// sends each one sealed and prefixed by its sealed length; the PC answers every record with a
 /// sealed twelve-byte acknowledgement per read carrying the last sequence, its own clock and
 /// flags: bit 0 says the PC cannot inject right now, so the Mac should use the Bluetooth mouse

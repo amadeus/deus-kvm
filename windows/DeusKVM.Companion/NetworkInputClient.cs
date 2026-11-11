@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 namespace DeusKVM.Companion;
 
 /// <summary>
-/// The PC's end of the Mac's pointer stream (NETWORK_POINTER_PLAN.md): connects to the offered
+/// The PC's end of the Mac's pointer stream: connects to the offered
 /// listener, runs the nonce handshake under the "input" key purpose, and delivers each record.
 /// It runs on a dedicated thread with blocking sockets rather than the thread pool, so a pointer
 /// step is not delayed by a scheduler wake-up, and it acknowledges each read before injecting, so

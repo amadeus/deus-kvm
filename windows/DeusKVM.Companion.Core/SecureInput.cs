@@ -4,7 +4,7 @@ namespace DeusKVM.Companion.Core;
 
 /// <summary>
 /// The compact records the user desktop worker forwards to the SYSTEM secure-input worker, which
-/// injects every network pointer step on whatever desktop has input (NETWORK_POINTER_PLAN.md). No
+/// injects every network pointer step on whatever desktop has input. No
 /// sequence or crypto: this is a local, length-prefixed channel, not the network stream. Motion
 /// is relative; a button is one of 1 left, 2 right, 3 middle. A mark carries the QPC timestamp
 /// (Stopwatch ticks, comparable across processes on one PC) at which the records after it reached

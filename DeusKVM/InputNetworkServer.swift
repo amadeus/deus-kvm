@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import os
 
-/// The Mac's end of the local-network pointer stream (NETWORK_POINTER_PLAN.md): a TCP listener
+/// The Mac's end of the local-network pointer stream: a TCP listener
 /// the PC's desktop worker connects to, the nonce handshake and keys of the file transfer path
 /// under the "input" purpose, and `InputStreamState` for flow control.
 ///

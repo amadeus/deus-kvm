@@ -1,6 +1,6 @@
 import Foundation
 
-/// Owns the local-network pointer stream for the coordinator (NETWORK_POINTER_PLAN.md). The
+/// Owns the local-network pointer stream for the coordinator. The
 /// listener runs while the active companion can use it and the setting is on; each new
 /// listener port or target gets a fresh offer over the Bluetooth link. A companion that goes
 /// away takes the listener down, so its return makes a new offer.

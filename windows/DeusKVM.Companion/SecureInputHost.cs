@@ -9,7 +9,7 @@ using Microsoft.Win32.SafeHandles;
 namespace DeusKVM.Companion;
 
 /// <summary>
-/// Service-side supervisor for the SYSTEM secure-input worker (NETWORK_POINTER_PLAN.md). It owns
+/// Service-side supervisor for the SYSTEM secure-input worker. It owns
 /// a SYSTEM-only pipe to the worker and forwards every network pointer record to it, written
 /// straight from the pointer pipe's reader thread (see <see cref="PointerPipeServer"/>), so neither
 /// the service thread nor the thread pool sits in the path. Connection changes, every injection

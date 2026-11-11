@@ -42,7 +42,7 @@ struct InputLeave: Sendable, Equatable {
     let fraction: UInt16
 }
 
-/// The wire records of the input stream (NETWORK_POINTER_PLAN.md). Little-endian; each Mac to
+/// The wire records of the input stream. Little-endian; each Mac to
 /// PC record is sealed with AES-GCM and prefixed by its sealed length in one byte; the PC answers
 /// with a sealed 12-byte acknowledgement (cumulative) per read. Its flags: bit 0 the PC cannot
 /// inject; bit 1 an edge-return request, with the edge in bits 2-3, the switch id in 8-15 and the
