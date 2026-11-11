@@ -120,18 +120,11 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         if (desktop is null)
         {
             var epoch = ++desktopGeneration;
-            desktop = new DesktopHost(message =>
-            {
-                // Secure-desktop pointer records go straight from the pipe reader to the SYSTEM
-                // worker: queued behind this service thread they stalled while it handled the
-                // desktop switch.
-                if (message.Kind == "secure-input")
-                {
-                    if (message.Input is { Length: > 0 } records) secureInput?.Forward(records);
-                    return;
-                }
-                context.Post(_ => { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null);
-            });
+            // Pointer records go straight from the pointer pipe's thread to the SYSTEM worker: never
+            // queued behind this service thread, which is busy exactly when the desktop switches.
+            desktop = new DesktopHost(
+                message => context.Post(_ => { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null),
+                records => secureInput?.Forward(records));
         }
         desktop.Refresh(address);
         RefreshSecureInput();
@@ -147,7 +140,9 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
             text => { EdgeDiagnostics.Write(text); context.Post(_ => { if (!disposed) SetDetail(text); }, null); },
             _ => context.Post(_ => { if (!disposed && active) PushSecureReady(secureInput?.Connected == true); }, null),
             injecting => context.Post(_ =>
-            { if (!disposed && active) desktop?.Send(new DesktopMessage("secure-status", Ok: injecting)); }, null));
+            { if (!disposed && active) desktop?.Send(new DesktopMessage("secure-status", Ok: injecting)); }, null),
+            frame => context.Post(_ =>
+            { if (!disposed && active) desktop?.Send(new DesktopMessage("secure-stats", Input: frame)); }, null));
         secureInput.Refresh();
         PushSecureReady(secureInput.Connected);
     }

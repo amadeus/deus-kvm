@@ -5,10 +5,8 @@ namespace DeusKVM.Companion.Core;
 public static class DesktopPipe
 {
     public const int MaximumMessageBytes = 131072; // 64 KiB clipboard as base64 plus metadata.
-    // `prepare` runs as each message is dequeued for writing, so a placeholder can be filled with
-    // whatever accumulated while it waited (the secure pointer relay coalesces that way).
     public static async Task Pump(Stream pipe, System.Threading.Channels.ChannelReader<DesktopMessage> outgoing,
-        Action<DesktopMessage> dispatch, CancellationToken stop, Func<DesktopMessage, DesktopMessage>? prepare = null)
+        Action<DesktopMessage> dispatch, CancellationToken stop)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var read = ReadMessages();
@@ -34,7 +32,7 @@ public static class DesktopPipe
         async Task WriteMessages()
         {
             await foreach (var message in outgoing.ReadAllAsync(lifetime.Token).ConfigureAwait(false))
-                await Write(pipe, prepare is null ? message : prepare(message), lifetime.Token).ConfigureAwait(false);
+                await Write(pipe, message, lifetime.Token).ConfigureAwait(false);
         }
     }
 

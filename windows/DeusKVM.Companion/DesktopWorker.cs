@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
@@ -17,6 +18,7 @@ internal sealed class DesktopWorker : ApplicationContext
     private DesktopClipboard? clipboard;
     private readonly InactiveCursor cursor = new();
     private readonly string address;
+    private readonly string pipeName;
     private readonly int parent;
     private readonly HandoffSession handoff = new();
     private readonly DesktopRecoveryPoll recoveryPoll = new();
@@ -29,31 +31,36 @@ internal sealed class DesktopWorker : ApplicationContext
     private readonly object networkGate = new();
     private uint heldNetworkButtons; // MOUSEEVENTF up flags still owed; under networkGate
     private volatile bool defaultDesktop;
-    // Why this process's own injection would be lost: the input desktop is not the default one
-    // (UAC prompt, lock screen), where injection is refused, or an elevated window has the
-    // foreground, where Windows (UIPI) silently discards it. Either way records go to the SYSTEM
-    // relay, or the Mac is told to use the Bluetooth mouse. The desktop is re-checked every 100 ms
-    // while records arrive, on every record while blocked and on each idle ping; the foreground
-    // window on every record (cached per window, so normally one call).
+    // Every network pointer record goes to the SYSTEM secure-input worker through the pointer
+    // pipe: it can inject on every desktop and behind elevated windows, so nothing has to switch
+    // when Windows does. This process injects only as the fallback, while that relay is not
+    // connected, is stuck, or has reported failures for longer than the grace period. Block says
+    // where the fallback cannot inject either: the input desktop is not the default one (UAC
+    // prompt, lock screen), or an elevated window has the foreground, where Windows (UIPI) silently
+    // discards this process's input; the Mac is then told to use the Bluetooth mouse. The desktop
+    // is re-checked every 100 ms while records arrive, on every record while blocked and on each
+    // idle ping; the foreground window on every record (cached per window, so normally one call).
     private enum Block : byte { None, SecureDesktop, Elevated }
     private volatile Block block;
     private volatile bool secureDesktop; // the last input-desktop check
     private readonly ForegroundIntegrity foreground = new();
     private bool InjectBlocked => block != Block.None;
-    // The service says a SYSTEM secure-input worker is connected; while blocked, records are
-    // forwarded there instead of dropped.
+    // The service says the SYSTEM secure-input worker is connected.
     private volatile bool secureRelay;
-    // Secure relay state, under secureGate (taken after networkGate when both are held). Each
-    // secure-desktop episode starts trusting the relay; the Mac is sent to Bluetooth only once the
-    // worker has reported failures for longer than the grace period in that episode, so a single
-    // failed injection during the desktop switch neither stalls nor disables the relay.
-    private const double SecureGraceMs = 250;
-    private const int SecurePendingLimit = 16384;
+    private PointerPipeClient? pointer;
+    // Relay health, under secureGate (taken after networkGate when both are held). The relay is
+    // trusted again at every Block change and reconnect; the fallback starts only once the worker
+    // has reported failures for longer than the grace period, so a failure or two during a desktop
+    // switch (which the worker replays) neither stalls nor disables it. While falling back, a
+    // zero-motion probe every 100 ms lets a recovered worker say so.
+    private const double SecureGraceMs = 250, ProbeMs = 100;
     private readonly object secureGate = new();
-    private readonly List<byte> securePending = new();
-    private bool secureQueued, secureFailing;
-    private double secureFailingSince;
+    private bool secureFailing;
+    private double secureFailingSince, lastProbe;
     private SecureEpisode? episode;
+    // Direct-injection latency (record received → SendInput returned), to compare with the relay's.
+    private readonly LatencySamples direct = new();
+    private long lastDirectReport;
     private double lastDesktopCheck;
     private const double DesktopCheckMs = 100;
     // Injected motion since the desktop thread last ran the edge test; one post at a time.
@@ -72,6 +79,7 @@ internal sealed class DesktopWorker : ApplicationContext
     {
         this.parent = parent;
         this.address = address;
+        pipeName = name;
         pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
         window = new RawWindow(this);
         timer.Tick += (_, _) => Refresh();
@@ -90,13 +98,18 @@ internal sealed class DesktopWorker : ApplicationContext
                 throw new InvalidDataException("Unexpected desktop pipe server");
             var context = this.context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
             clipboard = new DesktopClipboard(Send);
+            pointer = new PointerPipeClient(pipeName + ".Pointer", parent, text =>
+            {
+                context.Post(_ => history.Add(text), null);
+                ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(text));
+            });
             var connection = Task.Run(async () =>
             {
                 try
                 {
                     await DesktopPipe.Pump(pipe, output.Reader,
                         message => { if (message.Kind.StartsWith("clipboard-", StringComparison.Ordinal)) clipboard?.Post(message);
-                            else context.Post(_ => Handle(message), null); }, shutdown.Token, PrepareSecure).ConfigureAwait(false);
+                            else context.Post(_ => Handle(message), null); }, shutdown.Token).ConfigureAwait(false);
                 }
                 finally { Environment.Exit(0); }
             });
@@ -154,6 +167,7 @@ internal sealed class DesktopWorker : ApplicationContext
         }
         UpdateDesktopState(state);
         ReportEdgeHealth();
+        ReportDirect();
     }
 
     private void UpdateDesktopState((byte Blind, byte Desktop) state)
@@ -193,8 +207,12 @@ internal sealed class DesktopWorker : ApplicationContext
                 break;
             case "input-offer": StartNetwork(message.Report); break;
             case "input-revoke": StopNetwork("no offer"); break;
-            case "secure-ready": secureRelay = message.SecureReady; break;
+            case "secure-ready":
+                secureRelay = message.SecureReady;
+                if (message.SecureReady) lock (secureGate) secureFailing = false;
+                break;
             case "secure-status": SecureStatus(message.Ok); break;
+            case "secure-stats": RelayStats(SecureRelayStats.Decode(message.Input)); break;
             case "resume":
                 // Reattach to current Mac ownership after login/worker startup.
                 // Never replay entry placement over the user's current cursor.
@@ -333,38 +351,41 @@ internal sealed class DesktopWorker : ApplicationContext
         UpdateDesktopState(DesktopNative.DesktopState());
     }
 
-    // One record from the stream, on the receiving thread: injected at once, since SendInput
-    // needs no particular thread, while the Mac owns the handoff and the default desktop is the
-    // input desktop. Returns whether the PC can inject right now; false rides on the next
-    // acknowledgement so the Mac switches to the Bluetooth mouse within a round trip. The edge
-    // test runs on the desktop thread over the motion accumulated since its last turn.
+    // One record from the stream, on the receiving thread, while the Mac owns the handoff: handed
+    // to the SYSTEM relay (or, as the fallback, injected here at once, since SendInput needs no
+    // particular thread). Returns whether the PC can deliver the pointer right now; false rides on
+    // the next acknowledgement so the Mac switches to the Bluetooth mouse within a round trip. The
+    // edge test runs on the desktop thread over the motion accumulated since its last turn.
     private bool Inject(InputEvent record)
     {
+        var arrived = Stopwatch.GetTimestamp();
         var now = DesktopNative.Milliseconds();
-        // The Mac should fall back to Bluetooth only when neither this worker nor the secure
-        // worker can inject: blocked (secure desktop, elevated window) with no relay available.
-        if (record.Type == InputRecord.Ping) { CheckInputDesktop(now, force: true); return CanHandle(now); }
+        if (record.Type == InputRecord.Ping) { CheckInputDesktop(now, force: true); Probe(now); return CanHandle(now); }
         if (!record.IsMotion && !record.IsButton) return true;
         bool result;
         lock (networkGate)
         {
             arrivals.Observe(now);
             if (handoff.Active is null) { arrivals.Discarded++; return CanHandle(now); }
-            // A button is never lost to a foreground change since the last check.
-            CheckInputDesktop(now, force: InjectBlocked || record.IsButton);
-            if (InjectBlocked || !InjectLocal(record, now))
+            CheckInputDesktop(now, force: InjectBlocked);
+            if (record.IsButton)
             {
-                // This process cannot inject right now; hand the record to the SYSTEM relay if it
-                // is connected, otherwise tell the Mac to use Bluetooth.
-                if (!secureRelay) return Drop();
-                result = Relay(record, now);
-                // Behind an elevated window the desktop is still the user's, so the edge test
-                // keeps running: the relayed step lands a moment later, and at the edge the cursor
-                // is already pinned there.
-                if (block != Block.Elevated) return result;
+                var up = DesktopNative.ButtonFlags(record.Button).Up;
+                if (record.Down) heldNetworkButtons |= up; else heldNetworkButtons &= ~up;
             }
-            else result = true;
-            if (record.IsButton) return result;
+            if (RelayUsable(now) && Relay(record, now, arrived)) result = true;
+            else
+            {
+                Probe(now);
+                // A click that just brought an elevated window to the front must not be lost.
+                if (record.IsButton) CheckInputDesktop(now, force: true);
+                if (InjectBlocked || !InjectLocal(record, now, arrived)) return Drop();
+                result = true;
+            }
+            // On the secure desktop there is no edge to return through; everywhere else the edge
+            // test runs, and a relayed step lands a moment later (at the edge the cursor is already
+            // pinned there).
+            if (record.IsButton || block == Block.SecureDesktop) return result;
             pendingDx += record.Dx; pendingDy += record.Dy;
         }
         if (Interlocked.Exchange(ref observePosted, 1) == 0) context?.Post(_ => ObserveInjected(), null);
@@ -372,75 +393,34 @@ internal sealed class DesktopWorker : ApplicationContext
     }
 
     // One record injected by this process (under networkGate). False when a failed motion step
-    // turns out to be blocked after all, so the caller relays it instead.
-    private bool InjectLocal(InputEvent record, double now)
+    // turns out to be blocked after all.
+    private bool InjectLocal(InputEvent record, double now, long arrived)
     {
-        if (record.IsButton)
+        var ok = record.IsButton
+            ? DesktopNative.InjectMouse(0, 0, record.Down ? DesktopNative.ButtonFlags(record.Button).Down : DesktopNative.ButtonFlags(record.Button).Up)
+            : DesktopNative.InjectMouse(record.Dx, record.Dy, DesktopNative.MouseMove);
+        if (ok)
         {
-            var (down, up) = DesktopNative.ButtonFlags(record.Button);
-            if (record.Down) heldNetworkButtons |= up; else heldNetworkButtons &= ~up;
-            if (DesktopNative.InjectMouse(0, 0, record.Down ? down : up)) arrivals.Injected++;
+            arrivals.Injected++;
+            direct.Add(LatencySamples.Micros(Stopwatch.GetTimestamp() - arrived));
             return true;
         }
-        if (DesktopNative.InjectMouse(record.Dx, record.Dy, DesktopNative.MouseMove)) { arrivals.Injected++; return true; }
+        if (record.IsButton) return true;
         CheckInputDesktop(now, force: true);
         return !InjectBlocked;
     }
 
-    // Whether the pointer can be delivered to the PC at all (locally or via the secure relay).
-    private bool CanHandle(double now) => !InjectBlocked || secureRelay && !SecureGivenUp(now);
-    // Relayed records are still forwarded after giving up, so the worker can recover in flight.
-    // A release delivered by the SYSTEM worker is no longer owed here, even if this process
-    // injected the press (a click that brought an elevated window to the front).
-    private bool Relay(InputEvent record, double now)
-    {
-        ForwardSecure(record, now);
-        arrivals.Injected++;
-        if (record.IsButton && !record.Down) heldNetworkButtons &= ~DesktopNative.ButtonFlags(record.Button).Up;
-        return !SecureGivenUp(now);
-    }
-    private bool Drop() { arrivals.Discarded++; return false; }
+    // Whether the pointer can be delivered to the PC at all (via the relay or directly).
+    private bool CanHandle(double now) => RelayUsable(now) || !InjectBlocked;
+    private bool RelayUsable(double now) =>
+        secureRelay && pointer is { Connected: true } relay && !relay.Stuck(Stopwatch.GetTimestamp()) && !SecureGivenUp(now);
 
-    // The worker has been failing to inject for longer than the grace period this episode.
-    private bool SecureGivenUp(double now)
-    {
-        lock (secureGate)
-        {
-            if (!secureFailing || now - secureFailingSince < SecureGraceMs) return false;
-            if (episode is not null) episode.Bluetooth = true;
-            return true;
-        }
-    }
-
-    // A status from the SYSTEM worker (desktop thread). Ignored outside a secure-desktop episode:
-    // a failure as the desktop switches back must not count against the next one.
-    private void SecureStatus(bool injecting)
-    {
-        var now = DesktopNative.Milliseconds();
-        lock (secureGate)
-        {
-            if (!InjectBlocked || episode is null) return;
-            if (injecting)
-            {
-                secureFailing = false;
-                if (episode.FirstOk < 0) episode.FirstOk = now;
-            }
-            else
-            {
-                episode.Failures++;
-                if (!secureFailing) { secureFailing = true; secureFailingSince = now; }
-            }
-        }
-    }
-
-    // Best-effort: one record for the SYSTEM secure-input worker. Records accumulate while a
-    // placeholder message waits in the pipe queue and are filled in as it is written (one message
-    // per write, not per record); a backlog beyond the limit drops records (motion tolerates it).
-    private void ForwardSecure(InputEvent record, double now)
+    private bool Relay(InputEvent record, double now, long arrived)
     {
         var bytes = record.IsMotion ? SecureInputRecord.EncodeMotion(record.Dx, record.Dy)
             : SecureInputRecord.EncodeButton(record.Button, record.Down);
-        bool post;
+        if (pointer?.Enqueue(bytes, arrived) != true) return false;
+        arrivals.Injected++;
         lock (secureGate)
         {
             if (episode is not null)
@@ -448,26 +428,70 @@ internal sealed class DesktopWorker : ApplicationContext
                 episode.Forwarded++;
                 if (episode.FirstForward < 0) episode.FirstForward = now;
             }
-            if (securePending.Count + bytes.Length > SecurePendingLimit) return;
-            securePending.AddRange(bytes);
-            post = !secureQueued;
-            secureQueued = true;
         }
-        if (post && !output.Writer.TryWrite(new DesktopMessage("secure-input")))
-            lock (secureGate) secureQueued = false; // queue full: the next record retries the post
+        return true;
+    }
+    private bool Drop() { arrivals.Discarded++; return false; }
+
+    // While the relay is given up, a zero-motion record lets the worker report that it can inject
+    // again (it reports only on a change, and it gets nothing else meanwhile).
+    private void Probe(double now)
+    {
+        if (!secureRelay || now - lastProbe < ProbeMs) return;
+        lock (secureGate) if (!secureFailing) return;
+        lastProbe = now;
+        pointer?.Enqueue(SecureInputRecord.EncodeMotion(0, 0), Stopwatch.GetTimestamp());
     }
 
-    // Pipe writer thread: fills a queued secure-input placeholder with every record since.
-    private DesktopMessage PrepareSecure(DesktopMessage message)
+    // The worker has been failing to inject for longer than the grace period.
+    private bool SecureGivenUp(double now)
     {
-        if (message.Kind != "secure-input" || message.Input is not null) return message;
         lock (secureGate)
         {
-            var input = securePending.ToArray();
-            securePending.Clear();
-            secureQueued = false;
-            return message with { Input = input };
+            if (!secureFailing || now - secureFailingSince < SecureGraceMs) return false;
+            if (episode is not null) episode.FellBack = true;
+            return true;
         }
+    }
+
+    // A status from the SYSTEM worker (desktop thread).
+    private void SecureStatus(bool injecting)
+    {
+        var now = DesktopNative.Milliseconds();
+        lock (secureGate)
+        {
+            if (injecting)
+            {
+                secureFailing = false;
+                if (episode is { FirstOk: < 0 }) episode.FirstOk = now;
+            }
+            else
+            {
+                if (episode is not null) episode.Failures++;
+                if (!secureFailing) { secureFailing = true; secureFailingSince = now; }
+            }
+        }
+    }
+
+    // The SYSTEM worker's ten-second window (desktop thread): one line in the edge log.
+    private void RelayStats(SecureRelayStats? stats)
+    {
+        if (stats is null) return;
+        var line = $"pointer relay 10s: total[{stats.Total}] transit[{stats.Transit}] sendInput[{stats.Inject}] " +
+            $"failed={stats.Failed} longestFailMs={stats.LongestFailMs} replayed={stats.Replayed} desktopSwitches={stats.Switches}";
+        history.Add(line);
+        ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(line));
+    }
+
+    // Direct injections in the last ten seconds, if there were any (desktop thread).
+    private void ReportDirect()
+    {
+        var now = RuntimeCompat.TickCount64;
+        if (now - lastDirectReport < 10000 || direct.Count == 0) return;
+        lastDirectReport = now;
+        var line = $"pointer direct 10s: [{direct.Take()}]";
+        history.Add(line);
+        ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(line));
     }
 
     private void CheckInputDesktop(double now, bool force)
@@ -482,9 +506,9 @@ internal sealed class DesktopWorker : ApplicationContext
 
     private Block Classify() => secureDesktop ? Block.SecureDesktop : foreground.Outranks() ? Block.Elevated : Block.None;
 
-    // Each blocked episode (a secure desktop, or an elevated window in front) starts trusting the
-    // relay again; its end writes one line saying how the relay did, so a slow handoff shows in
-    // the edge log.
+    // Each Block change trusts the relay again. A blocked episode (a secure desktop, or an elevated
+    // window in front) writes one line when it ends saying how the relay did, so a slow handoff
+    // shows in the edge log.
     private void SetBlocked(Block next)
     {
         if (next == block) return;
@@ -503,9 +527,9 @@ internal sealed class DesktopWorker : ApplicationContext
             if (summary is not null) history.Add(summary);
             history.Add(next switch
             {
-                Block.SecureDesktop => "network: secure desktop, relaying",
-                Block.Elevated => "network: elevated window in front, relaying",
-                _ => "network: injection resumed"
+                Block.SecureDesktop => "network: secure desktop (relay only)",
+                Block.Elevated => "network: elevated window in front (relay only)",
+                _ => "network: default desktop"
             });
         }, null);
         if (summary is not null) ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(summary));
@@ -516,9 +540,9 @@ internal sealed class DesktopWorker : ApplicationContext
     {
         public double FirstForward = -1, FirstOk = -1;
         public int Forwarded, Failures;
-        public bool Bluetooth;
+        public bool FellBack; // to Bluetooth: neither the relay nor this process could inject
         public string Summary(double end) => FormattableString.Invariant(
-            $"{kind}: ms={end - start:F0} relay={relay} firstForwardMs={At(FirstForward)} firstInjectedMs={At(FirstOk)} forwarded={Forwarded} failures={Failures} bluetooth={Bluetooth}");
+            $"{kind}: ms={end - start:F0} relay={relay} firstForwardMs={At(FirstForward)} firstInjectedMs={At(FirstOk)} forwarded={Forwarded} failures={Failures} bluetooth={FellBack}");
         private string At(double time) => time < 0 ? "-" : (time - start).ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
     }
 
@@ -537,6 +561,7 @@ internal sealed class DesktopWorker : ApplicationContext
         lock (networkGate)
         {
             if (heldNetworkButtons == 0) return;
+            pointer?.Enqueue(SecureInputRecord.ReleaseRecord, Stopwatch.GetTimestamp()); // the relay's presses
             DesktopNative.InjectMouse(0, 0, heldNetworkButtons);
             heldNetworkButtons = 0;
         }

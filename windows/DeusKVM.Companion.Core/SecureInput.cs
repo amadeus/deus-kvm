@@ -3,14 +3,30 @@ using System.Buffers.Binary;
 namespace DeusKVM.Companion.Core;
 
 /// <summary>
-/// The compact records the user desktop worker forwards to the SYSTEM secure-input worker so it
-/// can inject on Windows' secure desktop (NETWORK_POINTER_PLAN.md). No sequence, capture time or
-/// crypto: this is a local, SYSTEM-only, length-prefixed channel, not the network stream. Motion
-/// is relative; a button is one of 1 left, 2 right, 3 middle.
+/// The compact records the user desktop worker forwards to the SYSTEM secure-input worker, which
+/// injects every network pointer step on whatever desktop has input (NETWORK_POINTER_PLAN.md). No
+/// sequence or crypto: this is a local, length-prefixed channel, not the network stream. Motion
+/// is relative; a button is one of 1 left, 2 right, 3 middle. A mark carries the QPC timestamp
+/// (Stopwatch ticks, comparable across processes on one PC) at which the records after it reached
+/// the desktop worker, for latency measurement; release lets go of every button the SYSTEM
+/// worker holds.
 /// </summary>
 public static class SecureInputRecord
 {
-    public const byte Motion = 1, Button = 2;
+    public const byte Motion = 1, Button = 2, Mark = 3, Release = 4;
+    public static readonly byte[] ReleaseRecord = [Release];
+
+    public static byte[] EncodeMark(long ticks)
+    {
+        var record = new byte[9];
+        record[0] = Mark;
+        BinaryPrimitives.WriteInt64LittleEndian(record.AsSpan(1), ticks);
+        return record;
+    }
+
+    /// <summary>The timestamp of a well-formed mark record, or 0.</summary>
+    public static long ReadMark(ReadOnlySpan<byte> record) =>
+        record.Length == 9 && record[0] == Mark ? BinaryPrimitives.ReadInt64LittleEndian(record.Slice(1)) : 0;
 
     public static byte[] EncodeMotion(int dx, int dy)
     {
@@ -26,7 +42,7 @@ public static class SecureInputRecord
     private static short Clamp16(int value) => (short)(value < short.MinValue ? short.MinValue : value > short.MaxValue ? short.MaxValue : value);
 
     /// <summary>The length of a record given its leading type byte, or 0 if the type is unknown.</summary>
-    public static int Length(byte type) => type switch { Motion => 5, Button => 3, _ => 0 };
+    public static int Length(byte type) => type switch { Motion => 5, Button => 3, Mark => 9, Release => 1, _ => 0 };
 
     public static bool TryParse(ReadOnlySpan<byte> record, out byte type, out int dx, out int dy, out byte button, out bool down)
     {
@@ -108,5 +124,85 @@ public static class SecureFrame
         }
         consumed = offset;
         return frames;
+    }
+}
+
+/// <summary>
+/// Latency samples in microseconds for one reporting window: exact percentiles over the window
+/// (sorted at report time), at most <see cref="Capacity"/> samples kept. Safe from any thread.
+/// </summary>
+public sealed class LatencySamples
+{
+    public const int Capacity = 16384;
+    private readonly object gate = new();
+    private readonly int[] values = new int[Capacity];
+    private int count;
+
+    public int Count { get { lock (gate) return count; } }
+
+    public void Add(long micros)
+    {
+        lock (gate) if (count < Capacity) values[count++] = (int)Math.Max(0, Math.Min(micros, int.MaxValue));
+    }
+
+    /// <summary>The window's summary; the window starts over.</summary>
+    public LatencySummary Take()
+    {
+        int[] sorted;
+        lock (gate)
+        {
+            sorted = new int[count];
+            Array.Copy(values, sorted, count);
+            count = 0;
+        }
+        if (sorted.Length == 0) return default;
+        Array.Sort(sorted);
+        int At(int percent) => sorted[(sorted.Length - 1) * percent / 100];
+        return new LatencySummary(sorted.Length, At(50), At(90), At(99), sorted[sorted.Length - 1]);
+    }
+
+    public static long Micros(long ticks) => ticks * 1_000_000 / System.Diagnostics.Stopwatch.Frequency;
+}
+
+public readonly record struct LatencySummary(int Count, int P50, int P90, int P99, int Max)
+{
+    public override string ToString() => Count == 0 ? "n=0" : $"n={Count} p50Us={P50} p90Us={P90} p99Us={P99} maxUs={Max}";
+}
+
+/// <summary>
+/// What the SYSTEM worker measured over one window, sent back to the service as one frame:
+/// transit (desktop worker received the step → SYSTEM worker read it), SendInput itself, and the
+/// total (received → injected); records it could not inject, the longest such outage, and how
+/// often the input desktop changed under it.
+/// </summary>
+public sealed record SecureRelayStats(LatencySummary Transit, LatencySummary Inject, LatencySummary Total,
+    int Failed, int LongestFailMs, int Switches, int Replayed)
+{
+    public const byte Tag = 0x53; // 'S'
+    public const int Length = 1 + 4 * (3 * 5 + 4);
+
+    public byte[] Encode()
+    {
+        var frame = new byte[Length];
+        frame[0] = Tag;
+        var offset = 1;
+        foreach (var summary in new[] { Transit, Inject, Total })
+            foreach (var value in new[] { summary.Count, summary.P50, summary.P90, summary.P99, summary.Max }) Put(value);
+        Put(Failed); Put(LongestFailMs); Put(Switches); Put(Replayed);
+        return frame;
+
+        void Put(int value) { BinaryPrimitives.WriteInt32LittleEndian(frame.AsSpan(offset), value); offset += 4; }
+    }
+
+    public static SecureRelayStats? Decode(byte[]? frame)
+    {
+        if (frame is not { Length: Length } || frame[0] != Tag) return null;
+        var offset = 1;
+        LatencySummary Summary() => new(Get(), Get(), Get(), Get(), Get());
+        int Get() { var value = BinaryPrimitives.ReadInt32LittleEndian(frame.AsSpan(offset)); offset += 4; return value; }
+        var transit = Summary();
+        var inject = Summary();
+        var total = Summary();
+        return new SecureRelayStats(transit, inject, total, Get(), Get(), Get(), Get());
     }
 }

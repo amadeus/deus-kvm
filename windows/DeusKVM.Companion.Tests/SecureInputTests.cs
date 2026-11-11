@@ -61,6 +61,45 @@ public sealed class SecureInputTests
         Assert.Equal(0, SecureInputRecord.Length(9));
     }
 
+    [Fact]
+    public void MarksAndReleasesTravelInBatchesWithTheirRecords()
+    {
+        var mark = SecureInputRecord.EncodeMark(0x0102030405060708);
+        Assert.Equal(9, mark.Length);
+        Assert.Equal(0x0102030405060708, SecureInputRecord.ReadMark(mark));
+        Assert.Equal(0, SecureInputRecord.ReadMark(SecureInputRecord.EncodeMotion(1, 1)));
+        Assert.False(SecureInputRecord.TryParse(mark, out _, out _, out _, out _, out _)); // not an injection
+        var bytes = mark.Concat(SecureInputRecord.EncodeMotion(5, 6)).Concat(SecureInputRecord.ReleaseRecord).ToArray();
+        Assert.Equal(SecureFrame.Wrap(bytes), SecureFrame.Batch(bytes, bytes.Length));
+    }
+
+    [Fact]
+    public void RelayStatsRoundTripAndRejectOtherFrames()
+    {
+        var stats = new SecureRelayStats(new LatencySummary(10, 1, 2, 3, 4), new LatencySummary(10, 5, 6, 7, 8),
+            new LatencySummary(9, 9, 10, 11, 12), 13, 14, 15, 16);
+        var frame = stats.Encode();
+        Assert.Equal(SecureRelayStats.Length, frame.Length);
+        Assert.Equal(stats, SecureRelayStats.Decode(frame));
+        Assert.Null(SecureRelayStats.Decode([1]));
+        Assert.Null(SecureRelayStats.Decode(null));
+        frame[0] = 0;
+        Assert.Null(SecureRelayStats.Decode(frame));
+    }
+
+    [Fact]
+    public void LatencyPercentilesComeFromTheWindowAndResetIt()
+    {
+        var samples = new LatencySamples();
+        Assert.Equal(default, samples.Take());
+        for (var i = 100; i >= 1; i--) samples.Add(i);
+        samples.Add(-5); // clamped to zero
+        var summary = samples.Take();
+        Assert.Equal(new LatencySummary(101, 50, 90, 99, 100), summary);
+        Assert.Equal(0, samples.Count);
+        Assert.Equal("n=0", default(LatencySummary).ToString());
+    }
+
     [Theory]
     [InlineData(new byte[] { 1, 0, 0, 0 })]
     [InlineData(new byte[] { 2, 4, 1 })]

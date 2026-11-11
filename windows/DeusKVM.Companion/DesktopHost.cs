@@ -10,11 +10,13 @@ using Microsoft.Win32.SafeHandles;
 
 namespace DeusKVM.Companion;
 
-// Service-owned worker in the console user's Default desktop. The tray is not involved.
-internal sealed class DesktopHost(Action<DesktopMessage> receive) : IDisposable
+// Service-owned worker in the console user's Default desktop. The tray is not involved. Besides
+// the JSON desktop pipe it owns the pointer pipe, whose records go to `pointer` on its own thread.
+internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>? pointer = null) : IDisposable
 {
     private DesktopProcess? process;
     private NamedPipeServerStream? pipe;
+    private PointerPipeServer? pointerPipe;
     private CancellationTokenSource? lifetime;
     private Channel<DesktopMessage>? outgoing;
     private uint sessionId = uint.MaxValue;
@@ -75,6 +77,8 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive) : IDisposable
                 PipeOptions.Asynchronous, 16384, 16384, security);
             try
             {
+                launchStep = "creating pointer pipe";
+                pointerPipe = new PointerPipeServer(name + ".Pointer", security, records => pointer?.Invoke(records));
                 launchStep = "creating console process";
                 process = DesktopProcess.Launch(token, name, address);
                 lifetime = new CancellationTokenSource();
@@ -82,6 +86,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive) : IDisposable
                 lastMessage = RuntimeCompat.TickCount64;
                 Detail = "Connecting console desktop worker";
                 _ = RunAsync(pipe, process.Id, outgoing, lifetime.Token);
+                pointerPipe.Start(process.Id);
                 launchStep = "resuming console process";
                 process.Resume();
             }
@@ -141,6 +146,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive) : IDisposable
         outgoing?.Writer.TryComplete(); outgoing = null;
         pipe?.Dispose(); pipe = null;
         process?.Dispose(); process = null;
+        pointerPipe?.Dispose(); pointerPipe = null;
         if (wasConnected) receive(new DesktopMessage("disconnected"));
     }
 

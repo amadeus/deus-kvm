@@ -10,22 +10,19 @@ namespace DeusKVM.Companion;
 
 /// <summary>
 /// Service-side supervisor for the SYSTEM secure-input worker (NETWORK_POINTER_PLAN.md). It owns
-/// a SYSTEM-only pipe to the worker and forwards relative pointer records to it. Records are
-/// written by a dedicated thread with blocking writes, coalescing whatever queued meanwhile, so a
-/// busy service thread or the thread pool never delays the pointer on the secure desktop.
-/// Connection changes and every injection status the worker reports are raised as they happen
-/// (on a background thread), so the desktop worker can fall back to Bluetooth or resume the relay
-/// without waiting for the next refresh. The only channel that reaches the worker is this
-/// SYSTEM-only pipe: no process without SYSTEM rights can cause secure-desktop injection.
+/// a SYSTEM-only pipe to the worker and forwards every network pointer record to it, written
+/// straight from the pointer pipe's reader thread (see <see cref="PointerPipeServer"/>), so neither
+/// the service thread nor the thread pool sits in the path. Connection changes, every injection
+/// status and the latency windows the worker reports are raised as they happen (on a background
+/// thread). The only channel that reaches the worker is this SYSTEM-only pipe: no process without
+/// SYSTEM rights can make it inject.
 /// </summary>
 internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>? connectedChanged = null,
-    Action<bool>? status = null) : IDisposable
+    Action<bool>? status = null, Action<byte[]>? stats = null) : IDisposable
 {
-    private const int MaxPending = 65536;
-    private readonly object gate = new();
-    private readonly AutoResetEvent pending = new(false); // never disposed: Forward may race Dispose
-    private byte[] buffer = new byte[4096];
-    private int buffered;
+    private readonly object writeGate = new();
+    private readonly OverlappedWriter writer = new();
+    private volatile NamedPipeServerStream? active;
     private SecureInputProcess? process;
     private NamedPipeServerStream? pipe;
     private CancellationTokenSource? lifetime;
@@ -68,20 +65,22 @@ internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>?
         }
     }
 
-    // Records (any number, whole records) to inject on the secure desktop; any thread. Queued for
-    // the writer thread; dropped while no worker is connected or behind a stuck worker.
+    // Records (whole records, any number) to inject; any thread, normally the pointer pipe's reader.
+    // A blocking write: a stuck worker backs up into the desktop worker, which then falls back.
+    // Dropped while no worker is connected.
     public void Forward(byte[] records)
     {
-        if (records.Length == 0 || !connected) return;
-        lock (gate)
+        if (records.Length == 0 || !connected || active is not { } connection) return;
+        var frames = SecureFrame.Batch(records, records.Length);
+        if (frames.Length == 0) return;
+        lock (writeGate)
         {
-            if (buffered + records.Length > MaxPending) return;
-            if (buffered + records.Length > buffer.Length)
-                Array.Resize(ref buffer, Math.Max(buffer.Length * 2, buffered + records.Length));
-            Buffer.BlockCopy(records, 0, buffer, buffered, records.Length);
-            buffered += records.Length;
+            try { writer.Write(connection.SafePipeHandle, frames); }
+            catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException)
+            {
+                try { connection.Dispose(); } catch (ObjectDisposedException) { } // the reader notices and reports it
+            }
         }
-        pending.Set();
     }
 
     private async Task RunAsync(NamedPipeServerStream connection, int pid, CancellationToken stop)
@@ -92,12 +91,10 @@ internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>?
             await connection.WaitForConnectionAsync(stop).WaitAsync(TimeSpan.FromSeconds(10), stop);
             if (!GetNamedPipeClientProcessId(connection.SafePipeHandle, out var peer) || peer != pid)
                 throw new InvalidDataException("Unexpected secure pipe client");
-            lock (gate) buffered = 0;
+            active = connection;
             connected = up = true;
             note?.Invoke("secure worker: ready");
             connectedChanged?.Invoke(true);
-            new Thread(() => WriteLoop(connection, stop))
-                { IsBackground = true, Name = "DeusKVM secure relay", Priority = ThreadPriority.AboveNormal }.Start();
             var input = new byte[256];
             var filled = 0;
             while (!stop.IsCancellationRequested)
@@ -106,7 +103,11 @@ internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>?
                 if (read <= 0) break;
                 filled += read;
                 var frames = SecureFrame.Parse(input, filled, out var consumed);
-                foreach (var frame in frames) if (frame.Length == 1) Report(frame[0] == 1);
+                foreach (var frame in frames)
+                {
+                    if (frame.Length == 1) Report(frame[0] == 1);
+                    else if (frame.Length == SecureRelayStats.Length && frame[0] == SecureRelayStats.Tag) stats?.Invoke(frame);
+                }
                 if (consumed > 0) { Buffer.BlockCopy(input, consumed, input, 0, filled - consumed); filled -= consumed; }
                 if (filled == input.Length) break;
             }
@@ -120,38 +121,9 @@ internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>?
             if (up)
             {
                 connected = false;
-                pending.Set(); // the writer notices the closed or cancelled connection
+                active = null;
                 connectedChanged?.Invoke(false);
             }
-        }
-    }
-
-    // Blocking writes on their own thread: everything queued since the last write goes out as one
-    // write of record-aligned frames.
-    private void WriteLoop(Stream connection, CancellationToken stop)
-    {
-        try
-        {
-            while (!stop.IsCancellationRequested && connected)
-            {
-                pending.WaitOne(250);
-                byte[] records;
-                int count;
-                lock (gate)
-                {
-                    if (buffered == 0) continue;
-                    count = buffered;
-                    records = new byte[count];
-                    Buffer.BlockCopy(buffer, 0, records, 0, count);
-                    buffered = 0;
-                }
-                var frames = SecureFrame.Batch(records, count);
-                if (frames.Length > 0) connection.Write(frames, 0, frames.Length);
-            }
-        }
-        catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException)
-        {
-            try { connection.Dispose(); } catch (ObjectDisposedException) { }
         }
     }
 
@@ -171,16 +143,57 @@ internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>?
     {
         var was = connected;
         connected = false;
+        active = null;
         lifetime?.Cancel(); lifetime?.Dispose(); lifetime = null;
         pipe?.Dispose(); pipe = null;
         process?.Dispose(); process = null;
         sessionId = uint.MaxValue;
-        lock (gate) buffered = 0;
-        pending.Set();
         if (was) connectedChanged?.Invoke(false);
     }
 
     public void Dispose() { disposed = true; Stop(); }
+
+    /// <summary>
+    /// A synchronous write on the overlapped pipe handle without .NET's completion path: .NET
+    /// Framework binds the handle to the thread pool's completion port and finishes even a
+    /// synchronous Write there, a thread handoff per write. An event with its low bit set keeps the
+    /// completion off the port; this thread waits for it directly. One write at a time (writeGate).
+    /// </summary>
+    private sealed class OverlappedWriter
+    {
+        private readonly IntPtr overlapped = Marshal.AllocHGlobal(Marshal.SizeOf<NativeOverlapped>()); // lives as long as the process
+        private readonly IntPtr completed = CreateEvent(IntPtr.Zero, true, false, null);
+
+        public void Write(SafePipeHandle handle, byte[] data)
+        {
+            if (completed == IntPtr.Zero) throw new IOException("No completion event");
+            var pinned = GCHandle.Alloc(data, GCHandleType.Pinned);
+            try
+            {
+                Marshal.StructureToPtr(new NativeOverlapped { EventHandle = (IntPtr)((long)completed | 1) }, overlapped, false);
+                if (!WriteFile(handle, pinned.AddrOfPinnedObject(), data.Length, IntPtr.Zero, overlapped))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (error != 997) throw new IOException("Secure pipe write failed", new Win32Exception(error)); // not ERROR_IO_PENDING
+                }
+                // Waits for completion even when the write failed late, so the buffer is never unpinned early.
+                if (!GetOverlappedResult(handle, overlapped, out var written, true) || written != data.Length)
+                    throw new IOException("Secure pipe write failed", new Win32Exception(Marshal.GetLastWin32Error()));
+            }
+            finally { pinned.Free(); }
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool WriteFile(SafePipeHandle handle, IntPtr buffer, int count, IntPtr written, IntPtr overlapped);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetOverlappedResult(SafePipeHandle handle, IntPtr overlapped, out int transferred,
+            [MarshalAs(UnmanagedType.Bool)] bool wait);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateEvent(IntPtr attributes, [MarshalAs(UnmanagedType.Bool)] bool manualReset,
+            [MarshalAs(UnmanagedType.Bool)] bool initialState, string? name);
+    }
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
