@@ -5,6 +5,15 @@
 > mode are removed. The material below is historical; its builds and test
 > instructions are superseded by AUTOMATIC_MAC_CHECKPOINT.md.
 
+> **Status — 2026-11-11:** No pointer speed or acceleration setting exists; the
+> only speed control is **Scroll speed** (0.25×–3×, added 2026-11-08), which
+> scales Bluetooth wheel/pan steps. Neither app writes Windows mouse settings.
+> Pointer motion and clicks now go over a local-network stream as relative
+> `SendInput` steps (Bluetooth HID as the fallback), so Windows still applies its
+> own pointer speed/acceleration to them; Windows edge return also runs after each
+> injected step, not only on raw Mac-mouse reports. See
+> [DIRECT_POINTER_PLAN.md](DIRECT_POINTER_PLAN.md) and the [README](../README.md).
+
 Researched 2026-09-22. The user subsequently requested the speed slider; see
 implementation notes below. Acceleration-curve and direct-position modes remain proposals.
 The current lag checkpoint is deferred until the user's next test session.

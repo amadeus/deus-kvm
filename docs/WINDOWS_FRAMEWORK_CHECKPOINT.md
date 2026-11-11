@@ -4,12 +4,15 @@ This is the complete Windows companion, using the runtime already included with
 Windows 10 2004+ and Windows 11. Keep your current Mac app and Bluetooth pairings.
 It includes the existing ownership, edge switching, text clipboard and two-way
 network file paste (up to 2,000,000,000 bytes). File contents still transfer only
-when pasted; there is no pre-download.
+when pasted; there is no pre-download. Later builds add two-way screenshot images
+and the network pointer, which a SYSTEM worker injects on UAC prompts, the lock
+screen and over administrator windows (see the companion README).
 
 ## Install
 
-1. Download and open the **single DeusKVM Companion EXE**. No manual extraction
-   or other files alongside it are needed.
+1. Open the **single DeusKVM Companion EXE** (`DeusKVM-Companion-win-x64-<date>.exe`,
+   also shipped inside `DeusKVM-Companion-win-x64.zip`). No other files alongside
+   it are needed.
 2. Approve the normal administrator update prompt if an update is needed. The
    launcher stages its embedded package privately; the existing updater preserves
    settings and the previous service running/stopped and startup preferences.
@@ -26,21 +29,26 @@ that ZIP, extract all files together and launch its `DeusKVM.Companion.exe`.
 - Cross to Windows; move, scroll and type. Return using both the edge and hotkey.
 - Enable the second Mac to take ownership, then switch back. Leave both paired.
 - Copy/paste plain text both ways. Paste a small file both ways, then a larger
-  file; verify contents and cancel another transfer. The native Windows encryption
-  adapter is new and particularly needs this check.
+  file; verify contents and cancel another transfer. This exercises the native
+  Windows encryption adapter.
 - Quit/reopen the tray, then restart Windows and verify service recovery, login
   control and edge return after sign-in. Check display scaling if using mixed DPI.
 - Compare idle CPU and pointer responsiveness with the old build. Size reduction
   alone does not imply a speed improvement.
+- With the network pointer on, move and click on a UAC prompt and over an elevated
+  window, then return through the Windows edge (network edge return is still
+  awaiting hardware validation).
 
 If startup or file paste fails, keep the error text and `C:\ProgramData\DeusKVM\service.log`
 / `status.json`; file diagnostics are at `%LOCALAPPDATA%\DeusKVM\file-paste.log`.
 Use the Mac's toggle hotkey to return locally if needed.
 
-The user confirmed the preceding small Framework build works. The new launcher
-has local extraction/build checks; its Windows UAC, process handoff and temporary
-cleanup remain pending. Detailed lifecycle and full hardware cases above remain
-tracked separately from the user's general confirmation.
+The user confirmed the small Framework build and then the single-EXE launcher
+work (2026-09-23). Windows CI now runs the launcher's install, update, reopen,
+temporary cleanup and removal (passing on 2026-11-11), and both test targets
+including the native CNG tests. Declining the UAC prompt, downgrade and the
+detailed hardware cases above remain tracked separately from the user's general
+confirmation.
 
 ## Fallback
 

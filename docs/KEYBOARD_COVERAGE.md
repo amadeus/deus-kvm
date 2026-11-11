@@ -57,8 +57,9 @@ check cannot read Vial EEPROM remappings or evaluate arbitrary firmware macros.
 ## Boundaries and hardware checklist
 
 The keyboard stays connected to the Mac: remote mode forwards to Windows, and
-local mode leaves native Mac input in place. This does not add Windows-connected
-keyboard control of a Mac. Shortcuts and characters follow the receiving OS's
+local mode leaves native Mac input in place. Keys always travel as Bluetooth HID
+reports, also when pointer motion and clicks use the local-network stream. This
+does not add Windows-connected keyboard control of a Mac. Shortcuts and characters follow the receiving OS's
 layout; matching US layouts produce the symbols printed in these QMK layouts.
 The configured DeusKVM toggle shortcut is intentionally consumed locally.
 
@@ -67,10 +68,12 @@ modifiers. More than six produces ErrorRollOver until enough keys are released.
 Extended keyboard usages through `0xDD` retain the raw fallback, but Windows may
 not assign them an action. This audit does not promise support for arbitrary
 vendor controls or every Consumer-page usage. Input Monitoring/Accessibility
-must be granted, and Secure Input can prevent capture.
+must be granted, and Secure Input can prevent capture. Since 2026-11-01 the tap
+re-reads held keys from macOS when Secure Input ends, on screen unlock and on tap
+re-enable, so a release hidden by the lock screen no longer blocks switching.
 
-Pending physical validation after opening the updated Mac app (no companion
-update or Bluetooth re-pair needed):
+Pending physical validation of the 2026-10-26 keyboard changes (Mac app only;
+no companion update or Bluetooth re-pair needed):
 
 - [ ] In Windows and again after returning to Mac, type every lower-layer symbol,
       especially alternating pipe/backslash, rapid taps, and held repeat.

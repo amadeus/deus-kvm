@@ -9,6 +9,11 @@ packaged for Windows x64. It uses Windows' runtime and compiles the existing
 Bluetooth, service, tray and clipboard implementation. Local regression tests
 pass; actual Framework/Windows hardware execution remains pending. See the
 implementation checkpoint at the end and `WINDOWS_FRAMEWORK_CHECKPOINT.md`.
+(Superseded 2026-11-11: the user confirmed the Framework build on 2026-09-23 and
+it has been the only companion since, shipped as a single EXE per
+`WINDOWS_SINGLE_EXE_PLAN.md`; the 2026-11-11 EXE is 942,592 bytes with a
+1,942,773-byte, 14-file runtime payload. Windows CI runs both test targets and
+the EXE lifecycle. Unchecked items below are not individually recorded.)
 The investigation below preserves the earlier measurements and decision history.
 
 ## Completed investigation
@@ -193,6 +198,7 @@ Native C++/WinRT stays the fallback if critical Framework runtime paths fail.
   the previous Windows ZIP in `releases/Previous/`, and include `START_HERE.md`.
 - [ ] **5 — User hardware checkpoint:** wait for setup/testing of both Macs;
   verify 2 GB file behavior, ownership, edge return, CPU and pointer responsiveness.
+  (2026-09-23: user confirmed basic functionality; these items were not enumerated.)
 - [x] **6 — Build pipeline:** normal publish, README and Windows CI target the new
   Framework build. The old release stays available as a fallback during testing.
 - [ ] **6 — Accept as validated replacement:** await Windows tests before removing
@@ -316,7 +322,8 @@ tests passed in run 36223316374, confirming that timeout was intermittent.
 - [x] Full SwiftFormat and strict SwiftLint checks pass; all 95 macOS tests pass.
 - [x] .NET 10 tests: 172 passed, two Windows-only CNG tests skipped on macOS.
 - [x] Framework 4.8 test assembly builds with zero warnings/errors.
-- [ ] Run the revised Framework tests on Windows CI; local compilation does not
+- [x] Run the revised Framework tests on Windows CI; local compilation does not
   establish Framework runtime success. Existing hardware checkpoints remain pending.
+  (2026-11-11: CI run 42986284527 passed 227 net48 and 225 net10.0 tests on Windows.)
 
 Production clipboard and cancellation code is unchanged.

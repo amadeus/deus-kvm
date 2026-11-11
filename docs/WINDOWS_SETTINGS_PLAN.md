@@ -1,5 +1,8 @@
 # Windows settings sizing
 
+Status (2026-11-11): implemented and shipped in every later companion build. The
+125% main-window check is user-confirmed; the other Windows checks below remain open.
+
 Target: the companion settings window should respect Windows display scaling
 (the user's screen is at about 125%), use compact native spacing, and size itself
 to its contents without a user-resizable border.
@@ -60,7 +63,8 @@ References:
 
 `releases/DeusKVM-Companion-win-x64-2026-09-25.exe` is 910,336 bytes.
 SHA-256: `e94d404521d56b9db935abf706bdd57cee5f0b4fabbad64974e2693632c91de7`.
-The prior EXE is retained under `releases/Previous/`.
+The prior EXE is retained under `releases/Previous/` (this one has since moved
+there too, superseded by later builds).
 
 Validation: companion and launcher cross-builds have zero warnings/errors;
 package verification passes for the x64 launcher and all 14 extracted runtime

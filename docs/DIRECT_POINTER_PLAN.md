@@ -5,6 +5,16 @@
 > mode are removed. The material below is historical; its builds and test
 > instructions are superseded by AUTOMATIC_MAC_CHECKPOINT.md.
 
+> **Status — 2026-11-11:** Nothing from this prototype ships: there is no
+> direct/absolute pointer mode, pointer speed slider, or `ENTER_DIRECT`/`POINTER`
+> message. `DirectInputEvent` and `DirectInputController` in current code are the
+> ordinary captured-input path (it predates this plan), not this mode. Since
+> 2026-11-08, pointer motion and clicks instead travel over a local-network pointer
+> stream and are injected on Windows as relative `SendInput` steps (by default
+> through the companion's SYSTEM worker, which also reaches elevated windows and
+> the secure desktop), with the Bluetooth HID mouse as the fallback; scrolling and
+> keys stay on Bluetooth. See the [README](../README.md).
+
 Approved: try option 2 from POINTER_FEEL_RESEARCH.md. Preserve the existing HID
 mode and all global Windows mouse settings. macOS packages remain arm64-only.
 

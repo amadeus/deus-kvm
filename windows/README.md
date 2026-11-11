@@ -1,8 +1,9 @@
 # DeusKVM Windows companion
 
 The service owns Bluetooth recovery, switching and plain-text clipboard
-coordination. It launches the desktop worker; the optional tray configures the
-service. Closing the tray leaves switching and clipboard sharing running.
+coordination. It launches the desktop worker and a SYSTEM secure-input worker
+that injects the network pointer; the optional tray configures the service.
+Closing the tray leaves switching and clipboard sharing running.
 
 Windows owns the control decision. The first connected, enabled DeusKVM Mac
 becomes active. A later Mac is automatically disabled. Clicking **Enable DeusKVM**
@@ -17,37 +18,45 @@ acknowledged takeover protocol still require an update.
 
 1. Keep both existing Mac pairings. Leave DeusKVM enabled on the Mac you want
    to use first; **Enable control** for this PC on each Mac.
-2. Download and open the single **DeusKVM Companion EXE**. It unpacks and
-   launches setup automatically; no ZIP extraction or adjacent files are needed.
-   Approve the Windows
-   administrator prompt to install or update. No scripts or .NET installation
-   are needed. Existing service startup/running preferences are preserved.
+2. Extract **DeusKVM-Companion-win-x64.zip** and open the
+   **DeusKVM-Companion-win-x64-*date*.exe** inside it (or open a downloaded EXE
+   directly). It unpacks and launches setup automatically; no adjacent files are
+   needed. Approve the Windows administrator prompt to install or update. No
+   scripts or .NET installation are needed. Existing service startup/running
+   preferences are preserved.
 3. Already-paired Macs are discovered automatically; there is no selection step.
    The window shows **Active: …** and **Disabled or not allowed: …** after service verification.
    For a new pairing, open **System Settings → Bluetooth** on the Mac, choose
    **Add Mac…** in the companion and approve the pairing prompts. Use **Show all
    devices** if its Bluetooth category is missing. Adding another Mac does not
    replace a connected active Mac.
-4. On each Mac, choose the Mac exit edge and Windows display in **Layout**.
-   The active Mac reports **Windows edge return ready**; Windows uses the edge
-   opposite that Mac's edge. Disabled Macs cannot enter remote control or share
-   clipboard data. Layout reports local permission/capture blockers as well as
-   ownership state; a handshake alone is not reported as ready.
+4. On each Mac, choose the Mac exit edge and Windows display in **Configuration**.
+   The active Mac's **Setup → Devices** reports **Windows edge return ready**;
+   Windows uses the edge opposite that Mac's edge. Disabled Macs cannot enter
+   remote control or share clipboard data. The Mac reports local permission/capture
+   blockers as well as ownership state; a handshake alone is not reported as ready.
 5. Click **Enable DeusKVM** on the other Mac to take control. The previous Mac
    becomes disabled. Disabling the active Mac alone leaves Windows idle if all
    other Macs are disabled. Returning the pointer locally does not relinquish
    ownership. A stalled handoff waits for release acknowledgement or an actual
    Bluetooth disconnect; a heartbeat timeout alone cannot grant overlapping control.
 
-6. **Network pointer.** When the Mac's "Send pointer motion to Windows over the local
-   network" setting is on (the default) and both machines share a private network, the
-   desktop worker connects to a listener on the Mac, the same way file paste does, and
-   receives the trackpad's pointer motion and clicks at the pad's own rate; they are
-   injected as mouse input, so the Windows Mouse settings apply and Windows edge return
-   works from them. Scrolling uses the normal mouse wheel. The Settings window's status
-   line shows "Network pointer: up" while the stream runs; without it the pointer falls
-   back to Bluetooth. A UAC prompt or the lock screen keeps the fast pointer through the
-   SYSTEM secure-input helper, or Bluetooth if that helper cannot run.
+6. **Network pointer.** When the Mac's **Setup → Advanced → Send pointer motion to
+   Windows over the local network** setting is on (the default) and both machines share
+   a private network, the desktop worker connects to a listener on the Mac, the same way
+   file paste does, and receives the trackpad's pointer motion and clicks at the pad's
+   own rate. By default every step is handed to the SYSTEM secure-input worker, which
+   injects it as mouse input on whichever desktop has input, so the pointer also works
+   on UAC prompts, the lock screen and over elevated (administrator) windows. The desktop
+   worker injects directly only while that worker is unavailable; where it cannot inject
+   either, the Mac switches to the Bluetooth mouse. The Windows Mouse settings apply.
+   Keyboard and scrolling stay on Bluetooth. Windows edge return requests ride the
+   stream's acknowledgements; Bluetooth carries them while the stream is down, or if the
+   Mac has not taken the pointer back within 150 ms (at most once per 100 ms). The
+   settings window's Bluetooth status adds a "Network pointer: up" line while the stream
+   runs; without it the pointer falls back to Bluetooth. The SYSTEM-worker relay on a
+   UAC prompt and the elevated-window fix were confirmed on hardware on 2026-11-11;
+   network edge return and the Bluetooth leave throttling still need hardware validation.
 
 If both Macs are connected before the service starts, it prefers the last active
 enabled Mac, then stable endpoint-ID order. Disabled Macs stay disabled. Windows
@@ -69,7 +78,7 @@ out still needs testing. The worker is isolated so a stalled Bluetooth API can
 be terminated by the service.
 
 Windows may display its normal unsigned-app reputation prompt for this personal
-build. The archive is built from this repository; no installer downloads or
+build. The EXE is built from this repository; no installer downloads or
 third-party servers are used at runtime.
 
 ## Package size
@@ -82,8 +91,11 @@ a private temporary directory, runs the existing setup flow, then cleans up.
 Installed dependencies stay under Program Files. Installation verifies the
 complete payload and rolls back replaced files if the update fails.
 
-The user confirmed the small Framework app works. The new single-EXE launcher
-still needs its Windows setup/handoff check; see
+The 2026-11-11 EXE is 942,592 bytes; its 14 installed runtime files total
+1,942,773 bytes. The user confirmed both the small Framework app and the
+single-EXE launcher work (2026-09-23); Windows CI exercises the EXE's install,
+update, reopen, temporary cleanup and removal. Declining the UAC prompt and
+downgrade remain unchecked on hardware; see
 [the launcher plan](../docs/WINDOWS_SINGLE_EXE_PLAN.md). Earlier size measurements
 are recorded in [the size plan](../docs/WINDOWS_SIZE_PLAN.md).
 
@@ -144,7 +156,7 @@ remains available when an application confines the PC cursor.
 ## Login handoff checkpoint
 
 With the updated companion and Mac app, reboot Windows, cross from the Mac at
-the login screen and sign in. Once **Layout → Windows** on the Mac reports
+the login screen and sign in. Once **Setup → Devices** on the Mac reports
 **Windows edge return ready**, move back through the Windows edge. The current
 handoff should continue without a hotkey round trip or another entry, and the
 cursor should stay where you left it when the desktop worker becomes ready.
@@ -164,7 +176,8 @@ report that status; do not remove the pairing as a first troubleshooting step.
 ## Text clipboard checkpoint
 
 1. Open the downloaded EXE to update Windows. Quit and reopen the newly
-   built Mac app. Keep **Settings → Share clipboard with Windows** enabled.
+   built Mac app. Keep **Configuration → Input settings → Share clipboard with
+   Windows** enabled.
 2. Copy text on the Mac, cross to Windows and paste. Copy different text on
    Windows, return to the Mac and paste. Repeat a few times with Unicode,
    multiple lines and a 20 KB block. Large BLE transfers can take longer.
@@ -175,8 +188,8 @@ report that status; do not remove the pairing as a first troubleshooting step.
    Turn it on, make a fresh copy and repeat. Lock/unlock and reconnect, then
    repeat with fresh text; clipboard sharing must stay off on the login screen.
 
-Text sharing carries plain text, without images or rich formatting. File transfer
-is described below. Known private
+Text sharing carries plain text, without rich formatting. Screenshot images
+cross separately over the local network; file transfer is described below. Known private
 clipboard markers are respected, but unmarked password text is indistinguishable
 from ordinary text. Test privacy with disposable text, not real credentials.
 Full behavior, limits and development checks are in [docs/CLIPBOARD.md](../docs/CLIPBOARD.md).
@@ -204,11 +217,11 @@ The configured hotkey and **Switch to PC** button center the Windows pointer on
 the selected display. Edge crossings retain proportional placement. Both builds
 are required; existing pairings and the HID descriptor are unchanged.
 
-Mac Settings and its menu now share **Disable DeusKVM / Enable DeusKVM**.
+The Mac's **Configuration** tab and menu bar share **Disable DeusKVM / Enable DeusKVM**.
 Disabling restores local control, stops advertising/input capture/clipboard
 sharing, and changes the menu icon to a pause symbol. This state survives app
-restart. Enable to request control using the saved pairing. Mac Settings also offers
-an opt-in **Launch DeusKVM at login** control.
+restart. Enable to request control using the saved pairing. **Setup → Startup**
+on the Mac also offers an opt-in **Launch DeusKVM at login** control.
 
 For the complete test sequence, see `docs/POLISH.md` in the repository. Test
 removal last because it deletes the installed app and its settings.
@@ -224,8 +237,10 @@ dotnet test windows/DeusKVM.Companion.Tests -c Release -f net10.0
 ```
 
 This Framework build currently targets `win-x64`. `DEUSKVM_DOTNET` can point at an isolated
-SDK. On Windows, run the same test command with `-f net48` as well. The single
-EXE is written to the visible `releases/` folder at the repository root.
+SDK. On Windows, run the same test command with `-f net48` as well (Windows CI
+runs both targets). The single EXE is written to the visible `releases/` folder
+at the repository root as `DeusKVM-Companion-win-x64-<date>.exe`; the
+repository-root `DeusKVM-Companion-win-x64.zip` carries the current one.
 Core tests run on macOS; service,
 WinRT, desktop workers, Raw Input and tray execution must be verified on Windows.
 

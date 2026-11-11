@@ -1,5 +1,9 @@
 # Network-only, bidirectional file paste
 
+> Status (2026-11-11): shipped and current; transport follow-ups are recorded at
+> the end. The release table below lists the original 2026-09-22 builds, since
+> superseded. The hardware item remains open.
+
 User authorized: retain text and metadata/authentication over paired encrypted
 Bluetooth; send file contents only over LAN, cap one regular file at **2 GB
 (2,000,000,000 bytes)**, and add Windows → Mac on-demand file paste. No contents
@@ -87,3 +91,28 @@ Wait for user setup and the hardware checkpoint. In particular, do not describe
 Finder keyboard interception/Automation or Windows Explorer source capture as
 hardware-validated based on the socket tests or commit. Current instructions:
 [FILE_PASTE_CHECKPOINT.md](FILE_PASTE_CHECKPOINT.md).
+
+## Transport follow-ups — 2026-10-16 to 2026-11-10
+
+Protocol, limits, authentication and destination handling above are unchanged.
+
+- `9e07575` (2026-10-16): pipelined block requests in both directions and removed
+  per-block LINQ copies on Windows.
+- `2d94094` (2026-11-08): the Mac offers wired interface addresses before Wi-Fi
+  (still at most four private/link-local IPv4 addresses).
+- `ab7d385`, `e61abc9` (2026-11-09): the Windows receiver acknowledges every segment
+  instead of waiting on delayed ACK; the Mac stopped waiting on each send's
+  completion and Windows read-ahead rose to 16 blocks.
+- `fc43004`, `bb57c9d` (2026-11-10): Mac → Windows pastes still ran at a few MB/s.
+  Both directions moved to blocking sockets on dedicated threads with 4 MiB socket
+  buffers and 16 requests in flight: BSD sockets on the Mac (`FileNetworkServer`,
+  `FileNetworkReceiver`, shared `LocalSocket`), synchronous .NET sockets on Windows
+  (`NetworkFileReader`, `NetworkFileSender`). Each transfer logs counts and timings.
+  Local runs per those commits: 218 unit tests; 2 GB PC → Mac in 2.7 s and Mac → PC
+  in 2.3 s on one machine (not hardware/LAN measurements). On hardware, the user
+  confirmed on 2026-11-10 that pastes are fast in both directions.
+
+Current packages are `DeusKVM-mac-arm64.zip` and `DeusKVM-Companion-win-x64.zip`
+(a local build writes `releases/DeusKVM-mac-arm64.zip` and
+`releases/DeusKVM-Companion-win-x64-<date>.exe`). The hardware checklist above is
+not marked passed by these changes.

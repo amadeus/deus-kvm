@@ -72,7 +72,8 @@ something still needs setting up.
   and scrolling always use Bluetooth. Turn this off with **Setup → Advanced →
   Send pointer motion to Windows over the local network** (on by default);
   with **Developer Mode** on, **Setup → Diagnostics** shows the network pointer's state.
-- Vertical and horizontal scrolling can be inverted independently in **Configuration → Input settings**.
+- **Configuration → Input settings** sets the **Scroll speed** on Windows and
+  inverts vertical and horizontal scrolling independently.
 - **Disable DeusKVM** in **Configuration** or the menu bar restores local input and
   stops advertising, input capture, and clipboard exchange. Enabling reuses
   saved devices. The menu bar icon shows the connection state (searching,

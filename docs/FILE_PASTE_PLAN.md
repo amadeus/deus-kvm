@@ -1,5 +1,11 @@
 # On-demand file paste prototype
 
+> Status (2026-11-11): historical record of the first Bluetooth prototype. Its
+> 10 MiB Bluetooth file transport was replaced on 2026-09-22 by network-only file
+> contents, one regular file up to 2 GB in both directions; see
+> [CLIPBOARD.md](CLIPBOARD.md#on-demand-file-paste) for current behavior. Open
+> items below are kept as recorded.
+
 - [x] Design: Mac to Windows, one regular file at a time, at most 10 MiB. Copy advertises metadata only. Native Explorer paste requests contents over existing paired Bluetooth control/bulk channels. No source deletion, staging download, folders, or network listener.
 - [x] Implement metadata snapshots and bounded, deferred Mac file reads; invalidate on clipboard changes, disable, ownership loss, lock, or disconnect.
 - [x] Implement Windows OLE virtual file clipboard, asynchronous paste and on-demand stream reads. Fetch only when the native file stream is read (optional async callbacks are not authorization); suppress clipboard history/cloud formats.

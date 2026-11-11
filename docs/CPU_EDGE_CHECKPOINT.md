@@ -1,5 +1,14 @@
 # CPU and edge-return checkpoint — 2026-09-23
 
+> **Status — 2026-11-11:** The ZIPs named below are superseded; install the
+> current `DeusKVM-mac-arm64.zip` and `DeusKVM-Companion-win-x64.zip` as described
+> in the [README](../README.md). The hardware checks below have no recorded
+> individual results. Edge return has changed since: Windows confirms each return
+> against the live monitor layout (2026-11-01), and with the network pointer the request rides
+> the local-network stream with Bluetooth as the fallback (2026-11-10). If return
+> sticks, choose **Report Problem Now** in the Mac menu bar before restarting
+> either app; `edge-return.log` is still written to the same folder.
+
 Use the two current ZIPs in the visible `releases/` folder:
 
 - `DeusKVM-mac-arm64-handoff-clipboard-2026-09-23.zip`

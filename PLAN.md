@@ -1,5 +1,140 @@
 # DeusKVM: implementation plan
 
+### Network pointer and SYSTEM relay — 2026-11-08 to 2026-11-11
+
+Bluetooth delivers pointer motion unevenly (macOS keeps the LE connection
+interval at 15 ms), so pointer motion and clicks now prefer the local network.
+Keyboard, scrolling and the companion's control and text clipboard channel stay
+on Bluetooth, which remains enough to control the PC.
+
+- **Mac:** `InputNetworkServer` listens like the file server (a BSD socket on a
+  dedicated thread since 2026-11-08; Network.framework before) and
+  `NetworkPointer` offers hosts, port and key over the companion link
+  (`inputOffer` 0x32, only to a companion whose HELLO has `inputNetwork: 1`).
+  Records are AES-GCM sealed under an `input` key purpose with sequence and
+  capture time. `PointerRouter` sends motion and clicks over the stream while it
+  is up and to the Bluetooth mouse otherwise, per event; every release follows
+  its press. Motion coalesces only while the oldest unacknowledged record is
+  older than 40 ms (256-record cap); buttons never wait. Setting: **Setup →
+  Advanced → Send pointer motion to Windows over the local network**
+  (`DeusKVM.networkPointer`, on by default); with Developer Mode on, **Setup →
+  Diagnostics → Network pointer** shows the stream state.
+- **Addresses:** the Mac offers wired interfaces before Wi-Fi. On this setup the
+  PC had been connecting to the Mac's Wi-Fi address (~3.7 ms round trip,
+  jittery) while Thunderbolt Ethernet on the same subnet pings at ~0.6 ms. File
+  paste uses the same ordering.
+- **PC:** `NetworkInputClient` in the desktop worker connects out (no firewall
+  rule) on an above-normal-priority thread with blocking sockets, acknowledges
+  each read before injecting, and runs the edge test over the injected motion.
+  Ack flag bit 0 means the PC cannot inject right now; the Mac then routes the
+  pointer over Bluetooth until it clears.
+- **SYSTEM relay:** the service starts `--secure-worker` as SYSTEM in the
+  console session (`SecureInputProcess.cs`, `SecureInputWorker.cs`). It only
+  injects, following the input desktop (`OpenInputDesktop`/`SetThreadDesktop`)
+  from an MTA thread, because an STA thread owns COM's hidden window and cannot
+  switch desktops. Since 2026-11-10 every network pointer step goes desktop
+  worker → pointer pipe (`PointerPipe.cs`, blocking I/O, same DACL and PID
+  checks as the desktop pipe) → service → SYSTEM-only pipe → worker, so UAC
+  prompts, the lock screen and elevated windows need no hand-off. Behind an
+  elevated foreground window UIPI silently drops the desktop worker's own
+  injection while `SendInput` reports success (`ForegroundIntegrity.cs` detects
+  it). The desktop worker injects directly only while the relay is disconnected,
+  stuck (a write unfinished for 250 ms) or failing for longer than 250 ms; where
+  it cannot inject either, the Mac is sent to Bluetooth. A zero-motion probe
+  every 100 ms lets a recovered worker take over; records that arrive during a
+  desktop switch are held up to 300 ms and replayed. Failures repeat every
+  100 ms with the failing call and Win32 error. `edge-return.log` gets
+  `pointer relay 10s:` (total, transit and SendInput percentiles, failures,
+  replays, longest outage, desktop switches), `pointer direct 10s:`, and one
+  line per secure-desktop or `elevated window:` episode.
+- **Edge return over the network (2026-11-10):** LEAVE rides the stream's ack
+  flags (bit 1 request, bits 2–3 edge, 8–15 switch id, 16–31 fraction),
+  refreshed by each outward step at the edge and carried for 300 ms. The Mac
+  applies the same checks as a Bluetooth LEAVE; whichever arrives first
+  returns, and the return line in `diagnostics.log` names the path
+  (`Windows edge via network`). Bluetooth LEAVE is sent only while the stream
+  is down or once the Mac has not taken the pointer back within 150 ms, at most
+  once per 100 ms per handoff, and the service queues no new LEAVE while one is
+  still waiting to be written. The throttle followed an ~8 s stuck return:
+  ~50 leave requests/s queued behind a 905 ms Bluetooth round trip.
+- Validation: Mac lint, build and 161 tests (2026-11-10); companion builds for
+  net48 and 223 tests pass; ack flag layout tested with the same bytes on both
+  sides. The network pointer ran on hardware during development (the round-trip
+  and address measurements above). Earlier relay builds on hardware froze the
+  pointer for about a second on a UAC prompt, then lost it there until the MTA
+  fix.
+- **Hardware validated (2026-11-11):** the SYSTEM-worker relay on a UAC
+  prompt, with no Bluetooth fallback and 0 failures; relay total p50
+  ~260–305 µs, transit p50 ~45–60 µs, SendInput p50 ~210–240 µs. The user
+  confirmed the pointer works over an elevated (admin) window.
+- **Pending (hardware):** edge returns logged `via network` on the Mac; repeated
+  returns without a leave backlog, including under a slow Bluetooth link. The
+  lock screen through the relay is not separately recorded.
+
+### Launch, menu bar status and pinned lint tools — 2026-11-10 to 2026-11-11
+
+- **Launch:** the controls window opens at launch only while a permission is
+  missing (Bluetooth, Accessibility, Input Monitoring) or no PC has Enable
+  control. On macOS 15+ it is suppressed and not restored, and the menu bar icon
+  opens it once when setup is needed; on macOS 13–14 the app delegate closes the
+  window SwiftUI opens. **Open controls…** in the menu bar is unchanged.
+- **Menu bar status:** each companion status is a `StatusText` with a label of
+  at most three words for the menu (**Edge return ready**, **Hotkey return
+  only**, **Companion offline**, **Needs Input Monitoring**, …) and the full
+  sentence for the controls window, device popover, errors and problem reports.
+- **Lint:** `ci_scripts/lint-tools.env` pins SwiftFormat and SwiftLint versions
+  with checksums; `ci_scripts/install-lint-tools.sh` installs them into
+  `.build/tools`, and both `./build.sh` and CI use them instead of Homebrew. This
+  followed CI's newer SwiftFormat rejecting code that passed locally.
+- Validation: Mac lint, build and 161 tests (launch decision and every label
+  covered); release arm64 only.
+- **Pending (hardware):** launch with everything set up opens no window; launch
+  with a missing permission or no enabled PC opens it once; menu labels read
+  correctly.
+
+### File paste on blocking sockets — 2026-11-09 to 2026-11-10
+
+Mac → PC paste ran at a few MB/s on a link that carries 112 MB/s with plain
+sockets. Fixed in steps: the Windows receiver ACKs every segment
+(`SIO_TCP_SET_ACK_FREQUENCY`, removing a 200 ms delayed-ACK stall per 256 KiB
+block); the Mac streams blocks without waiting on each send's completion and
+Windows keeps 16 requests in flight (was 2). Then both directions moved off
+Network.framework and the .NET Framework async socket path: the Mac's
+`FileNetworkServer` and `FileNetworkReceiver` use BSD sockets on dedicated
+threads (shared `LocalSocket`, 4 MiB buffers, 16 requests in flight), and the
+PC's `NetworkFileReader` and `NetworkFileSender` use blocking socket I/O. Each
+Mac transfer writes a throughput line to `diagnostics.log`; Windows
+`file-paste.log` reports MB/s and socket-wait vs decrypt time.
+
+- Validation: 218 unit tests; end-to-end Swift ↔ C# suites (wrong key,
+  multi-block, seek, changed source, revocation, cancellation, both directions);
+  local 2 GB transfers in 2.7 s (PC → Mac) and 2.3 s (Mac → PC).
+- **Hardware (2026-11-10):** the user confirmed pastes are fast in both directions on the real link (Mac Studio ↔ PC over 1 GbE).
+
+### Precision touchpad experiment (removed) — 2026-11-05 to 2026-11-08
+
+Behind a developer setting, the Mac advertised a Windows Precision Touchpad
+collection and streamed Magic Trackpad contacts (private MultitouchSupport
+framework) so Windows would drive pointer, scrolling and gestures itself. The
+first descriptor (734 bytes) broke fresh pairings because it exceeded
+Bluetooth's 512-byte attribute limit; hybrid reporting brought it to 504. The
+companion gained a "Mac trackpad" settings group; registry values applied only
+after a restart (hardware, 2026-11-06), so it switched to
+`SPI_SETTOUCHPADPARAMETERS` on Windows 11 24H2+. The network pointer above grew
+out of this work.
+
+- **Removed 2026-11-08 from both apps:** two-finger scrolling over Bluetooth
+  contacts felt juddery and the experiment was no longer wanted. The report map
+  is back to keyboard, mouse, system and consumer; the touchpad router became
+  `PointerRouter`; the `precisionTouchpad` setting and the Windows "Mac
+  trackpad" group are gone. `scripts/mtprobe.c` remains as a research reference.
+- Scrolling is the Bluetooth mouse wheel. **Configuration → Input settings**
+  gained **Scroll speed** (0.25×–3×, default 1×) via a fractional
+  `ScrollAccumulator`; no hardware result is recorded for it. Trackpad gestures
+  stay blocked on the Mac while remote, and the swipe mapping stays removed
+  (2026-11-01 entry below, item 5).
+- Validation at removal: Mac 152 tests and Windows 220 tests pass.
+
 ### Reliability investigation and lag diagnostics — 2026-11-01
 
 User-reported intermittent issues, root-caused from source and this Mac's logs:
@@ -34,7 +169,9 @@ User-reported intermittent issues, root-caused from source and this Mac's logs:
    request; `.low` latency changes nothing) and shares the radio with a
    Bluetooth trackpad. Unified-log retention (~12 h) held no past incident, so
    diagnostics were added first (below). Adaptive motion pacing is optional
-   polish, not the fix.
+   polish, not the fix. Follow-up (2026-11-08): pointer motion and clicks now
+   prefer the local network (network pointer entry above); keyboard and
+   scrolling still use this Bluetooth link.
 4. **Return to the Mac partway across the PC screen.** Candidates: Windows edge
    test using `Screen.AllScreens` cached during monitor sleep/wake (≈50% if a
    fallback mode, ≈80% if scaled vs physical at 125%), or Mac-side returns
@@ -219,6 +356,14 @@ xcodebuild ... test                                           # once DeusKVMTest
 open .build/DerivedData/Build/Products/Debug/DeusKVM.app     # for manual checkpoints
 ```
 
+**Update (2026-11-11):** work now lands on `main`, and commit subjects are
+sentence-case imperatives (`Remove the precision touchpad feature from both
+apps`). `./build.sh` lints with the SwiftFormat and SwiftLint versions pinned in
+`ci_scripts/lint-tools.env`, installed by `ci_scripts/install-lint-tools.sh`
+into `.build/tools`, the same tools CI uses; Homebrew copies are not used for
+the gate. Shared protocol fixtures live in `protocol/fixtures.json` and
+`protocol/file-network-fixtures.json`, not `docs/protocol-vectors.json`.
+
 **Signing.** Set `DEVELOPMENT_TEAM: UHD99KF9X7` and `CODE_SIGN_STYLE:
 Automatic` in `project.yml` (identity "Apple Development: Amadeus Demarzi" is
 already in the login keychain). Do **not** pass `CODE_SIGNING_ALLOWED=NO` for
@@ -247,6 +392,10 @@ parking point = center of the configured display. Keep them in
 ---
 
 ## 1. What the app is today (verified by reading the code)
+
+This table is the 2026-09-13 baseline before M0; the progress entries record
+what changed since (Classic and iOS removed, horizontal scrolling, keyboard map
+completed, ordered notification queue, tests and clean lint).
 
 | Piece                     | Where                                                       | What matters for us                                                                                                                                                                                                                                                                                                                     |
 | ------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -431,6 +580,10 @@ parking point = center of the configured display. Keep them in
   menu opens the `Settings` scene (both macOS 13+), optional
   `SMAppService.mainApp.register()` behind an explicit toggle. New
   `LayoutSettingsView` pane.
+- `NetworkPointer` / `InputNetworkServer` (added 2026-11-08): the local-network
+  pointer stream. Pointer motion and clicks prefer it over the Bluetooth mouse,
+  and Windows edge-return requests ride its acknowledgements; see the network
+  pointer entry at the top of this file.
 
 **Windows companion (`windows/` in the same repo, C# .NET, installed service
 plus desktop worker and optional WinForms tray UI)**
@@ -491,6 +644,12 @@ and pre-boot disk-unlock screens are outside the Windows service's lifetime.
   or a secure desktop. Suspend sync while locked/logged out and clear queued
   clipboard payloads on session changes. Keep user clipboard data out of the
   machine-wide service configuration and isolate different users' sessions.
+- Secure-input worker (added 2026-11-08; default pointer path since
+  2026-11-10): an injection-only `--secure-worker` process the service starts
+  as SYSTEM in the console session. It injects every network pointer step on
+  whichever desktop receives input, including UAC prompts, the lock screen and
+  behind elevated windows, reached only through a SYSTEM-only pipe from the
+  service.
 - Package the service, worker and UI as one EXE. Opening it installs or updates
   when needed and opens the settings window, with Start/Stop/Automatic controls
   in both the window and tray. No setup scripts are needed. Updates preserve
@@ -524,6 +683,14 @@ Mac remote: companion sees the Mac's raw deltas pushing into the configured PC e
       the edge; associate(true); drop the next delta; un-conceal; mode := local (tap passes through)
 Companion heartbeat STATE{blind, desktop, macMousePresent} every 3 s; menu bar shows blind state
 ```
+
+**Update (2026-11-10):** while the local-network pointer stream is up, remote
+pointer motion and clicks go over it rather than the HID mouse (keys and scroll
+stay HID), and LEAVE rides the stream's acknowledgements; the Bluetooth LEAVE is
+the fallback while the stream is down or after 150 ms, at most once per 100 ms.
+Both paths pass the same Mac checks and the first to arrive returns. STATE is
+sent on change plus a 30 s refresh (2026-11-01, item 4b); liveness comes from
+any companion message, including PONG replies to the Mac's 2 s PING.
 
 **Handoff rules.**
 
@@ -607,8 +774,10 @@ control frames and both HELLOs stay 20 bytes (docs/PERFORMANCE_AUDIT.md).
 **Source of truth.** `DeusKVM/Companion/CompanionProtocol.swift` (pure Swift,
 no AppKit, unit-tested) defines every constant, enum and encoder below.
 `windows/DeusKVM.Companion.Core/Protocol.cs` mirrors it by hand. Both test
-suites decode the same golden vectors in `docs/protocol-vectors.json`
-(hex-encoded frames with their decoded meaning); a change to one side that
+suites decode the same golden vectors in `protocol/fixtures.json` (planned as
+`docs/protocol-vectors.json`; hex-encoded frames with their decoded meaning,
+plus `protocol/file-network-fixtures.json` for the LAN records); a change to
+one side that
 breaks the vectors fails the other side's tests. All integers little-endian.
 Protocol version `1`; either side rejects a HELLO with a different major.
 
@@ -665,6 +834,15 @@ After HELLO each side uses `min(own chunk, peer chunk)`.
 | `0x23` | CLIP_STATE  | both      | `epoch u32, enabled u8`; PC offers availability, Mac acknowledges its preference |
 | `0x7E` | ACK         | both      | `stream u8, seq u8` (only in reply to ACK_REQ; unused in v1)                             |
 | `0x7F` | NACK        | both      | `stream u8, expectedSeq u8` (drop partial, resend from FIRST)                            |
+
+Later additions, defined only in `CompanionProtocol.swift` / `Protocol.cs`:
+`0x18` AVAILABILITY and `0x19` SELECTION, `0x1A` REQUEST_CONTROL and `0x1B`
+RELEASE_ACK (automatic Mac selection), `0x24`–`0x27` FILE_OFFER / FILE_GET /
+FILE_DATA / FILE_ACCEPT (file and image clipboard), `0x30` REPORT_REQUEST and
+`0x31` REPORT (problem report, HELLO `report: 1`), and `0x32` INPUT_OFFER (the
+network pointer listener, companion HELLO `inputNetwork: 1`). STATE is no
+longer sent every 3 s (see §3.2). The network pointer's own records and
+acknowledgement flags are documented in `DeusKVM/NetworkInput.swift`.
 
 **Enumerations and scales.**
 
@@ -763,6 +941,13 @@ today.
   macOS 15+); Windows only connects out (no firewall prompt); TLS 1.3 with the
   offered fingerprint pinned plus an HMAC hello. Formats: text, HTML (CF_HTML ↔
   public.html), RTF, PNG/DIB, later file lists. BLE stays the fallback for text.
+  **As built (status 2026-11-11):** the offer carries hosts (wired before
+  Wi-Fi), port and a per-offer secret over the encrypted BLE link; records are
+  AES-256-GCM under HKDF-SHA256 directional keys, not TLS. The Mac listens on
+  BSD sockets (Network.framework until 2026-11-08 for the pointer and
+  2026-11-10 for file paste) and Windows connects out. The channel carries
+  screenshot images, one file up to 2 GB in either direction, and the pointer
+  stream. HTML and RTF are not implemented; text still uses BLE only.
 
 ### 3.5 Invariants (an implementing agent must not violate these)
 
@@ -803,7 +988,8 @@ today.
    report characteristics, so the Mac can never hand control to nothing. The
    companion is *not* required to arm (M2 works without it); it adds cursor
    placement and edge-return. Without a companion the menu bar shows "return:
-   hotkey only".
+   hotkey only" (since 2026-11-10 the short labels **Companion offline**, or
+   **Hotkey return only** when the companion is up but edge return is not).
 9. **Preserve the working HID behavior.** The HID report map, characteristics
    and their order stay byte-identical through M2. M3 adds a separate companion
    service while retaining the existing HID tree. Descriptor, encoding, mapping
@@ -826,6 +1012,9 @@ target → signing → CI. iOS first because it turns the Classic deletion in
 - Install the build tools the repo expects but this Mac lacks:
   `brew install xcodegen swiftlint swiftformat xcbeautify` (the Xcode project is
   generated from `project.yml`; `build.sh` gates on swiftformat and swiftlint).
+  Superseded 2026-11-11 for the lint tools: `build.sh` and CI download the
+  versions pinned in `ci_scripts/lint-tools.env` (§0); Homebrew still provides
+  `xcodegen` and `xcbeautify`.
 - Point the CLI at Xcode instead of the Command Line Tools:
   `sudo xcode-select -s /Applications/Xcode.app`, or prefix builds with
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
@@ -1078,9 +1267,14 @@ M3), and the way back is the toggle hotkey or an automatic release. Rule 8 in
 
 ### M6 — Later
 
-- Clipboard v2 over the hybrid LAN channel (HTML/RTF/PNG/files).
+- Clipboard v2 over the hybrid LAN channel (HTML/RTF/PNG/files). Status
+  2026-11-11: screenshot images and one file per paste are implemented (§3.4);
+  HTML and RTF are not.
 - Further elevated-desktop compatibility beyond the service/desktop-worker
   support required and validated in M3; uiAccess is a candidate only if needed.
+  Status 2026-11-11: for the pointer, the SYSTEM secure-input worker covers UAC
+  prompts, the lock screen and elevated windows (UAC and elevated windows
+  confirmed on hardware); uiAccess has not been needed.
   Pre-login and logged-out availability are M3 requirements, not deferred here.
 - Optional single-monitor "no companion" fallback with an absolute-pointer
   collection (Report ID 7). Rejected for now (§6); would cost another re-pair

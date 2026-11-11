@@ -54,7 +54,7 @@ Local verification:
   arm64. Windows packaging verified the x64 launcher, embedded archive/hash,
   and all 14 runtime files.
 
-Test builds (both must be installed):
+Test builds (both must be installed; superseded by later releases):
 
 | Artifact | SHA-256 |
 | --- | --- |
@@ -121,3 +121,17 @@ reported. The exact per-direction/app/order matrix and failure-mode checks were
 not individually confirmed, so those remain listed for broader validation. The
 Windows-only native OLE tests also still need execution on Windows. Earlier
 failure/retest notes above describe historical checkpoints before this acceptance.
+
+## Later changes — 2026-11-01 to 2026-11-10
+
+- `d3e38c4` (2026-11-01): a Finder file copy also publishes the file's icon as
+  TIFF, which the image precedence above sent as `Screenshot.png`. Image data now
+  wins over a file URL only when no file-manager icon marker (`com.apple.icns`,
+  `com.apple.finder.noderef`) is present; CleanShot PNG + URL copies still cross
+  as images.
+- `811cc99` (2026-11-01): the Windows clipboard thread wakes on clipboard change
+  notifications instead of a 200 ms poll.
+- `fc43004`, `bb57c9d` (2026-11-10): image downloads share the file transport,
+  which now uses blocking sockets on both ends; offers and limits are unchanged.
+
+The hardware items above remain open; these changes do not mark them passed.

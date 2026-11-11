@@ -1,5 +1,9 @@
 > For the automatic-selection build, start with [the two-Mac checkpoint](AUTOMATIC_MAC_CHECKPOINT.md).
-> The checks below cover earlier features; this Windows-only update needs no Mac rebuild.
+> The checks below cover earlier features. Takeover needs Windows and both Macs updated.
+>
+> Status 2026-11-11: this is the September 14 polish checkpoint. Current install
+> steps and labels are in the [README](../README.md); the Mac's Layout and Settings
+> are now the **Configuration** and **Setup** tabs.
 
 # Setup, startup, centering and disable controls
 
@@ -11,8 +15,10 @@ computer-use interaction test was performed on the user's machines.
 ## Update tonight
 
 1. On Windows, extract `releases/DeusKVM-Companion-win-x64.zip` and open
-   `DeusKVM.Companion.exe`. Approve its normal update prompt. It closes the old
-   companion and preserves pairings and service running/startup state.
+   `DeusKVM.Companion.exe` (current builds: the dated
+   `DeusKVM-Companion-win-x64-*date*.exe` inside it). Approve its normal update
+   prompt. It closes the old companion and preserves pairings and service
+   running/startup state.
    There is no separate script to run and no need to stop the service first.
 2. On the Mac, quit DeusKVM and reopen
    `.build/DerivedData/Build/Products/Debug/DeusKVM.app` from this checkout.
@@ -24,10 +30,10 @@ computer-use interaction test was performed on the user's machines.
 ### Centering
 
 Use the configured hotkey and the **Switch to PC** button/menu item. Both should
-place the pointer in the center of the display selected in Mac Layout. Try a
-non-primary Windows display if available. Ordinary edge crossings should still
-land proportionally along the entering edge. Return by edge and hotkey and
-check that typing and clipboard sharing still work.
+place the pointer in the center of the Windows display selected in Mac
+Configuration. Try a non-primary Windows display if available. Ordinary edge
+crossings should still land proportionally along the entering edge. Return by
+edge and hotkey and check that typing and clipboard sharing still work.
 
 Both builds are needed for centering. An older Windows companion keeps its
 previous placement behavior. Reattaching after login/reconnect uses the existing
@@ -35,9 +41,9 @@ RESUME behavior and does not unexpectedly warp the pointer.
 
 ### Mac enable/disable
 
-Click **Disable DeusKVM** in Mac Settings or its menu. The menu icon should
-change to a pause symbol, advertising should stop, and edge/hotkey entry should
-stop. Clipboard changes should stay local. If disabled while remote, local
+Click **Disable DeusKVM** in Mac Configuration or the menu bar. The menu icon
+should change to a pause symbol, advertising should stop, and edge/hotkey entry
+should stop. Clipboard changes should stay local. If disabled while remote, local
 Mac control is restored first.
 
 The same control becomes **Enable DeusKVM**. Re-enable, allow the Windows
@@ -54,11 +60,12 @@ The Mac menu bar icon now follows connection progress: an antenna while searchin
 two circular arrows while connecting, and the existing keyboard once an allowed
 PC has HID input subscriptions, a current companion grant, and ready Mac input capture. The ready
 keyboard still fills when controlling Windows. Disabled uses the pause icon;
-unavailable Bluetooth uses a crossed-out antenna. The menu and tooltip name the
-state. A stale companion heartbeat returns the icon to connecting, even if the
-OS still reports Bluetooth connected. Check these states during your normal
-connect/disconnect and enable/disable tests; no Windows update is needed for this
-icon change.
+unavailable Bluetooth uses a crossed-out antenna. Later builds add a clock while
+waiting for Windows control and a lock while Secure Input blocks switching. The
+menu and tooltip name the state. A stale companion heartbeat returns the icon to
+connecting, even if the OS still reports Bluetooth connected. Check these states
+during your normal connect/disconnect and enable/disable tests; no Windows update
+is needed for this icon change.
 
 ### Startup
 
@@ -76,10 +83,10 @@ that the service still works without the icon. Reopen the EXE to get Settings.
 Windows startup policies/Startup Apps controls can override automatic launch;
 Windows also decides when during login to run registered startup apps.
 
-On the Mac, **Launch DeusKVM at login** is opt-in. The toggle reads the real
-SMAppService registration; if macOS requires approval, use **Allow in Login
-Items…**. Enable and test a later login, then disable if unwanted. Disabled
-DeusKVM remains disabled even when it starts at login.
+On the Mac, **Launch DeusKVM at login** (Setup → Startup) is opt-in. The toggle
+reads the real SMAppService registration; if macOS requires approval, use
+**Allow in Login Items…**. Enable and test a later login, then disable if
+unwanted. Disabled DeusKVM remains disabled even when it starts at login.
 
 ### Pair inside the companion
 

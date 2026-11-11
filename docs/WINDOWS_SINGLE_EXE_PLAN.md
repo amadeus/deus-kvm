@@ -1,5 +1,10 @@
 # Single downloadable Windows EXE — 2026-09-23
 
+Status (2026-11-11): shipped. Every companion release since is this single EXE,
+written by `windows/publish.sh` as `releases/DeusKVM-Companion-win-x64-<date>.exe`
+(942,592 bytes on 2026-11-11); the repository root's `DeusKVM-Companion-win-x64.zip`
+carries the current one. The record below is unchanged apart from dated notes.
+
 The user confirmed the small Framework build works and requested the previous
 one-EXE download/open experience, retaining the smaller size.
 
@@ -30,8 +35,9 @@ confirmed both the preceding Framework app and this single-EXE build work on the
   record the final size and retain the confirmed Framework ZIP as fallback.
 - [ ] Windows: verify launcher from a folder containing only this EXE, update
   the existing installation, reopen it, decline a UAC update, and check temp cleanup.
-- [ ] Windows CI: exercise fresh install/update/reopen/removal using the launcher,
+- [x] Windows CI: exercise fresh install/update/reopen/removal using the launcher,
   verifying the installed payload and ACLs against separate expected build output.
+  (2026-11-11: CI run 42986284527 passed this, including temporary cleanup.)
 - [x] User checkpoint: user reports the single-EXE build works well on their
   Windows setup. Individual switching/paste and lifecycle cases were not enumerated.
 
@@ -81,7 +87,8 @@ published files. The delivered EXE matches that verified output byte-for-byte.
 Shell syntax and diff whitespace checks pass. The Windows CI lifecycle script is
 updated to run this EXE from a directory without adjacent DLLs/config, compare
 installed files against the payload, and check that staging directories are gone.
-That Windows job has not been executed here.
+That Windows job has not been executed here. (Superseded 2026-11-11: it now runs
+in Windows CI and passes.)
 
 Companion/Core source is unchanged from `86676e6`; rebuilt binaries carry the
 current source revision metadata. The working Framework ZIP is retained in
@@ -90,6 +97,6 @@ original SHA-256 verified. No running app or service was installed/restarted.
 
 User confirmation (2026-09-23): "sick! seems to work great" after delivery of the
 single EXE. Record this as a successful basic Windows user checkpoint. UAC refusal,
-explicit temporary cleanup inspection, CI lifecycle and the detailed hardware
-cases remain separate outstanding checks; the report does not establish each of
+explicit temporary cleanup inspection on the user's PC and the detailed hardware
+cases remain separate outstanding checks (CI lifecycle now passes, see above); the report does not establish each of
 those individually. No new build or runtime change is needed for this confirmation.

@@ -34,12 +34,15 @@ Mac:
   1728 × 1117 have a half-point center, which the exact parked-position check
   could treat as drift on every motion event.
 - [x] Windows → Mac file paste keeps four 256 KiB requests in flight. Both Mac
-  file listeners use TCP no-delay.
+  file listeners use TCP no-delay. (2026-11-10: 16 in flight, and both Mac file
+  paths moved from Network.framework to blocking BSD sockets.)
 
 Windows:
 
 - [x] Mac → Windows file paste reads two blocks ahead for sequential access.
   A seek still reads already-requested replies in order (record counters).
+  (2026-11-09: 16 blocks ahead with delayed ACK disabled; 2026-11-10: blocking
+  socket I/O on both ends instead of .NET Framework async.)
 - [x] File send no longer builds each 256 KiB reply with LINQ Concat/ToArray,
   which copies byte by byte on .NET Framework and allocates large-heap arrays.
   One frame buffer is reused and sealed in place. Clipboard text blocks are
@@ -79,7 +82,10 @@ Windows:
   notifications still arrive and do not clear the Mac mouse match.
 - The desktop worker sends STATE every second (forwarded to the Mac over BLE),
   and its clipboard thread polls every 200 ms. Both are small; changing them
-  touches worker liveness and clipboard sequencing.
+  touches worker liveness and clipboard sequencing. (Changed 2026-11-01: STATE
+  still reaches the service every second but goes to the Mac only on change plus
+  a 30 s refresh, and the clipboard thread is event-driven with a 1 s desktop
+  check; see PLAN.md.)
 - Further Bluetooth throughput: write-without-response on the PC → Mac bulk
   characteristic, and pacing bulk frames while HID input is active.
 - Windows startup: no NGEN; System.Text.Json uses reflection on .NET Framework.
@@ -94,7 +100,9 @@ below were not individually reported and remain open.
 - [ ] Both builds updated: time 20 KB and 64 KiB text in both directions; check
   typing and edge return stay responsive. One side older: text still crosses.
 - [ ] Fast movement while controlling Windows (trackpad and a high-rate mouse):
-  pointer travel/feel, and `hidRejected`/`hidMerged` in Capture logs.
+  pointer travel/feel, and `hidRejected`/`hidMerged` in Capture logs. (Since
+  2026-11-08 motion uses the network pointer when the stream is up; these
+  counters then cover only Bluetooth fallback, scroll and keys.)
 - [ ] Drag the corner slider: no companion disconnect. Change Mac edge and
   Windows display: edge return follows.
 - [ ] Large file paste both ways on Wi-Fi and wired: speed, cancel, completed
@@ -249,6 +257,52 @@ threaded build works; the items below were not individually reported.
 - [ ] Menu bar icon and menu still update on crossings.
 - [ ] Capture logs over a day: dispatch delay and backpressure versus the
   follow-up build.
+
+## Network pointer — 2026-11-08 to 11-11
+
+Bluetooth delivered trackpad frames unevenly (15 ms pad frames against a 15 ms
+LE connection interval), so pointer motion and clicks moved to a sealed stream
+on the local network that file paste already uses, with the Bluetooth HID mouse
+as the per-event fallback; scrolling and keys stay on Bluetooth. Setting: **Setup
+→ Advanced**, on by default.
+
+- Round trip: the Mac side moved off Network.framework to a BSD socket written
+  inline on the Bluetooth queue (`27ea289`); the PC reads on a dedicated
+  blocking thread and acknowledges before injecting (`870cb98`). The remaining
+  ~3.7 ms was the PC reaching the Mac over Wi-Fi; wired addresses are now offered
+  first (`2d94094`; the wired link pings at 0.6 ms).
+- Injection: every step goes through the SYSTEM worker by default (`cd912b1`,
+  `a99f447`), over a blocking pointer pipe from the desktop worker via the
+  service. The desktop worker injects directly only while the relay is
+  disconnected, stuck for 250 ms or failing past a 250 ms grace; where it cannot
+  inject either, the Mac falls back to Bluetooth. Every ten seconds of movement
+  the SYSTEM worker reports percentiles, which the desktop worker writes to
+  `edge-return.log` as `pointer relay 10s:` (its own injections appear as
+  `pointer direct 10s:`).
+- Edge return: requests ride the stream's acknowledgements (`cc83a8e`); Bluetooth
+  carries them only while the stream is down or after 150 ms without a return,
+  and Bluetooth leaves are limited to one per 100 ms per handoff with no new one
+  queued while one waits (`c104a1d`).
+
+Recorded on the user's hardware, 2026-11-11, from those log lines:
+
+| Path | p50 |
+| --- | --- |
+| Relay total (received → injected) | ~260–305 µs |
+| Pipe transit to the SYSTEM worker | ~45–60 µs (p99 ~100–170 µs) |
+| SendInput in the SYSTEM worker | ~210–240 µs |
+| Previous direct injection (desktop worker) | ~200 µs |
+
+SendInput dominates both paths; the relay's own cost is about the pipe transit.
+A UAC prompt took the relayed pointer with zero failures and no Bluetooth
+fallback. The user also confirmed that the pointer no longer freezes over
+elevated (administrator) windows (`7949596`).
+
+Hardware checks (pending):
+
+- [ ] Edge returns arriving via the network stream (diagnostics.log names the path).
+- [ ] Repeated edge returns under a slow Bluetooth link: the leave throttle keeps
+  the return prompt instead of queuing behind redundant requests.
 
 ## Local verification
 

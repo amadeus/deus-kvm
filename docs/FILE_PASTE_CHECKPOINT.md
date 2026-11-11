@@ -1,15 +1,15 @@
 # Network-only file paste in both directions
 
-Update **both apps** from the visible `releases/` folder:
+Update **both apps** from the current packages: `DeusKVM-mac-arm64.zip` and
+`DeusKVM-Companion-win-x64.zip` (or `releases/DeusKVM-mac-arm64.zip` and
+`releases/DeusKVM-Companion-win-x64-<date>.exe` from a local build). Later
+checkpoints retain this file-transfer behavior.
 
-Use the current `DeusKVM-mac-arm64-*.zip` and
-`DeusKVM-Companion-win-x64-*.zip` packages. Later CPU/edge checkpoints retain
-this file-transfer behavior.
-
-Quit the old Mac app, extract and launch the new Apple Silicon app. Close the old
-Windows tray app, extract the Windows ZIP into a fresh folder and launch
-`DeusKVM.Companion.exe`; its normal update flow replaces the installed components.
-Keep pairings and **Settings → Share clipboard with Windows** enabled. Both
+Quit the old Mac app, extract and launch the new Apple Silicon app. On Windows,
+open the new companion EXE and approve the administrator prompt; it updates the
+installation and closes the old companion automatically.
+Keep pairings and **Configuration → Input settings → Share clipboard with Windows**
+enabled on the Mac. Both
 computers must be reachable on the local network. Allow Mac local-network access
 if prompted. No Windows listening port or new inbound firewall rule is required.
 
@@ -61,5 +61,10 @@ Local IPv4 reachability is required; guest isolation and IPv6-only networks fail
 Both directions passed full 2 GB socket transfers with matching SHA-256 locally.
 **Real Windows clipboard capture, Finder Cmd+V/Automation prompts and hardware
 regressions remain pending.** The prior Mac → Windows network flow was confirmed
-fast by the user. Windows diagnostics remain in
+fast by the user. On 2026-11-10 both directions moved to blocking sockets on both
+ends (`fc43004`, `bb57c9d`) after Mac → Windows pastes ran at a few MB/s; the Mac
+also offers wired addresses before Wi-Fi (`2d94094`). The user confirmed on
+2026-11-10 that pastes with these builds are fast in both directions (Mac Studio ↔
+PC over 1 GbE). The SHA-256 comparison steps above have not been repeated on them.
+Windows diagnostics remain in
 `%LOCALAPPDATA%\DeusKVM\file-paste.log`, without names, paths, keys or contents.

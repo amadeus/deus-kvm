@@ -1,5 +1,12 @@
 # Mac CPU optimization checkpoint
 
+> **Status — 2026-11-11:** All three phases shipped and remain in place (no
+> idle tap timer, event-driven coordinator refresh, clipboard read at handoff only).
+> The release ZIPs named below are superseded by the current builds described in
+> the [README](../README.md). The unchecked hardware items have no recorded
+> individual results; the 2026-10-17 entries in [PERFORMANCE_AUDIT.md](PERFORMANCE_AUDIT.md)
+> record later CPU figures (0% idle, 5–7% while controlling Windows).
+
 Working baseline: user confirmed two-way file paste works. Preserve input reports,
 forwarding rate, low Bluetooth latency, edge/hotkey return, ownership and clipboard.
 User reports ~0.5–0.6% local idle, ~2% local motion, up to ~10% remote motion;

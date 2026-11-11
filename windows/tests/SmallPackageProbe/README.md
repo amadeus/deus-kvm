@@ -1,5 +1,9 @@
 # OS-runtime dependency probe
 
+Status (2026-11-11): historical. The complete companion was ported to .NET
+Framework 4.8 on 2026-09-23 and ships as the normal release; this probe is kept
+only as the original dependency measurement.
+
 This is an isolated size/compilation experiment, **not the companion app**. It
 targets Windows x64 and the .NET Framework 4.8 runtime supplied by Windows 10
 2004+ / Windows 11. It is not part of the solution, CI or normal release publish.
@@ -33,4 +37,4 @@ Compilation and ZIP size are verified on macOS. Windows launch, Bluetooth
 operation and service execution are **not yet tested**. This probe does not
 include the full app, encryption, installer, Raw Input or OLE file clipboard;
 its measured size must not be reported as a completed port's release size.
-See `docs/WINDOWS_SIZE_PLAN.md` for migration gates and outstanding validation.
+See `docs/WINDOWS_SIZE_PLAN.md` for the measurements and migration history.

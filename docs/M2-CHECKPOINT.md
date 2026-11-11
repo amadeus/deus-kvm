@@ -1,5 +1,10 @@
 # Edge-out / hotkey-back checkpoint
 
+> Status 2026-11-11: historical M2 checkpoint (September 13). Later milestones
+> added the Windows companion (pairing with **Add Mac…**, Windows edge return,
+> clipboard) and removed the edge delay. Current setup is in the
+> [README](../README.md). The checks below remain useful for regressions.
+
 ## Run
 
 Run `./build.sh`, then:
@@ -9,7 +14,8 @@ open .build/DerivedData/Build/Products/Debug/DeusKVM.app
 ```
 
 The app lives in the menu bar after you close its window. Choose **Open controls…**
-to reopen Setup, Layout, and Settings.
+to reopen it. (Current builds have two tabs, Setup and Configuration, and open
+the window at launch only while setup is incomplete.)
 
 ## Set up
 
@@ -22,9 +28,11 @@ to reopen Setup, Layout, and Settings.
    cached descriptor.
 3. In **Setup**, keep only the PC active. **Layout** waits for exactly one active
    central subscribed to HID; selecting multiple active hosts leaves switching
-   unarmed.
-4. In **Layout**, choose the Mac display and an exposed edge, then enable edge
-   switching. The default delay is 250 ms. An edge segment adjoining another Mac
+   unarmed. (Current builds: turn on **Enable control** for the PC; with several
+   ready, **Use device** picks one.)
+4. In **Layout** (now **Configuration**), choose the Mac display and an exposed
+   edge, then enable edge switching. The default delay was 250 ms (removed
+   2026-09-13: crossing is immediate). An edge segment adjoining another Mac
    display is excluded so ordinary Mac display navigation still works.
 5. Confirm the toggle shortcut. Default: **Fn + Escape**. If your keyboard handles
    Fn internally, use **Record shortcut** to choose a combination macOS receives.
@@ -32,7 +40,7 @@ to reopen Setup, Layout, and Settings.
 
 ## Try
 
-- Move to the configured edge and pause there: the Mac cursor parks and hides,
+- Move to the configured edge: the Mac cursor parks and hides,
   and input controls the PC from its existing cursor position.
 - Press and release the toggle shortcut: control returns to the Mac. Repeat
   from another foreground app and with the controls window closed.
@@ -47,11 +55,11 @@ to reopen Setup, Layout, and Settings.
 - Check that moving remotely does not cause Dock, menu-bar, or application hover
   changes on the Mac, including on a full-screen Space.
 - Try the hotkey while Windows is locked or showing UAC. Return does not need
-  the PC to respond. PC edge-return is a later milestone.
+  the PC to respond. (PC edge return was added by the Windows companion.)
 - Turn off the PC's Bluetooth while remote: Mac input should return when the
   subscription disappears. Quitting the app also restores the Mac cursor.
 - With Secure Input active on the Mac, switching should stay local or release
-  with a warning in Layout.
+  with a warning in Layout (now Configuration).
 
 Report any stuck key, cursor visibility/hover issue, unexpected switch, or change
 in how remote movement/typing feels. Core HID changes are deferred until a

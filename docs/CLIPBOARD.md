@@ -1,14 +1,18 @@
 # Clipboard sharing
 
-Clipboard sharing is enabled by default in **Mac Settings → Share clipboard with Windows**. The toggle controls both directions. Both machines need this
+Clipboard sharing is enabled by default in the Mac app's **Configuration → Input
+settings → Share clipboard with Windows**. The toggle controls both directions:
+text up to 64 KiB over Bluetooth, and screenshot images and one file up to 2 GB
+over the local network. Both machines need this
 build; the Windows service and signed-in desktop worker handle sharing even
 when the tray window is closed. Keep the existing Bluetooth pairing.
 
 ## Text clipboard test
 
-1. Install the current Windows ZIP from the visible `releases/` folder; its
-   update flow replaces the service and desktop worker while preserving settings.
-2. Quit the Mac app and launch the app from the current arm64 ZIP in `releases/`.
+1. Open the current Windows companion EXE (`releases/DeusKVM-Companion-win-x64-<date>.exe`,
+   or the one inside `DeusKVM-Companion-win-x64.zip`); its update flow replaces the
+   service and desktop worker while preserving settings.
+2. Quit the Mac app and launch the app from the current `DeusKVM-mac-arm64.zip`.
 3. Copy a sentence on the Mac, cross to Windows and paste into Notepad. Copy a
    different sentence in Notepad, return to the Mac and paste into a text editor.
 4. Repeat with emoji, accented characters, multiple lines and approximately
@@ -93,9 +97,13 @@ mouse/keyboard report logic, third stream or pairing change is involved.
 
 The Windows BLE worker coordinates the transfer but does not access the
 Session 0 clipboard. `DesktopClipboard` uses a dedicated STA thread within the
-signed-in desktop worker, isolated from the Raw Input STA. `ClipboardPasteboard`
+signed-in desktop worker, isolated from the Raw Input STA; it wakes on clipboard
+change notifications (`AddClipboardFormatListener`), service commands and session
+lock/unlock, with a one-second desktop check and a 200 ms retry only while an
+operation can still fail transiently (the old 200 ms poll remains as a fallback
+if the listener cannot be registered). `ClipboardPasteboard`
 uses a dedicated Mac queue, isolated from the main/input run loops. Native
-revision checks protect a newer local copy even if it happens before polling
+revision checks protect a newer local copy even if it happens before DeusKVM
 notices it. Clipboard owners can delay rendering; these reads cannot stall the
 input loop. The Mac pasteboard API does not provide an atomic compare-and-write,
 so an external write exactly between its final revision check and replacement
@@ -121,7 +129,9 @@ companion; both computers need to be reachable on the local network.
 
 - Mac captures explicit PNG or TIFF clipboard data, including screenshots copied
   by CleanShot, and converts it to PNG. Explicit image data takes precedence when
-  the same copy also offers a file URL, as CleanShot does. Windows captures registered `PNG` data
+  the same copy also offers a file URL, as CleanShot does, except for a Finder
+  file copy: its image is only the file's icon (`com.apple.icns` or
+  `com.apple.finder.noderef` present), so it stays a file offer. Windows captures registered `PNG` data
   or a native bitmap (including Windows' conversion from DIB/DIBV5).
 - The receiver downloads the image asynchronously into memory, then publishes
   actual image formats: PNG and TIFF on macOS; registered PNG and CF_DIB on
@@ -148,7 +158,9 @@ companion; both computers need to be reachable on the local network.
 - File-only copies in Finder/Explorer still use the existing file-paste behavior;
   a Mac file URL alone is not converted into an image.
 
-Hardware validation is pending: copy a CleanShot screenshot on Mac and paste
+The user reported the combined image/file workflow working on hardware
+(2026-10-20); the individual checks below were not enumerated in that report and
+remain open for broader validation: copy a CleanShot screenshot on Mac and paste
 into both Discord and Explorer on Windows; use Windows **Snipping Tool** to copy
 a screenshot and paste into both Discord and Finder (Cmd+V) on Mac.
 Confirm each Discord paste opens an image attachment preview
@@ -169,8 +181,10 @@ and destination apps are not intercepted.
 
 `files: 1` and `fileNetwork: 1` remain in HELLO; optional `fileReceive: 1` negotiates
 reverse metadata support. FILE_OFFER (0x24, bulk JSON, at most 4096 bytes) carries
-epoch, source clipboard revision, text offer sequence, filename and size. On a Mac
-source it also carries local addresses, ephemeral port and a per-offer key.
+epoch, source clipboard revision, text offer sequence, filename, size and, for a
+screenshot, `contentType`. On a Mac source it also carries up to four private or
+link-local IPv4 addresses (wired interfaces before Wi-Fi), an ephemeral port and a
+per-offer key; Windows tries the addresses in order.
 Old FILE_GET/FILE_DATA IDs (0x25/0x26) are reserved but no longer serve file contents.
 
 Windows file copying reads CF_HDROP metadata for one regular, non-link file. Paste
@@ -180,6 +194,16 @@ The Windows desktop worker validates the still-current source and connects out;
 Windows never opens an incoming listener. The existing handshake derives separate
 AES-GCM keys for connector and listener; in the reverse flow, the Mac listener
 sends encrypted offset/count requests and the Windows connector sends responses.
+
+Both directions use blocking sockets on dedicated threads with 4 MiB socket
+buffers: BSD sockets on the Mac (`FileNetworkServer`, `FileNetworkReceiver`,
+shared `LocalSocket` helpers) and synchronous .NET sockets on Windows
+(`NetworkFileReader`, `NetworkFileSender`). The requester keeps up to 16 block
+requests in flight; replies stay in request order. The Windows receiver also asks
+the stack to acknowledge every segment so 256 KiB blocks do not wait on delayed
+ACK. Network.framework and the .NET Framework async socket path held pastes to a
+few MB/s and are no longer used for file contents (2026-11-10). Each finished
+transfer logs byte counts and timings only.
 
 Copying/metadata inspection never opens source contents. Mac destination writes
 begin only after a valid authenticated response, to an exclusive hidden partial

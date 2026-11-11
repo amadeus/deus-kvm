@@ -3,7 +3,14 @@
 Update **Windows and both Macs**. Keep Bluetooth enabled and retain both pairings.
 The earlier Windows-only build does not implement this flow.
 
-## Current build: on-demand file paste prototype
+Status 2026-11-11: takeover is in every later build, including the current
+release ZIPs. The two-Mac checks below have not yet been recorded as passed.
+
+## File paste prototype (2026-09-22, superseded)
+
+Current builds paste one regular file up to 2 GB in both directions, using the
+local network only; see [the file paste checkpoint](FILE_PASTE_CHECKPOINT.md).
+The original prototype notes follow.
 
 Update Windows and the Mac you are testing using the current ZIPs below. Copy
 one small ordinary file in Finder, switch to Windows, and paste into an Explorer
@@ -37,18 +44,22 @@ mode have been removed. This build restores the original Bluetooth HID mouse
 reports. Saved experimental preferences are ignored; no reset or re-pairing is
 needed. Update Windows and both Macs using the current ZIPs below. Automatic
 ownership/takeover, the display-selection fix and bounded recovery polling remain.
+(Since 2026-11-08, pointer motion and clicks also travel over the local network
+when both computers share a private network, falling back to Bluetooth HID.)
 
 ## Update
 
-1. On Windows, extract `DeusKVM-Companion-win-x64-file-paste-progress-2026-09-22.zip`
-   and open `DeusKVM.Companion.exe`. Approve the update prompt; it closes the old
-   companion automatically. No scripts or .NET installation are needed.
-2. On **each Mac**, quit DeusKVM, unzip
-   `DeusKVM-mac-arm64-file-paste-2026-09-22.zip`, and replace the app in its usual
-   location with the new `DeusKVM.app`. Open that copy. This build is for Apple Silicon only. Keep each Mac's existing permissions and layout.
-3. If a Mac cannot switch, read **Layout → Windows**. The status now distinguishes
-   waiting for Windows control from missing permissions or unavailable capture.
-   Follow that specific status; do not remove Bluetooth pairings.
+1. On Windows, extract `DeusKVM-Companion-win-x64.zip` from the repository root
+   and open the `DeusKVM-Companion-win-x64-*date*.exe` inside it. Approve the update
+   prompt; it closes the old companion automatically. No scripts or .NET
+   installation are needed.
+2. On **each Mac**, quit DeusKVM, unzip `DeusKVM-mac-arm64.zip`, and replace the app
+   in its usual location with the new `DeusKVM.app`. Open that copy. This build is
+   for Apple Silicon only. Keep each Mac's existing permissions and layout.
+3. If a Mac cannot switch, read the PC's status in **Setup → Devices** (the menu bar
+   shows a short form). The status distinguishes waiting for Windows control from
+   missing permissions or unavailable capture. Follow that specific status; do not
+   remove Bluetooth pairings.
 
 ## Test this first
 
@@ -88,7 +99,8 @@ been reproduced on hardware; the new readiness checks should expose a blocker.
 ## Diagnostics
 
 Windows: **Open diagnostics** opens `C:\ProgramData\DeusKVM` with `status.json`
-and `service.log`. Mac: report the Layout/Windows status and Setup permissions.
+and `service.log`. Mac: choose **Report Problem Now** in the menu bar (it also saves
+the PC's state), and report the Setup → Devices status and Setup permissions.
 No uninstall or re-pairing test is needed.
 
 Builds and automated tests do not establish hardware success. This checkpoint

@@ -1,5 +1,10 @@
 # Bluetooth reconnect investigation
 
+> Status 2026-11-11: the recommendation below shipped. The Windows companion
+> service reconnects previously verified Macs itself (uncached GATT discovery and
+> `GattSession.MaintainConnection`), so the PowerShell workaround is only a manual
+> fallback. Remaining reconnect checks are tracked in `windows/README.md`.
+
 ## Verified result
 
 On 2026-09-13, Windows uncached GATT discovery restored the existing Maingear
@@ -24,6 +29,9 @@ recovery across a normal Mac quit/relaunch is now user-verified while Windows
 is signed in; the standalone PowerShell script is no longer needed for that
 case. Signed-out recovery, boot before first login, and sleep/radio cycles
 remain separate validation gates. See `windows/README.md` for those checks.
+(Update 2026-09-14: control at the login screen after a Windows reboot was
+user-confirmed. Restarting the Mac app while Windows is signed out is still
+untested.)
 
 ## Reproduction and evidence
 
@@ -40,7 +48,8 @@ remain separate validation gates. See `windows/README.md` for those checks.
    and control remains usable after the diagnostic exits.
 
 Toggling Force Service Changed on the Mac while disconnected did not recover
-Windows. It can help rediscovery once a BLE connection exists, but cannot
+Windows. (The toggle is now hidden from settings; its automatic fallback stays
+on by default.) It can help rediscovery once a BLE connection exists, but cannot
 notify a disconnected client.
 
 ## State restoration experiment
@@ -89,7 +98,9 @@ The verified recovery remains Windows-initiated uncached service discovery.
 All temporary connection probes and advertising changes were removed; the
 HID implementation remains unchanged.
 
-## Current workaround
+## Manual workaround (before the companion)
+
+Superseded by the companion's automatic recovery; kept for manual diagnosis.
 
 Keep DeusKVM advertising on the Mac. Copy
 `scripts/Test-DeusKVMConnection.ps1` to the PC and run it in a separate Windows
@@ -104,7 +115,8 @@ saved user/machine policy. Select the existing paired Mac entry. The script
 prints cached/fresh discovery results and holds its references for twenty
 seconds; process exit releases its temporary handles. It does not pair,
 unpair, write HID reports or install anything. Successful recovery has been
-verified in one live run; it is not yet automatic.
+verified in one live run. (At the time it was not automatic; the companion now
+performs this discovery itself.)
 
 Device enumeration needs a compiled C# `IEnumerable` bridge because Windows
 PowerShell's WinRT collection indexing/method binding is unreliable here.
@@ -114,6 +126,8 @@ pass with `scripts/tests/Test-DeusKVMSelection.ps1` under portable PowerShell
 7.6.6 on macOS; the complete script has now also run successfully on Windows.
 
 ## Automatic recovery recommendation
+
+(Implemented in the Windows companion; see the status note at the top.)
 
 Given the tested results, include reconnect/service rediscovery in M3's Windows
 companion. This is the practical verified direction, rather than a proof that

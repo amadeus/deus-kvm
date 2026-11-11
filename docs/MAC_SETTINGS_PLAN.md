@@ -159,3 +159,20 @@ checks remain pending; this verification does not mark them passed.
 - [x] SwiftFormat, strict SwiftLint, and Release build pass. Refreshed
   `releases/DeusKVM.app`; strict signature verification passes, arm64 only.
 - [ ] User visual check: button matches the card's right edge; title stays put.
+
+## Later changes (as of 2026-11-11)
+
+The two-tab organization above is still current. Later work changed it in these
+ways; the pending user checks above remain unchanged.
+
+- Setup → Advanced also has **Send pointer motion to Windows over the local
+  network** (on by default), and Setup → Diagnostics shows the network pointer's
+  state (2026-11-08).
+- Configuration → Input settings also has a **Scroll speed** control (2026-11-08).
+- The controls window opens at launch only while a permission is missing or no PC
+  has Enable control; otherwise DeusKVM starts in the menu bar and **Open
+  controls…** shows the window (2026-11-10). The tab choice above still applies
+  when it opens. Hardware check of launching without the window is pending.
+- The menu bar shows the connection state plus a companion label of at most
+  three words (for example **Edge return ready**); Setup → Devices keeps the full
+  sentence (2026-11-10). Hardware check of the short labels is pending.

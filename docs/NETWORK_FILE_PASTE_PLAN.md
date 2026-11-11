@@ -1,5 +1,13 @@
 # Faster on-demand file paste
 
+> Status (2026-11-11): superseded. The 10 MiB cap and Bluetooth fallback below were
+> removed in favor of network-only transfer up to 2 GB in both directions
+> ([BIDIRECTIONAL_FILE_PASTE_PLAN.md](BIDIRECTIONAL_FILE_PASTE_PLAN.md)). The
+> handshake and record format described here are unchanged; the Network.framework
+> listener and async Windows reader were replaced by blocking sockets on 2026-11-10,
+> and addresses are now offered wired-first. Current behavior:
+> [CLIPBOARD.md](CLIPBOARD.md#on-demand-file-paste).
+
 The user confirms the Mac-to-Windows paste interaction works and wants exactly
 that interaction with faster local-network file transfer. Do not change native
 Explorer paste, pre-transfer files, expand to folders/multiple files, or change HID.

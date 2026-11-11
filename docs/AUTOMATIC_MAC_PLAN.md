@@ -1,6 +1,9 @@
 # Automatic Mac selection on Windows
 
 Requested 2026-09-21. Status: explicit takeover implemented; verified builds ready, awaiting user setup and hardware checkpoint.
+Status 2026-11-11: takeover ships in every later build, including the current
+release ZIPs at the repository root. Phases G and H (two-Mac hardware checks)
+are still not recorded as passed. The artifacts named below are historical.
 
 ## Current agreed behavior (supersedes the first checkpoint)
 
@@ -459,8 +462,9 @@ Await user installation and normal return/re-entry confirmation.
 
 ## On-demand file paste prototype — 2026-09-22
 
-Current feature work and hardware checks are tracked in
-[FILE_PASTE_PLAN.md](FILE_PASTE_PLAN.md). It adds deferred Mac-to-Windows file
-paste while preserving the low-latency HID change and Windows performance
-rollback. Earlier ownership, laptop and transient handoff hardware checks remain
-outstanding; file-paste unit tests do not close them.
+Feature work and hardware checks were tracked in
+[FILE_PASTE_PLAN.md](FILE_PASTE_PLAN.md) (later work: bidirectional, network-only
+paste up to 2 GB; see [the file paste checkpoint](FILE_PASTE_CHECKPOINT.md)).
+It adds deferred Mac-to-Windows file paste while preserving the low-latency HID
+change and Windows performance rollback. Earlier ownership, laptop and transient
+handoff hardware checks remain outstanding; file-paste unit tests do not close them.
