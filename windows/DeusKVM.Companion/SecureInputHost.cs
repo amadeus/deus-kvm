@@ -18,7 +18,7 @@ namespace DeusKVM.Companion;
 /// SYSTEM rights can make it inject.
 /// </summary>
 internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>? connectedChanged = null,
-    Action<bool>? status = null, Action<byte[]>? stats = null) : IDisposable
+    Action<bool, string?>? status = null, Action<byte[]>? stats = null) : IDisposable
 {
     private readonly object writeGate = new();
     private readonly OverlappedWriter writer = new();
@@ -105,7 +105,8 @@ internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>?
                 var frames = SecureFrame.Parse(input, filled, out var consumed);
                 foreach (var frame in frames)
                 {
-                    if (frame.Length == 1) Report(frame[0] == 1);
+                    if (frame.Length == 1) Report(frame[0] == 1, null);
+                    else if (frame.Length == 6 && frame[0] == 0) Report(false, Failure(frame[1], BitConverter.ToInt32(frame, 2)));
                     else if (frame.Length == SecureRelayStats.Length && frame[0] == SecureRelayStats.Tag) stats?.Invoke(frame);
                 }
                 if (consumed > 0) { Buffer.BlockCopy(input, consumed, input, 0, filled - consumed); filled -= consumed; }
@@ -127,17 +128,26 @@ internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>?
         }
     }
 
-    // Every status the worker sends is passed on: the worker reports at the start of each burst
-    // and on every change, and the desktop worker times failures per secure-desktop episode.
-    private void Report(bool injecting)
+    // Every status the worker sends is passed on: it reports at the start of each burst, on every
+    // change, and repeats a failure every 100 ms while it lasts.
+    private void Report(bool injecting, string? failure)
     {
         if (injecting != lastInjecting)
         {
             lastInjecting = injecting;
-            note?.Invoke(injecting ? "secure worker: injecting" : "secure worker: cannot inject here");
+            note?.Invoke(injecting ? "secure worker: injecting" : "secure worker: cannot inject here (" + failure + ")");
         }
-        status?.Invoke(injecting);
+        status?.Invoke(injecting, failure);
     }
+
+    private static string Failure(byte step, int error) => step switch
+    {
+        1 => "OpenInputDesktop",
+        2 => "GetUserObjectInformation",
+        3 => "SetThreadDesktop",
+        4 => "SendInput",
+        _ => "step " + step
+    } + " error " + error;
 
     public void Stop()
     {

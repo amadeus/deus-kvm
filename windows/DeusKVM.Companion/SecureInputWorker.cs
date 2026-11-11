@@ -25,6 +25,10 @@ internal sealed class SecureInputWorker
     private readonly int parent;
     private readonly SecureInjector injector = new();
     private byte lastStatus = 2; // neither ready(1) nor blocked(0) yet
+    // While failing, the failure is repeated at this interval: the desktop worker must never be left
+    // believing in a relay that stopped injecting.
+    private static readonly long FailReportTicks = Stopwatch.Frequency / 10;
+    private long lastFailReport;
     // A pause in records starts a new burst; its first batch always reports, even if the status
     // matches the end of the last one.
     private const long EpisodeGapMs = 500;
@@ -48,7 +52,20 @@ internal sealed class SecureInputWorker
         this.parent = parent;
     }
 
+    // SetThreadDesktop fails on a thread that owns any window, and the [STAThread] main thread
+    // has COM's hidden apartment window: the worker could follow the input desktop to the user's
+    // desktop it started on, but never to the secure desktop. It runs on a fresh MTA thread instead.
     public int Run()
+    {
+        var code = 1;
+        var thread = new Thread(() => code = Serve()) { Name = "DeusKVM secure injector", Priority = ThreadPriority.AboveNormal };
+        thread.SetApartmentState(ApartmentState.MTA);
+        thread.Start();
+        thread.Join();
+        return code;
+    }
+
+    private int Serve()
     {
         try
         {
@@ -115,9 +132,14 @@ internal sealed class SecureInputWorker
         }
         if (injected && mark != 0) { total.Add(LatencySamples.Micros(Stopwatch.GetTimestamp() - mark)); mark = 0; }
         var status = (byte)(ok ? 1 : 0);
-        if (status == lastStatus) return;
+        var stamp = Stopwatch.GetTimestamp();
+        if (status == lastStatus && (ok || stamp - lastFailReport < FailReportTicks)) return;
         lastStatus = status;
-        try { var frame = SecureFrame.Wrap([status]); pipe.Write(frame, 0, frame.Length); }
+        if (!ok) lastFailReport = stamp;
+        // A failure carries what failed and its Win32 error: [0, step, error (i32)].
+        byte[] report = ok ? [1] : [0, injector.FailedStep, 0, 0, 0, 0];
+        if (!ok) System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(report.AsSpan(2), injector.FailedError);
+        try { var frame = SecureFrame.Wrap(report); pipe.Write(frame, 0, frame.Length); }
         catch (Exception error) when (error is IOException or ObjectDisposedException) { }
     }
 
@@ -193,14 +215,28 @@ internal sealed class SecureInjector : IDisposable
         held = 0;
     }
 
-    public bool Move(int dx, int dy) => Attach() && DesktopNative.InjectMouse(dx, dy, DesktopNative.MouseMove);
+    // The step that last failed (1 OpenInputDesktop, 2 GetUserObjectInformation, 3 SetThreadDesktop,
+    // 4 SendInput) and its Win32 error.
+    public byte FailedStep { get; private set; }
+    public int FailedError { get; private set; }
+
+    private bool Fail(byte step)
+    {
+        FailedStep = step;
+        FailedError = Marshal.GetLastWin32Error();
+        return false;
+    }
+
+    private bool Send(int dx, int dy, uint flags) => DesktopNative.InjectMouse(dx, dy, flags) || Fail(4);
+
+    public bool Move(int dx, int dy) => Attach() && Send(dx, dy, DesktopNative.MouseMove);
 
     public bool Button(byte button, bool down)
     {
         if (!Attach()) return false;
         var (downFlag, upFlag) = DesktopNative.ButtonFlags(button);
         if (down) held |= upFlag; else held &= ~upFlag;
-        return DesktopNative.InjectMouse(0, 0, down ? downFlag : upFlag);
+        return Send(0, 0, down ? downFlag : upFlag);
     }
 
     // Opens the input desktop and, when it is a different one than the thread is attached to,
@@ -208,14 +244,14 @@ internal sealed class SecureInjector : IDisposable
     private bool Attach()
     {
         var input = OpenInputDesktop(0, false, Access);
-        if (input == IntPtr.Zero) return false;
+        if (input == IntPtr.Zero) return Fail(1);
         try
         {
             var name = new StringBuilder(256);
-            if (!GetUserObjectInformation(input, 2, name, name.Capacity * 2, out _)) return false;
+            if (!GetUserObjectInformation(input, 2, name, name.Capacity * 2, out _)) return Fail(2);
             if (name.ToString() == current && desktop != IntPtr.Zero) return true;
             if (held != 0 && desktop != IntPtr.Zero) { DesktopNative.InjectMouse(0, 0, held); held = 0; }
-            if (!SetThreadDesktop(input)) return false;
+            if (!SetThreadDesktop(input)) return Fail(3);
             if (desktop != IntPtr.Zero) { CloseDesktop(desktop); switches++; }
             desktop = input;
             current = name.ToString();

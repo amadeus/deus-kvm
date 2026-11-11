@@ -48,11 +48,12 @@ internal sealed class DesktopWorker : ApplicationContext
     // The service says the SYSTEM secure-input worker is connected.
     private volatile bool secureRelay;
     private PointerPipeClient? pointer;
-    // Relay health, under secureGate (taken after networkGate when both are held). The relay is
-    // trusted again at every Block change and reconnect; the fallback starts only once the worker
-    // has reported failures for longer than the grace period, so a failure or two during a desktop
-    // switch (which the worker replays) neither stalls nor disables it. While falling back, a
-    // zero-motion probe every 100 ms lets a recovered worker say so.
+    // Relay health, under secureGate (taken after networkGate when both are held), driven only by
+    // what the worker reports (it repeats a failure every 100 ms while it lasts). The fallback
+    // starts once it has been failing for longer than the grace period, so a failure or two during
+    // a desktop switch (which the worker replays) neither stalls nor disables it. While falling
+    // back, a zero-motion probe every 100 ms lets a recovered worker say so; a reconnect trusts it
+    // again too.
     private const double SecureGraceMs = 250, ProbeMs = 100;
     private readonly object secureGate = new();
     private bool secureFailing;
@@ -211,7 +212,7 @@ internal sealed class DesktopWorker : ApplicationContext
                 secureRelay = message.SecureReady;
                 if (message.SecureReady) lock (secureGate) secureFailing = false;
                 break;
-            case "secure-status": SecureStatus(message.Ok); break;
+            case "secure-status": SecureStatus(message.Ok, message.Detail); break;
             case "secure-stats": RelayStats(SecureRelayStats.Decode(message.Input)); break;
             case "resume":
                 // Reattach to current Mac ownership after login/worker startup.
@@ -454,8 +455,9 @@ internal sealed class DesktopWorker : ApplicationContext
         }
     }
 
-    // A status from the SYSTEM worker (desktop thread).
-    private void SecureStatus(bool injecting)
+    // A status from the SYSTEM worker (desktop thread). A failure repeats every 100 ms while it
+    // lasts, so the grace period always runs out against a worker that stopped injecting.
+    private void SecureStatus(bool injecting, string? failure)
     {
         var now = DesktopNative.Milliseconds();
         lock (secureGate)
@@ -467,7 +469,7 @@ internal sealed class DesktopWorker : ApplicationContext
             }
             else
             {
-                if (episode is not null) episode.Failures++;
+                if (episode is not null) { episode.Failures++; episode.Failure = failure; }
                 if (!secureFailing) { secureFailing = true; secureFailingSince = now; }
             }
         }
@@ -506,9 +508,8 @@ internal sealed class DesktopWorker : ApplicationContext
 
     private Block Classify() => secureDesktop ? Block.SecureDesktop : foreground.Outranks() ? Block.Elevated : Block.None;
 
-    // Each Block change trusts the relay again. A blocked episode (a secure desktop, or an elevated
-    // window in front) writes one line when it ends saying how the relay did, so a slow handoff
-    // shows in the edge log.
+    // A blocked episode (a secure desktop, or an elevated window in front) writes one line when it
+    // ends saying how the relay did, so a slow handoff shows in the edge log.
     private void SetBlocked(Block next)
     {
         if (next == block) return;
@@ -520,7 +521,6 @@ internal sealed class DesktopWorker : ApplicationContext
             summary = episode?.Summary(now);
             block = next;
             episode = next == Block.None ? null : new SecureEpisode(now, secureRelay, next == Block.Elevated ? "elevated window" : "secure desktop");
-            secureFailing = false;
         }
         context?.Post(_ =>
         {
@@ -541,8 +541,10 @@ internal sealed class DesktopWorker : ApplicationContext
         public double FirstForward = -1, FirstOk = -1;
         public int Forwarded, Failures;
         public bool FellBack; // to Bluetooth: neither the relay nor this process could inject
+        public string? Failure;
         public string Summary(double end) => FormattableString.Invariant(
-            $"{kind}: ms={end - start:F0} relay={relay} firstForwardMs={At(FirstForward)} firstInjectedMs={At(FirstOk)} forwarded={Forwarded} failures={Failures} bluetooth={FellBack}");
+            $"{kind}: ms={end - start:F0} relay={relay} firstForwardMs={At(FirstForward)} firstInjectedMs={At(FirstOk)} forwarded={Forwarded} failures={Failures} bluetooth={FellBack}") +
+            (Failure is null ? "" : $" lastFailure=\"{Failure}\"");
         private string At(double time) => time < 0 ? "-" : (time - start).ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
     }
 

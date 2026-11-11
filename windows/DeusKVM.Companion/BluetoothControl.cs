@@ -139,8 +139,8 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         secureInput ??= new SecureInputHost(
             text => { EdgeDiagnostics.Write(text); context.Post(_ => { if (!disposed) SetDetail(text); }, null); },
             _ => context.Post(_ => { if (!disposed && active) PushSecureReady(secureInput?.Connected == true); }, null),
-            injecting => context.Post(_ =>
-            { if (!disposed && active) desktop?.Send(new DesktopMessage("secure-status", Ok: injecting)); }, null),
+            (injecting, failure) => context.Post(_ =>
+            { if (!disposed && active) desktop?.Send(new DesktopMessage("secure-status", Ok: injecting, Detail: failure)); }, null),
             frame => context.Post(_ =>
             { if (!disposed && active) desktop?.Send(new DesktopMessage("secure-stats", Input: frame)); }, null));
         secureInput.Refresh();
