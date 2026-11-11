@@ -29,3 +29,11 @@ struct CaptureReadiness {
         return nil
     }
 }
+
+/// Whether the controls window should open when DeusKVM launches: only while a permission is
+/// missing or no Windows PC has been paired yet.
+enum LaunchWindowPolicy {
+    static func shouldOpen(bluetooth: Bool, accessibility: Bool, inputMonitoring: Bool, pairedPC: Bool) -> Bool {
+        !(bluetooth && accessibility && inputMonitoring && pairedPC)
+    }
+}

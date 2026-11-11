@@ -1,3 +1,4 @@
+import CoreBluetooth
 import SwiftUI
 
 @main
@@ -28,12 +29,7 @@ struct DeusKVMApp: App {
     }
 
     var body: some Scene {
-        Window("DeusKVM", id: "controls") {
-            ContentView()
-                .modifier(AppEnvironment(lowEnergy: lowEnergy, central: central, names: deviceNames, coordinator: coordinator))
-        }
-        .defaultSize(width: 480, height: 600)
-        .windowResizability(.contentSize)
+        controls
         Settings {
             ContentView()
                 .modifier(AppEnvironment(lowEnergy: lowEnergy, central: central, names: deviceNames, coordinator: coordinator))
@@ -46,16 +42,70 @@ struct DeusKVMApp: App {
             StatusIcon(coordinator: coordinator)
         }
     }
+
+    /// The controls window opens at launch only when there is something to set up
+    /// (`LaunchWindow`): on macOS 15 and later it is suppressed and opened on demand; before
+    /// that, SwiftUI always opens it and the app delegate closes it again.
+    private var controls: some Scene {
+        LaunchWindow.suppressedAtLaunch(controlsWindow)
+    }
+
+    private var controlsWindow: some Scene {
+        Window("DeusKVM", id: LaunchWindow.controlsID) {
+            ContentView()
+                .modifier(AppEnvironment(lowEnergy: lowEnergy, central: central, names: deviceNames, coordinator: coordinator))
+        }
+        .defaultSize(width: 480, height: 600)
+        .windowResizability(.contentSize)
+    }
+}
+
+/// Opening the controls window at launch only when something needs setting up
+/// (`LaunchWindowPolicy`). Otherwise the app starts in the menu bar.
+enum LaunchWindow {
+    static let controlsID = "controls"
+
+    @MainActor static var shouldOpenNow: Bool {
+        LaunchWindowPolicy.shouldOpen(
+            bluetooth: CBManager.authorization == .allowedAlways,
+            accessibility: AccessibilityPermission.isTrusted,
+            inputMonitoring: KeyboardMonitoringPermission.isGranted,
+            pairedPC: !(UserDefaults.standard.stringArray(forKey: AppSettings.allowedHostsKey) ?? []).isEmpty
+        )
+    }
+
+    /// Decided once per launch, by whichever of the menu bar icon or the app delegate gets there.
+    @MainActor static var decided = false
+
+    /// macOS 15+ only: the scene does not open by itself at launch or by state restoration.
+    static func suppressedAtLaunch(_ scene: some Scene) -> some Scene {
+        if #available(macOS 15.0, *) {
+            return scene.defaultLaunchBehavior(.suppressed).restorationBehavior(.disabled)
+        } else {
+            return scene
+        }
+    }
 }
 
 /// Only the menu bar views observe the coordinator, so its updates stay local to them.
 private struct StatusIcon: View {
     @ObservedObject var coordinator: EdgeSwitchCoordinator
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Image(systemName: coordinator.connectionState.symbol(isRemote: coordinator.isRemote))
             .accessibilityLabel(coordinator.connectionState.label)
             .help(coordinator.connectionState.label)
+            .task { openControlsAtLaunch() }
+    }
+
+    /// macOS 15+: the controls window is suppressed at launch, so it is opened here when needed.
+    private func openControlsAtLaunch() {
+        guard #available(macOS 15.0, *), !LaunchWindow.decided else { return }
+        LaunchWindow.decided = true
+        guard LaunchWindow.shouldOpenNow else { return }
+        openWindow(id: LaunchWindow.controlsID)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
@@ -74,7 +124,7 @@ private struct StatusMenu: View {
         }
         Text(verbatim: coordinator.shortcutLabel)
         Button(L10n.Layout.openControls) {
-            openWindow(id: "controls")
+            openWindow(id: LaunchWindow.controlsID)
             NSApp.activate(ignoringOtherApps: true)
         }
         Button(coordinator.isRemote ? L10n.Layout.returnToMac : L10n.Layout.switchToPC) { coordinator.toggle() }
@@ -117,6 +167,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.arguments.contains("--cursor-spike") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { CursorSpike.run() }
         } else { Self.coordinator?.start() }
+        closeControlsIfNotNeeded()
+    }
+
+    /// Before macOS 15 SwiftUI opens the controls window at every launch; close it again when
+    /// nothing needs setting up. (Later versions suppress it and open it only when needed.)
+    private func closeControlsIfNotNeeded() {
+        if #available(macOS 15.0, *) { return }
+        guard !LaunchWindow.decided else { return }
+        LaunchWindow.decided = true
+        guard !LaunchWindow.shouldOpenNow else { return }
+        DispatchQueue.main.async {
+            NSApp.windows.filter { $0.identifier?.rawValue.hasPrefix(LaunchWindow.controlsID) == true }.forEach { $0.close() }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

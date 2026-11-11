@@ -1,6 +1,17 @@
 import XCTest
 
 final class CaptureReadinessTests: XCTestCase {
+    func testControlsOpenAtLaunchOnlyWhileSomethingNeedsSettingUp() {
+        XCTAssertFalse(LaunchWindowPolicy.shouldOpen(bluetooth: true, accessibility: true, inputMonitoring: true, pairedPC: true))
+        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(bluetooth: false, accessibility: true, inputMonitoring: true, pairedPC: true))
+        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(bluetooth: true, accessibility: false, inputMonitoring: true, pairedPC: true))
+        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(bluetooth: true, accessibility: true, inputMonitoring: false, pairedPC: true))
+        XCTAssertTrue(
+            LaunchWindowPolicy.shouldOpen(bluetooth: true, accessibility: true, inputMonitoring: true, pairedPC: false),
+            "no PC paired yet"
+        )
+    }
+
     private var ready: CaptureReadiness {
         CaptureReadiness(
             enabled: true,
