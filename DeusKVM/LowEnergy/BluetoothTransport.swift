@@ -218,13 +218,17 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
 
     // MARK: Captured input (tap and main thread enqueue; the queue sends)
 
-    /// Event-tap thread: remote input goes straight to this queue.
+    /// Event-tap thread: remote input goes straight to this queue. Network pointer steps, the
+    /// bulk of it, run synchronously: on an idle queue the block runs on the tap thread, so no
+    /// worker thread wakes per step, and FIFO order with everything already queued is kept. The
+    /// block only seals and writes without blocking, and nothing on this queue waits for the tap.
     func input(_ event: DirectInputEvent, generation: Int, capturedAt: TimeInterval) {
-        queue.async { [self] in
+        let work = { [self] in
             for (event, captured) in gate.receive((event, capturedAt), generation: generation, droppable: event.isRelative) {
                 forward(event, captured)
             }
         }
+        if event.isNetworkPointer { queue.sync(execute: work) } else { queue.async(execute: work) }
     }
 
     /// The coordinator approved the crossing and queued ENTER: forward this session, oldest

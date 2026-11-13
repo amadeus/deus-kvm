@@ -1,5 +1,31 @@
 # DeusKVM: implementation plan
 
+### Mac CPU while moving the pointer — 2026-11-12
+
+Measured with a synthetic 120 Hz pointer and `sample`: on the Mac, DeusKVM's own
+code was about 2% of the tap thread's busy time. Nearly all of it is macOS's
+per-event cost of an active session tap (about 100 µs an event, the same for a
+do-nothing tap; a listen-only tap was not meaningfully cheaper). Over 30 s of real
+trackpad use the tap received 600 pointer moves and 446 trackpad gesture frames,
+and gestures only matter while controlling Windows.
+
+- **Gesture tap only while remote:** gestures moved to a second tap that is
+  disabled on the Mac and enabled whenever `remote` changes (a disabled tap
+  receives nothing: 1 of 299 posted events). If it cannot be created, the main
+  tap takes gestures as before. Expected: roughly 40% fewer tap events on the Mac.
+- **No worker wake per network step:** controlling the PC cost about 290 µs per
+  event (0.22 s CPU for 762 events in 15 s); the hop to the Bluetooth queue woke a
+  dispatch worker for each step (~20 busy samples against ~16 for the seal and
+  send themselves and ~30 on the tap thread). Network pointer events now enter
+  the Bluetooth queue with `sync`, which runs on the tap thread when the queue is
+  idle and keeps FIFO order with everything already queued; nothing on that queue
+  waits for the tap. Acknowledgements were ~1 busy sample and stay one per read,
+  so edge return is unchanged.
+- **Pending (hardware):** CPU while moving on the Mac and on the PC with this
+  build, compared with 2.6–3% and 4–5% before; pointer feel, clicks/drags and
+  edge return unchanged; Mission Control/Spaces gestures still blocked on the PC
+  and still working on the Mac.
+
 ### Network pointer and SYSTEM relay — 2026-11-08 to 2026-11-11
 
 Bluetooth delivers pointer motion unevenly (macOS keeps the LE connection

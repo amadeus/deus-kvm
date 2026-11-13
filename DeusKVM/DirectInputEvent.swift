@@ -33,6 +33,14 @@ struct DirectInputEvent: Sendable {
         }
     }
 
+    /// Pointer input the tap routed to the local-network stream.
+    var isNetworkPointer: Bool {
+        switch kind {
+        case .networkMove, .networkButton: true
+        default: false
+        }
+    }
+
     init?(type: CGEventType, event: CGEvent) {
         let flags = event.flags
         modifiers = KeyboardModifiers(eventFlags: flags)

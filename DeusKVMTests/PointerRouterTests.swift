@@ -51,7 +51,13 @@ final class PointerRouterTests: XCTestCase {
         XCTAssertEqual([dx, dy], [-300, 12])
         XCTAssertEqual(move.modifiers, [.leftShift])
         XCTAssertTrue(move.isRelative)
-        guard case let .networkButton(button, down) = DirectInputEvent(kind: .mouseButton(.right, false), modifiers: []).networked.kind
+        XCTAssertTrue(move.isNetworkPointer)
+        let click = DirectInputEvent(kind: .mouseButton(.right, false), modifiers: [])
+        XCTAssertFalse(click.isNetworkPointer)
+        XCTAssertTrue(click.networked.isNetworkPointer)
+        XCTAssertFalse(DirectInputEvent(kind: .mouseMove(1, 1), modifiers: []).isNetworkPointer)
+        XCTAssertFalse(DirectInputEvent(kind: .scroll(wheel: 1, pan: 0), modifiers: []).isNetworkPointer)
+        guard case let .networkButton(button, down) = click.networked.kind
         else { return XCTFail("expected a network button") }
         XCTAssertEqual(button, .right)
         XCTAssertFalse(down)

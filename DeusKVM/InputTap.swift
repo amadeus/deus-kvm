@@ -24,7 +24,11 @@ final class InputTap: @unchecked Sendable {
     private let lock = NSLock()
     private var configuration = TapConfiguration()
     private var handoff = HandoffState()
-    private var remote = false
+    /// Every change goes through here, so the gesture tap runs exactly while input is remote.
+    private var remote = false {
+        didSet { if remote != oldValue, let gestureTap { CGEvent.tapEnable(tap: gestureTap, enable: remote) } }
+    }
+
     private var generation = 0
     private var edgeArmed = false
     private var location = CGPoint.zero
@@ -41,6 +45,9 @@ final class InputTap: @unchecked Sendable {
     /// Gesture types already noted in the diagnostics log this launch.
     private var notedGestureTypes: Set<UInt32> = []
     private var eventTap: CFMachPort?
+    /// Trackpad gestures only, enabled only while remote: on the Mac they pass through anyway, and
+    /// a trackpad sends nearly as many gesture frames as pointer moves.
+    private var gestureTap: CFMachPort?
     private var runLoop: CFRunLoop?
     private var deferredTimer: CFRunLoopTimer?
     private var deferredDeadline: TimeInterval?
@@ -92,6 +99,7 @@ final class InputTap: @unchecked Sendable {
             remote = false
             generation += 1
             if let eventTap { CFMachPortInvalidate(eventTap) }
+            if let gestureTap { CFMachPortInvalidate(gestureTap) }
             if let runLoop { CFRunLoopStop(runLoop) }
         }
     }
@@ -166,21 +174,27 @@ final class InputTap: @unchecked Sendable {
             _emit(.installed(token, false))
         }
         guard lock.withLock({ runState.isRunning && runState.isCurrent(token) }) else { return }
+        let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        // Without a gesture tap the main tap takes gestures, as it always did.
+        let (gestureTap, gestureSource) = Self.makeGestureTap(refcon)
         let mask = [
             CGEventType.keyDown, .keyUp, .flagsChanged, .mouseMoved, .leftMouseDown, .leftMouseUp,
             .leftMouseDragged, .rightMouseDown, .rightMouseUp, .rightMouseDragged,
             .otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel, MediaKeyEvent.eventType
-        ].reduce(TrackpadGesture.eventMask) { $0 | CGEventMask(1) << CGEventMask($1.rawValue) }
-        let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        ].reduce(gestureTap == nil ? TrackpadGesture.eventMask : 0) { $0 | CGEventMask(1) << CGEventMask($1.rawValue) }
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
             eventsOfInterest: mask, callback: Self.callback, userInfo: refcon
         ), let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            if let gestureTap { CFMachPortInvalidate(gestureTap) }
             return
         }
         let loop = CFRunLoopGetCurrent()!
+        if let gestureSource { CFRunLoopAddSource(loop, gestureSource, .commonModes) }
         lock.withLock {
             eventTap = tap
+            self.gestureTap = gestureTap
+            if let gestureTap { CGEvent.tapEnable(tap: gestureTap, enable: remote) }
             runLoop = loop
             handoff.heldRawKeys.removeAll()
             rawShortcutKeys.removeAll()
@@ -199,9 +213,11 @@ final class InputTap: @unchecked Sendable {
         keyboard.stop(on: loop)
         self.keyboard = nil
         CFMachPortInvalidate(tap)
+        if let gestureTap { CFMachPortInvalidate(gestureTap) }
         lock.withLock {
             _cancelTick()
             eventTap = nil
+            self.gestureTap = nil
             runLoop = nil
         }
     }
@@ -467,6 +483,20 @@ extension InputTap {
         let useNetwork = routerEvent != .other && network() == .up
         let routed = router.route(routerEvent, network: useNetwork) == .network ? input.networked : input
         forward(generation, routed, ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// The trackpad gesture tap, created disabled (`remote` turns it on), with its run loop source.
+    private static func makeGestureTap(_ refcon: UnsafeMutableRawPointer) -> (CFMachPort?, CFRunLoopSource?) {
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+            eventsOfInterest: TrackpadGesture.eventMask, callback: callback, userInfo: refcon
+        ) else { return (nil, nil) }
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CFMachPortInvalidate(tap)
+            return (nil, nil)
+        }
+        CGEvent.tapEnable(tap: tap, enable: false)
+        return (tap, source)
     }
 
     /// Called with the tap lock held. Gestures pass through on the Mac and are swallowed while
