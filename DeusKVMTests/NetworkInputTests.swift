@@ -63,6 +63,20 @@ final class NetworkInputTests: XCTestCase {
         XCTAssertTrue(state.summary.contains("gapMaxMs=18.0"), state.summary)
     }
 
+    func testTheNextCheckIsTheStallDeadlineInFlightAndThePingAtRest() {
+        var state = InputStreamState()
+        XCTAssertEqual(state.nextCheck(now: 5), 5 + InputStreamState.pingAfter, "a fresh stream pings after a second")
+        XCTAssertNotNil(state.motion(dx: 1, dy: 0, now: 10))
+        XCTAssertNotNil(state.motion(dx: 1, dy: 0, now: 10.03))
+        XCTAssertEqual(state.nextCheck(now: 10.04), 10 + InputStreamState.stallAfter, "the oldest record's stall deadline")
+        XCTAssertNil(state.acked(1, now: 10.04))
+        XCTAssertEqual(state.nextCheck(now: 10.04), 10.03 + InputStreamState.stallAfter)
+        XCTAssertNil(state.acked(2, now: 10.05))
+        XCTAssertEqual(state.nextCheck(now: 10.05), 10.03 + InputStreamState.pingAfter, "all acknowledged: a ping after the last send")
+        XCTAssertNil(state.ping(now: 11.02), "not before it is due")
+        XCTAssertNotNil(state.ping(now: 11.03))
+    }
+
     func testAnInflightCapBoundsAnUnresponsivePC() {
         var state = InputStreamState()
         var sent = 0

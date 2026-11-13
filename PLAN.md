@@ -75,6 +75,20 @@ continuously without changing the pointer path. Changes toward that floor:
   light use, 35 moves); 3- and 4-finger swipes, pinch, rotate, smart zoom and Force
   Touch on the PC do nothing on the Mac; edge return and the Bluetooth fallback
   on a UAC prompt unchanged; `rttAvgMs` in the session line stays near 0.3–0.5.
+- **Measured on hardware (2026-11-12):** 15 s of continuous movement on the PC:
+  1.7% (0.25 s; 929 tapped moves, 1,195 touch frames passed through), about 270 µs
+  per move: the tap round trip, ~30 µs TCP send, ~15 µs AES-GCM seal. A session
+  with the new companion: `rttAvgMs=0.5`, no stalls or coalescing. The user
+  reported gestures on the Mac working as expected; whether a swipe while
+  controlling the PC acts on the Mac is still to be confirmed.
+- **At rest on the Mac it still used ~0.2–0.4%:** ~63 context switches a second
+  with no input. The pointer stream's 250 ms dispatch timer made GCD create and
+  retire a worker thread almost every tick, and the file listener polled every
+  250 ms. The ack thread now waits with `poll` until `InputStreamState.nextCheck`
+  (the stall deadline, else the 1 s ping) and pings or detects a stall itself;
+  the file accept loop blocks until a connection or its wake pipe closes on
+  reconfigure. A quiet 5 s window afterwards: ~12 switches a second. Pending: a
+  rest measurement with no input at all.
 
 ### Network pointer and SYSTEM relay — 2026-11-08 to 2026-11-11
 

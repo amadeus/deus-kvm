@@ -214,6 +214,13 @@ struct InputStreamState: Sendable, Equatable {
         return now - sent > Self.stallAfter
     }
 
+    /// When the acknowledgement thread must look without one arriving: the oldest unacknowledged
+    /// record's stall deadline, else the next ping. Event-driven instead of a periodic timer.
+    func nextCheck(now: TimeInterval) -> TimeInterval {
+        if inflight > 0, let sent = sentAt.values.min() { return sent + Self.stallAfter }
+        return (lastSendAt ?? now) + Self.pingAfter
+    }
+
     /// A ping to keep the stream measured while the pointer rests.
     mutating func ping(now: TimeInterval) -> Data? {
         guard inflight == 0, now - (lastSendAt ?? -.infinity) >= Self.pingAfter else { return nil }

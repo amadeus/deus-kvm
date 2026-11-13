@@ -18,6 +18,8 @@ final class FileNetworkServer: @unchecked Sendable {
     private var secret: Data?
     private var scope: (epoch: UInt32, sequence: UInt32)?
     private var clients: Set<Int32> = []
+    /// Write end of the current accept loop's wake pipe; closing it ends that loop.
+    private var wake: Int32 = -1
 
     /// One line per finished transfer (counts and timings only) for the diagnostics log.
     var note: (@Sendable (String) -> Void)?
@@ -32,14 +34,22 @@ final class FileNetworkServer: @unchecked Sendable {
     }
 
     func configure(_ enabled: Bool) {
-        // The previous accept thread notices the new generation and closes its own socket.
-        lock.withLock { generation += 1; port = nil }
+        // Closing its wake pipe ends the previous accept loop, which closes its own socket.
+        let previous: Int32 = lock.withLock {
+            generation += 1; port = nil
+            defer { wake = -1 }
+            return wake
+        }
+        if previous >= 0 { close(previous) }
         revoke()
         guard enabled, let (listener, bound) = LocalSocket.openListener() else { return }
-        let current: Int = lock.withLock { port = bound; return generation }
+        var pipeFDs: [Int32] = [-1, -1]
+        guard pipe(&pipeFDs) == 0 else { close(listener); return }
+        let current: Int = lock.withLock { port = bound; wake = pipeFDs[1]; return generation }
+        let woken = pipeFDs[0]
         let thread = Thread { [weak self] in
-            guard let self else { close(listener); return }
-            acceptLoop(listener, generation: current)
+            guard let self else { close(listener); close(woken); return }
+            acceptLoop(listener, wake: woken, generation: current)
         }
         thread.name = "io.github.amadeus.deuskvm.file-network"
         thread.start()
@@ -68,16 +78,17 @@ final class FileNetworkServer: @unchecked Sendable {
 
     // MARK: Listener
 
-    /// Polls so a reconfigure is noticed within 250 ms; this thread alone closes the listener,
-    /// so its descriptor is never reused under a blocked accept.
-    private func acceptLoop(_ listener: Int32, generation mine: Int) {
-        defer { close(listener) }
-        var poller = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+    /// Sleeps until a connection or its wake pipe closes (a reconfigure), with no periodic wakeup;
+    /// this thread alone closes the listener, so its descriptor is never reused under a blocked accept.
+    private func acceptLoop(_ listener: Int32, wake: Int32, generation mine: Int) {
+        defer { close(listener); close(wake) }
+        var pollers = [pollfd(fd: listener, events: Int16(POLLIN), revents: 0), pollfd(fd: wake, events: Int16(POLLIN), revents: 0)]
         while lock.withLock({ generation == mine }) {
-            poller.revents = 0
-            let ready = poll(&poller, 1, 250)
+            pollers[0].revents = 0; pollers[1].revents = 0
+            let ready = poll(&pollers, 2, -1)
             if ready < 0, errno != EINTR { return }
-            guard ready > 0 else { continue }
+            if pollers[1].revents != 0 || pollers[0].revents & Int16(POLLERR | POLLHUP | POLLNVAL) != 0 { return }
+            guard ready > 0, pollers[0].revents & Int16(POLLIN) != 0 else { continue }
             let fd = accept(listener, nil, nil)
             guard fd >= 0 else { continue }
             let admitted: Bool = lock.withLock {

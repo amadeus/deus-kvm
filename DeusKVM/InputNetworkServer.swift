@@ -10,12 +10,15 @@ import os
 /// written to the socket the moment it is captured, with no dispatch hop, and acknowledgements
 /// are read by a blocking recv on the same thread. Sends use MSG_DONTWAIT so the Bluetooth queue
 /// that calls `send` is never blocked; a step that cannot be queued at once is dropped (motion
-/// coalesces, the stall timer closes a truly stuck link). All mutable state is under `lock`;
+/// coalesces, the stall check closes a truly stuck link). The same thread pings and checks for
+/// stalls when `InputStreamState.nextCheck` comes due, with no periodic timer: at rest it wakes
+/// once a second for the ping. All mutable state is under `lock`;
 /// `isUp`, `carrier` and `currentPort` are readable from any thread.
 final class InputNetworkServer: @unchecked Sendable {
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "NetworkInput")
     private let lock = NSLock()
-    private let timerQueue = DispatchQueue(label: "io.github.amadeus.deuskvm.network-input.timer", qos: .utility)
+    /// State notes call out to user code, so they leave the lock through this queue.
+    private let noteQueue = DispatchQueue(label: "io.github.amadeus.deuskvm.network-input.notes", qos: .utility)
 
     private var running = false
     private var up = false
@@ -31,7 +34,6 @@ final class InputNetworkServer: @unchecked Sendable {
     private var sessionStalls = 0
     private var sessionReconnects = 0
     private var everConnected = false
-    private var timer: DispatchSourceTimer?
     private var lastStateText = ""
 
     /// Short state text for the settings view ("listening", "up", "stalled"), any thread.
@@ -162,7 +164,6 @@ final class InputNetworkServer: @unchecked Sendable {
         }
         if conn >= 0 { shutdown(conn, SHUT_RDWR); close(conn) }
         if listen >= 0 { close(listen) } // unblocks accept()
-        stopTimer()
         note(reason)
     }
 
@@ -197,10 +198,14 @@ final class InputNetworkServer: @unchecked Sendable {
 
         guard let client = recvExact(fd, 32), handshake(fd, client: client) else { close(fd); return }
         note("up")
-        startTimer(fd)
 
         var reason = "closed"
         acks: while true {
+            // Wait for an acknowledgement until the next ping or stall check is due.
+            let due = lock.withLock { state.nextCheck(now: ProcessInfo.processInfo.systemUptime) }
+            guard waitReadable(fd, until: due) else {
+                if check(fd) { continue } else { break acks }
+            }
             guard let sealed = recvExact(fd, InputRecord.sealedAckLength) else { break }
             let outcome: (ok: Bool, leave: InputLeave?) = lock.withLock {
                 guard connFD == fd, let plain = try? incoming?.open(sealed), let ack = InputRecord.ack(plain) else { return (false, nil) }
@@ -216,7 +221,6 @@ final class InputNetworkServer: @unchecked Sendable {
             if let leave = outcome.leave { onLeave?(leave) }
         }
 
-        stopTimer()
         let stalled: Bool = lock.withLock {
             let was = stalledOut
             stalledOut = false
@@ -246,34 +250,34 @@ final class InputNetworkServer: @unchecked Sendable {
         return lock.withLock { connFD == fd }
     }
 
-    // MARK: Timer (ping + stall)
+    // MARK: Ping + stall
 
-    private func startTimer(_ fd: Int32) {
-        stopTimer()
-        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
-        timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
-        timer.setEventHandler { [weak self] in self?.tick(fd) }
-        lock.withLock { self.timer = timer }
-        timer.resume()
-    }
-
-    private func stopTimer() {
-        let timer: DispatchSourceTimer? = lock.withLock { defer { self.timer = nil }; return self.timer }
-        timer?.cancel()
-    }
-
-    private func tick(_ fd: Int32) {
-        let action: (close: Bool, ping: Data?) = lock.withLock {
-            guard up, connFD == fd else { return (false, nil) }
+    /// The acknowledgement thread, when `nextCheck` is due: pings a resting stream; false once it
+    /// has stalled (serve() then tears it down).
+    private func check(_ fd: Int32) -> Bool {
+        lock.withLock {
+            guard up, connFD == fd else { return connFD == fd }
             let now = ProcessInfo.processInfo.systemUptime
             if state.stalled(now: now) {
                 state.noteStall(); sessionStalls += 1; stalledOut = true
-                return (true, nil)
+                return false
             }
             if let ping = state.ping(now: now) { writeLocked(ping) }
-            return (false, nil)
+            return true
         }
-        if action.close { shutdown(fd, SHUT_RDWR) } // unblocks recvExact; serve() tears down
+    }
+
+    /// Waits until the socket is readable (true; also on hangup or error, which recv reports) or
+    /// `deadline` passes (false).
+    private func waitReadable(_ fd: Int32, until deadline: TimeInterval) -> Bool {
+        var poller = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        while true {
+            let left = (deadline - ProcessInfo.processInfo.systemUptime) * 1000
+            let ready = poll(&poller, 1, Int32(min(Double(Int32.max), max(0, left)).rounded(.up)))
+            if ready > 0 { return true }
+            if ready == 0 { return false }
+            if errno != EINTR { return true }
+        }
     }
 
     // MARK: Socket I/O
@@ -333,7 +337,7 @@ final class InputNetworkServer: @unchecked Sendable {
         blocked = value
         // Noting calls out to user code; do it off the lock via the timer queue to avoid reentrancy.
         let text = value ? "blocked (secure desktop)" : "up"
-        timerQueue.async { [weak self] in self?.note(text) }
+        noteQueue.async { [weak self] in self?.note(text) }
     }
 
     private func note(_ text: String) {
