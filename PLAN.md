@@ -40,6 +40,15 @@ still tapped everywhere on the Mac. Follow-up the same day:
   edge by the next poll and crosses as for an arrival event. The hotkey crossing
   re-reads the cursor position. No edge switching (disabled, no PC) means no
   motion tap on the Mac at all.
+- **Regression, fixed the same evening:** that build ran at ~100% CPU. Turning off
+  one of our own taps makes macOS send its callback `tapDisabledByUserInput` (checked
+  with a standalone tap), which the tap treated as macOS disabling it: it returned
+  local and re-applied the tap states, turning the motion tap off again, in a
+  loop. The notice is now acted on only when a tap that should be on is not
+  (`CGEvent.tapIsEnabled`). Measured on this Mac after the fix with the PC
+  connected: idle ~0%; a synthetic 120 Hz circle mid-screen 0.4–0.5% (1.9% before
+  these changes); `CGGetEventTapList` shows the motion tap on at rest and off
+  while moving away from the edge.
 - **Pending (hardware):** CPU while moving on the Mac away from and near the edge;
   crossings by slow approach, fast flick and hotkey; return then immediate
   re-crossing; drags near the edge.

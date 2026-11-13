@@ -32,11 +32,9 @@ final class InputTap: @unchecked Sendable {
     private var notedGestureTypes: Set<UInt32> = []
     /// Keys, modifiers, buttons and media keys: always on, and rare.
     private var eventTap: CFMachPort?
-    /// Trackpad gestures and scrolling, enabled only while remote: on the Mac they pass through
-    /// anyway, and a trackpad sends nearly as many gesture frames as pointer moves.
+    /// Trackpad gestures and scrolling, only while remote (on the Mac they pass through anyway).
     private var remoteTap: CFMachPort?
-    /// Pointer motion and drags: while remote, and on the Mac only near the switch edge
-    /// (`PointerProximity`); elsewhere `pollTimer` follows the cursor instead.
+    /// Motion and drags: while remote, and on the Mac near the edge (`PointerProximity`).
     private var motionTap: CFMachPort?
     private var motionGate = MotionGate.tap
     private var pollTimer: CFRunLoopTimer?
@@ -318,7 +316,6 @@ final class InputTap: @unchecked Sendable {
 
     private func _begin(fromEdge: Bool = false) {
         guard let geometry = configuration.geometry else { return }
-        // Away from the edge the motion tap may be off, so `location` is the last poll's.
         if !fromEdge, let point = CGEvent(source: nil)?.location { location = point }
         remote = true
         returnProbe = nil
@@ -342,6 +339,7 @@ final class InputTap: @unchecked Sendable {
             defer { _scheduleTick() }
             guard runState.isRunning else { return false }
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                guard _lostTap else { return false } // also sent when we turn one of our taps off
                 remote = false
                 generation += 1
                 edgeArmed = false
@@ -528,6 +526,13 @@ extension InputTap {
         }
     }
 
+    /// Lock held: macOS disabled a tap that should be on (answering our own disables looped).
+    private var _lostTap: Bool {
+        [(eventTap, true), (remoteTap, remote), (motionTap, motionGate == .tap)].contains { tap, on in
+            tap.map { on && !CGEvent.tapIsEnabled(tap: $0) } ?? false
+        }
+    }
+
     private var _edgeActive: Bool {
         configuration.edgeEnabled && configuration.targetAvailable && configuration.geometry != nil
     }
@@ -569,7 +574,6 @@ extension InputTap {
                 if handoff.isReleased { _begin(fromEdge: true) } else { _requestResync("crossing blocked by held input") }
                 return
             }
-            // Near the edge, or resting: the tap takes over (at rest it costs nothing).
             guard point != lastPoll, let interval = PointerProximity.pollInterval(distance: geometry.distance(to: point)) else {
                 _setMotion(.tap)
                 return
