@@ -22,7 +22,11 @@ public static class InputRecord
 {
     public const byte Motion = 1, Button = 2, Ping = 3;
     public const int AckLength = 12, SealedAckLength = AckLength + 16;
-    public const uint AckBlocked = 1, AckLeave = 2;
+    /// <summary>
+    /// Bit 4: the acknowledgement left later than its record's read (a paced ack), so the Mac
+    /// keeps it out of its round-trip figures.
+    /// </summary>
+    public const uint AckBlocked = 1, AckLeave = 2, AckDeferred = 16;
 
     public static uint LeaveFlags(byte switchId, byte edge, ushort fraction) =>
         AckLeave | (uint)(edge & 3) << 2 | (uint)switchId << 8 | (uint)fraction << 16;
@@ -51,12 +55,13 @@ public static class InputRecord
         }
     }
 
-    public static byte[] Ack(uint sequence, uint received, bool blocked, uint leave = 0)
+    public static byte[] Ack(uint sequence, uint received, bool blocked, uint leave = 0, bool deferred = false)
     {
         var ack = new byte[AckLength];
         BinaryPrimitives.WriteUInt32LittleEndian(ack, sequence);
         BinaryPrimitives.WriteUInt32LittleEndian(ack.AsSpan(4), received);
-        BinaryPrimitives.WriteUInt32LittleEndian(ack.AsSpan(8), (blocked ? AckBlocked : 0) | (leave & ~AckBlocked));
+        BinaryPrimitives.WriteUInt32LittleEndian(ack.AsSpan(8),
+            (blocked ? AckBlocked : 0) | (deferred ? AckDeferred : 0) | (leave & ~(AckBlocked | AckDeferred)));
         return ack;
     }
 
@@ -66,6 +71,56 @@ public static class InputRecord
         var ticks = Stopwatch.GetTimestamp();
         var frequency = Stopwatch.Frequency;
         return unchecked((uint)(ticks / frequency * 10000 + ticks % frequency * 10000 / frequency));
+    }
+}
+
+/// <summary>
+/// When the PC acknowledges the pointer stream. Each acknowledgement wakes a thread on the Mac,
+/// so routine ones (cumulative) go out at most every <see cref="IntervalMs"/>; one with news
+/// goes out at once: a ping (a round-trip probe), a change in whether the PC can inject, or a
+/// new edge-return request. A record left unacknowledged is acknowledged by its deadline.
+/// </summary>
+public sealed class AckPacer
+{
+    public const int IntervalMs = 16;
+    private readonly long interval;
+    private long lastSent;
+    private bool sentOnce, reportedBlocked;
+    private long reportedLeave;
+
+    public AckPacer(long ticksPerSecond) => interval = ticksPerSecond * IntervalMs / 1000;
+
+    /// <summary>The newest record read and not yet acknowledged, with its read clock.</summary>
+    public uint? Pending { get; private set; }
+    public uint PendingReceived { get; private set; }
+    /// <summary>The newest sequence acknowledged; a repeat carries a later request.</summary>
+    public uint? LastAcked { get; private set; }
+
+    /// <summary>
+    /// A read ended with <paramref name="sequence"/>; true if it is acknowledged now.
+    /// <paramref name="leave"/> identifies the edge-return request in force (0 for none).
+    /// </summary>
+    public bool Read(uint sequence, uint received, bool ping, bool blocked, long leave, long now)
+    {
+        Pending = sequence;
+        PendingReceived = received;
+        return !sentOnce || now - lastSent >= interval || ping || blocked != reportedBlocked || Fresh(leave);
+    }
+
+    /// <summary>A request raised since the last acknowledgement goes out without waiting.</summary>
+    public bool Fresh(long leave) => leave != 0 && leave != reportedLeave;
+
+    /// <summary>When the pending record must be acknowledged, in the same ticks; null if none.</summary>
+    public long? Deadline => Pending is null ? null : lastSent + interval;
+
+    public void Sent(uint sequence, bool blocked, long leave, long now)
+    {
+        sentOnce = true;
+        lastSent = now;
+        reportedBlocked = blocked;
+        reportedLeave = leave;
+        LastAcked = sequence;
+        if (Pending == sequence) Pending = null;
     }
 }
 

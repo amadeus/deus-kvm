@@ -32,6 +32,8 @@ struct InputAck: Sendable, Equatable {
     let received: UInt32
     let blocked: Bool
     var leave: InputLeave?
+    /// Sent after its record's read (the PC paces routine acknowledgements): not a round trip.
+    var deferred = false
 }
 
 /// An edge-return request carried on an acknowledgement: the same fields as the Bluetooth
@@ -44,9 +46,10 @@ struct InputLeave: Sendable, Equatable {
 
 /// The wire records of the input stream. Little-endian; each Mac to
 /// PC record is sealed with AES-GCM and prefixed by its sealed length in one byte; the PC answers
-/// with a sealed 12-byte acknowledgement (cumulative) per read. Its flags: bit 0 the PC cannot
-/// inject; bit 1 an edge-return request, with the edge in bits 2-3, the switch id in 8-15 and the
-/// fraction along the edge in 16-31.
+/// with sealed 12-byte acknowledgements (cumulative): routine ones at most every
+/// `InputStreamState.ackInterval`, news at once. Their flags: bit 0 the PC cannot inject; bit 1 an
+/// edge-return request, with the edge in bits 2-3, the switch id in 8-15 and the fraction along
+/// the edge in 16-31; bit 4 deferred (sent later than its record's read).
 enum InputRecord {
     static let motion: UInt8 = 1
     static let button: UInt8 = 2
@@ -54,6 +57,7 @@ enum InputRecord {
     static let ackLength = 12
     static let ackBlockedFlag: UInt32 = 1
     static let ackLeaveFlag: UInt32 = 2
+    static let ackDeferredFlag: UInt32 = 16
     /// A sealed acknowledgement: the record plus the 16-byte tag.
     static let sealedAckLength = ackLength + 16
 
@@ -80,7 +84,10 @@ enum InputRecord {
         let flags = read32(data, 8)
         let leave = flags & ackLeaveFlag == 0 ? nil :
             InputLeave(switchID: UInt8(truncatingIfNeeded: flags >> 8), edge: UInt8((flags >> 2) & 3), fraction: UInt16(flags >> 16))
-        return InputAck(sequence: read32(data, 0), received: read32(data, 4), blocked: flags & ackBlockedFlag != 0, leave: leave)
+        return InputAck(
+            sequence: read32(data, 0), received: read32(data, 4), blocked: flags & ackBlockedFlag != 0,
+            leave: leave, deferred: flags & ackDeferredFlag != 0
+        )
     }
 
     /// 1 left, 2 right, 3 middle; the PC maps them to its button flags.
@@ -118,7 +125,10 @@ enum InputRecord {
 /// closes it. The PC's receive clock in each acknowledgement, against the capture clock the
 /// record carried, gives the one-way jitter of delivery (clock offsets cancel).
 struct InputStreamState: Sendable, Equatable {
-    static let maxLag: TimeInterval = 0.04
+    /// How long the PC may hold a routine acknowledgement (its `AckPacer`).
+    static let ackInterval: TimeInterval = 0.016
+    /// The PC is behind once a record waits this long: 40 ms beyond the pacing.
+    static let maxLag: TimeInterval = 0.04 + ackInterval
     static let maxInflight = 256
     static let stallAfter: TimeInterval = 1
     static let pingAfter: TimeInterval = 1
@@ -176,15 +186,18 @@ struct InputStreamState: Sendable, Equatable {
     }
 
     /// The PC acknowledged everything up to `sequence`, received at `received` on its clock:
-    /// the pending delta goes out if the PC has caught up.
-    mutating func acked(_ sequence: UInt32, received: UInt32 = 0, now: TimeInterval) -> Data? {
+    /// the pending delta goes out if the PC has caught up. A deferred acknowledgement left later
+    /// than the read, so it counts for delivery jitter but not for the round trip.
+    mutating func acked(_ sequence: UInt32, received: UInt32 = 0, deferred: Bool = false, now: TimeInterval) -> Data? {
         let ahead = sequence &- lastAcked
         guard ahead > 0, ahead <= lastSent &- lastAcked else { return nil }
         lastAcked = sequence
         lastAckAt = now
         if let sent = sentAt.removeValue(forKey: sequence) {
-            let rtt = (now - sent) * 1000
-            rttSum += rtt; rttCount += 1; rttMax = max(rttMax, rtt)
+            if !deferred {
+                let rtt = (now - sent) * 1000
+                rttSum += rtt; rttCount += 1; rttMax = max(rttMax, rtt)
+            }
             // Clock offset plus one-way latency, in 100 µs; its spread is the delivery jitter.
             let delivery = Int32(bitPattern: received &- InputRecord.clock(uptime: sent))
             deliveryMin = min(deliveryMin ?? delivery, delivery)

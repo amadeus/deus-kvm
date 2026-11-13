@@ -28,6 +28,10 @@ final class NetworkInputTests: XCTestCase {
         )
         XCTAssertNil(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0xAB, 0xEF, 0xBE]))?.leave, "no bit 1, no request")
         XCTAssertNil(InputRecord.ack(Data([1, 2, 3])))
+        let deferred = InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x10, 0, 0, 0]))
+        XCTAssertEqual(deferred?.deferred, true, "bit 4: sent later than its record's read")
+        XCTAssertEqual(deferred?.blocked, false)
+        XCTAssertNil(deferred?.leave)
         XCTAssertEqual(InputRecord.clock(uptime: 0.0015), 15)
         XCTAssertEqual(InputRecord.clock(uptime: 429_496.7296), 0, "wraps at 32 bits of 100 µs ticks")
         XCTAssertEqual(InputRecord.sealedAckLength, 28)
@@ -40,21 +44,23 @@ final class NetworkInputTests: XCTestCase {
             XCTAssertNotNil(state.motion(dx: 1, dy: 0, now: 1 + Double(index) * 0.001), "record \(index)")
         }
         XCTAssertEqual(state.inflight, 40)
-        XCTAssertFalse(state.behind(now: 1.0399))
-        XCTAssertTrue(state.behind(now: 1.041), "the first record is now older than the allowed lag")
-        XCTAssertNil(state.motion(dx: 5, dy: 5, now: 1.041), "so motion waits")
-        XCTAssertNil(state.motion(dx: 2, dy: -1, now: 1.042), "and joins the pending delta")
+        // The allowed lag is 40 ms beyond the PC's 16 ms acknowledgement pacing.
+        XCTAssertEqual(InputStreamState.maxLag, 0.056, accuracy: 1e-9)
+        XCTAssertFalse(state.behind(now: 1.0559))
+        XCTAssertTrue(state.behind(now: 1.057), "the first record is now older than the allowed lag")
+        XCTAssertNil(state.motion(dx: 5, dy: 5, now: 1.057), "so motion waits")
+        XCTAssertNil(state.motion(dx: 2, dy: -1, now: 1.058), "and joins the pending delta")
         XCTAssertEqual(state.coalesced, 2)
-        XCTAssertNil(state.acked(10, now: 1.055), "record 11, sent at 1.010, is still too old")
-        let flushed = try XCTUnwrap(state.acked(40, now: 1.056), "everything acknowledged: the pending delta leaves")
+        XCTAssertNil(state.acked(10, now: 1.071), "record 11, sent at 1.010, is still too old")
+        let flushed = try XCTUnwrap(state.acked(40, now: 1.072), "everything acknowledged: the pending delta leaves")
         XCTAssertEqual(Array(flushed.suffix(4)), [7, 0, 4, 0], "the pending delta is the sum, 7 and 4")
         XCTAssertEqual(state.frames, 41)
         XCTAssertEqual(state.inflight, 1)
-        XCTAssertNotNil(state.motion(dx: 1, dy: 1, now: 1.050), "motion flows again")
-        XCTAssertNil(state.acked(42, now: 1.052))
+        XCTAssertNotNil(state.motion(dx: 1, dy: 1, now: 1.066), "motion flows again")
+        XCTAssertNil(state.acked(42, now: 1.074))
         XCTAssertNotNil(state.motion(dx: 1, dy: 1, now: 3), "a rest is not a gap")
         XCTAssertTrue(state.summary.contains("coalesced=2"))
-        XCTAssertTrue(state.summary.contains("gapMaxMs=8.0"), state.summary)
+        XCTAssertTrue(state.summary.contains("gapMaxMs=18.0"), state.summary)
     }
 
     func testAnInflightCapBoundsAnUnresponsivePC() {
@@ -117,6 +123,13 @@ final class NetworkInputTests: XCTestCase {
         XCTAssertTrue(state.summary.contains("jitterMs=1.5"), state.summary)
         XCTAssertNil(state.acked(3, now: 1.04), "a repeated acknowledgement changes nothing")
         XCTAssertNil(state.acked(2, now: 1.04), "an older one neither")
+
+        // A paced (deferred) acknowledgement left after the read: delivery counts, the round trip not.
+        var paced = InputStreamState()
+        _ = paced.motion(dx: 1, dy: 1, now: 2.000)
+        XCTAssertNil(paced.acked(1, received: InputRecord.clock(uptime: 2.000) &+ 7, deferred: true, now: 2.016))
+        XCTAssertEqual(paced.inflight, 0)
+        XCTAssertTrue(paced.summary.contains("rttAvgMs=0.0 rttMaxMs=0.0"), paced.summary)
     }
 
     func testOfferRoundTripsAsJSON() throws {

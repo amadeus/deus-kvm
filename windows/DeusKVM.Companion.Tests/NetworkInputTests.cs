@@ -45,9 +45,45 @@ public sealed class NetworkInputTests
         Assert.Equal(0xBEEFAB0Eu, leave);
         Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x0F, 0xAB, 0xEF, 0xBE }, InputRecord.Ack(0x10, 0x20, true, leave));
         Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x0E, 0xAB, 0xEF, 0xBE }, InputRecord.Ack(0x10, 0x20, false, leave | 1));
+        // Bit 4: a paced acknowledgement, sent later than its record's read.
+        Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x1F, 0xAB, 0xEF, 0xBE }, InputRecord.Ack(0x10, 0x20, true, leave, deferred: true));
+        Assert.Equal(new byte[] { 0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x0E, 0xAB, 0xEF, 0xBE }, InputRecord.Ack(0x10, 0x20, false, leave | 16));
         var first = InputRecord.Clock();
         Thread.Sleep(2);
         Assert.True(unchecked(InputRecord.Clock() - first) >= 10, "the clock counts 100 µs ticks");
+    }
+
+    [Fact]
+    public void RoutineAcknowledgementsArePacedAndNewsGoesOutAtOnce()
+    {
+        // Milliseconds as ticks.
+        var pacer = new AckPacer(1000);
+        Assert.True(pacer.Read(1, 100, ping: false, blocked: false, leave: 0, now: 0), "the first read is acknowledged at once");
+        pacer.Sent(1, false, 0, 0);
+        Assert.Null(pacer.Pending);
+        Assert.False(pacer.Read(2, 101, false, false, 0, 5), "a routine read 5 ms later waits");
+        Assert.Equal(2u, pacer.Pending);
+        Assert.Equal(101u, pacer.PendingReceived);
+        Assert.Equal(16, pacer.Deadline);
+        Assert.False(pacer.Read(3, 102, false, false, 0, 10));
+        Assert.Equal(3u, pacer.Pending);
+        Assert.Equal(102u, pacer.PendingReceived);
+        Assert.True(pacer.Read(4, 103, false, false, 0, 16), "16 ms after the last one");
+        pacer.Sent(4, false, 0, 16);
+        Assert.Null(pacer.Deadline);
+        // News goes out at once: a ping, a change in the blocked state, a new edge-return request.
+        Assert.True(pacer.Read(5, 104, ping: true, blocked: false, leave: 0, now: 17));
+        pacer.Sent(5, false, 0, 17);
+        Assert.True(pacer.Read(6, 105, false, blocked: true, leave: 0, now: 18));
+        pacer.Sent(6, true, 0, 18);
+        Assert.False(pacer.Read(7, 106, false, blocked: true, leave: 0, now: 19), "still blocked is not news");
+        Assert.True(pacer.Fresh(42));
+        Assert.True(pacer.Read(7, 106, false, true, leave: 42, now: 20));
+        pacer.Sent(7, true, 42, 20);
+        Assert.False(pacer.Fresh(42), "the same request is repeated by routine acknowledgements only");
+        Assert.False(pacer.Read(8, 107, false, true, leave: 42, now: 21));
+        Assert.True(pacer.Fresh(43), "a later request is news again");
+        Assert.Equal(7u, pacer.LastAcked);
     }
 
     [Fact]

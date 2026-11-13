@@ -53,6 +53,29 @@ still tapped everywhere on the Mac. Follow-up the same day:
   crossings by slow approach, fast flick and hotkey; return then immediate
   re-crossing; drags near the edge.
 
+Controlling the PC (2026-11-12 evening). Measured floors: a session tap costs
+~110 µs of our process per event (HID-level tap the same; listen-only ~80–145 µs
+on real trackpad input); `IOHIDEventSystemClient` delivers no pointer or button
+events to an unentitled client (0 against 816 tapped moves); a background panel's
+tracking area costs ~420 µs per event; a warp ~5 µs. So with ~100 pointer moves a
+second, receiving motion alone is ~1% and 0.5% is not reachable while moving
+continuously without changing the pointer path. Changes toward that floor:
+
+- **Raw touch frames (type 29) no longer swallowed while remote:** as many as
+  pointer moves, and five times as many while fingers rest (35 moves against 179
+  frames in one 15 s sample). The gesture types macOS acts on stay swallowed.
+  Synthetic frames posted over a background panel did not reach its app.
+- **Paced acknowledgements (`AckPacer`, PC):** routine ones at most every 16 ms;
+  at once for a ping, a blocked change or a new edge-return request, which now
+  leaves right after the injection that raised it rather than with the next
+  read. A late one is flagged deferred (ack bit 4) and carries its record's read
+  clock; the Mac leaves deferred ones out of the round trip, and `maxLag` grows by
+  the 16 ms so "behind" means what it did.
+- **Pending (hardware):** CPU while moving on the PC (before: 0.5% over 15 s of
+  light use, 35 moves); 3- and 4-finger swipes, pinch, rotate, smart zoom and Force
+  Touch on the PC do nothing on the Mac; edge return and the Bluetooth fallback
+  on a UAC prompt unchanged; `rttAvgMs` in the session line stays near 0.3–0.5.
+
 ### Network pointer and SYSTEM relay — 2026-11-08 to 2026-11-11
 
 Bluetooth delivers pointer motion unevenly (macOS keeps the LE connection

@@ -205,7 +205,9 @@ final class InputNetworkServer: @unchecked Sendable {
             let outcome: (ok: Bool, leave: InputLeave?) = lock.withLock {
                 guard connFD == fd, let plain = try? incoming?.open(sealed), let ack = InputRecord.ack(plain) else { return (false, nil) }
                 setBlockedLocked(ack.blocked)
-                if let record = state.acked(ack.sequence, received: ack.received, now: ProcessInfo.processInfo.systemUptime) {
+                if let record = state.acked(
+                    ack.sequence, received: ack.received, deferred: ack.deferred, now: ProcessInfo.processInfo.systemUptime
+                ) {
                     writeLocked(record)
                 }
                 return (true, ack.leave)

@@ -8,10 +8,12 @@ namespace DeusKVM.Companion;
 /// The PC's end of the Mac's pointer stream: connects to the offered
 /// listener, runs the nonce handshake under the "input" key purpose, and delivers each record.
 /// It runs on a dedicated thread with blocking sockets rather than the thread pool, so a pointer
-/// step is not delayed by a scheduler wake-up, and it acknowledges each read before injecting, so
-/// the round trip the Mac measures excludes the injection work (which periodically probes the
-/// input desktop). The acknowledgement is cumulative, so a 1000 Hz mouse costs one ack per read,
-/// not one per step. Reconnects with backoff while the offer stands; disposing ends it.
+/// step is not delayed by a scheduler wake-up. Acknowledgements are cumulative and paced by
+/// <see cref="AckPacer"/>: routine ones at most every 16 ms (each wakes a thread on the Mac), and
+/// at once for a ping, a change in whether the PC can inject, or a new edge-return request. One
+/// sent at its read goes out before injecting, so the round trip the Mac measures excludes the
+/// injection work (which periodically probes the input desktop); later ones are flagged deferred.
+/// Reconnects with backoff while the offer stands; disposing ends it.
 /// Deliveries arrive on this thread; the caller must be safe for that.
 /// </summary>
 internal sealed class NetworkInputClient : IDisposable
@@ -27,27 +29,30 @@ internal sealed class NetworkInputClient : IDisposable
     private volatile bool up;
     // An edge-return request for the Mac (InputRecord.LeaveFlags) and until when (Stopwatch ticks)
     // the acknowledgements keep carrying it; set from the desktop thread.
-    private long leave, leaveUntil;
+    private long leave, leaveUntil, leaveSerial;
     private static readonly long LeaveTicks = System.Diagnostics.Stopwatch.Frequency * 3 / 10;
 
     /// <summary>The stream is up: acknowledgements are flowing to the Mac.</summary>
     public bool Up => up;
 
     /// <summary>
-    /// Carries an edge-return request on the acknowledgements for the next 300 ms (they go out
-    /// with every read, and the cursor is being pushed at the edge, so the next one is a pointer
-    /// step away). False when the stream is down.
+    /// Carries an edge-return request on the acknowledgements for the next 300 ms. A new request
+    /// is acknowledged right after the injection that raised it, and routine acknowledgements
+    /// repeat it. False when the stream is down.
     /// </summary>
     public bool Leave(uint flags)
     {
         if (!up) return false;
         Interlocked.Exchange(ref leave, flags);
         Interlocked.Exchange(ref leaveUntil, System.Diagnostics.Stopwatch.GetTimestamp() + LeaveTicks);
+        Interlocked.Increment(ref leaveSerial);
         return true;
     }
 
-    private uint PendingLeave() =>
-        System.Diagnostics.Stopwatch.GetTimestamp() < Interlocked.Read(ref leaveUntil) ? (uint)Interlocked.Read(ref leave) : 0;
+    /// <summary>The request in force: its flags and serial, or zeros.</summary>
+    private (uint Flags, long Serial) PendingLeave() =>
+        System.Diagnostics.Stopwatch.GetTimestamp() < Interlocked.Read(ref leaveUntil)
+            ? ((uint)Interlocked.Read(ref leave), Interlocked.Read(ref leaveSerial)) : (0, 0);
 
     public NetworkInputClient(FileNetworkOffer offer, Func<InputEvent, bool> deliver, Action<string> status)
     {
@@ -122,13 +127,32 @@ internal sealed class NetworkInputClient : IDisposable
             var filled = 0;
             var ack = new byte[InputRecord.SealedAckLength];
             var canInject = true; // last injection outcome; the ack reports it without waiting for this batch
+            var pacer = new AckPacer(System.Diagnostics.Stopwatch.Frequency);
+            void Acknowledge(uint sequence, uint received, bool deferred)
+            {
+                var request = PendingLeave();
+                outgoing.Seal(InputRecord.Ack(sequence, received, !canInject, request.Flags, deferred), ack);
+                wire.Send(ack);
+                pacer.Sent(sequence, !canInject, request.Serial, System.Diagnostics.Stopwatch.GetTimestamp());
+            }
             while (!lifetime.IsCancellationRequested)
             {
+                // A paced acknowledgement waits only until its deadline for the next read.
+                if (pacer.Deadline is { } deadline && pacer.Pending is { } owed)
+                {
+                    var wait = (deadline - System.Diagnostics.Stopwatch.GetTimestamp()) * 1_000_000 / System.Diagnostics.Stopwatch.Frequency;
+                    if (wait <= 0 || !wire.Poll((int)Math.Min(wait, int.MaxValue), SelectMode.SelectRead))
+                    {
+                        Acknowledge(owed, pacer.PendingReceived, deferred: true);
+                        continue;
+                    }
+                }
                 var read = wire.Receive(buffer, filled, buffer.Length - filled, SocketFlags.None);
                 if (read <= 0) throw new IOException("Stream closed");
                 filled += read;
                 var offset = 0;
                 uint? last = null;
+                var ping = false;
                 var records = new List<InputEvent>();
                 while (filled - offset >= 1 && filled - offset >= 1 + buffer[offset])
                 {
@@ -138,18 +162,23 @@ internal sealed class NetworkInputClient : IDisposable
                     if (!InputRecord.TryParse(plain, out var record)) throw new InvalidDataException("Unknown record");
                     records.Add(record);
                     last = record.Sequence;
+                    ping |= record.Type == InputRecord.Ping;
                     offset += 1 + length;
                 }
                 if (offset > 0) { Buffer.BlockCopy(buffer, offset, buffer, 0, filled - offset); filled -= offset; }
                 if (filled == buffer.Length) throw new InvalidDataException("Oversized record");
                 if (last is not { } sequence) continue;
-                // Acknowledge first, so the round trip the Mac measures is the wire, not the
-                // injection that follows; the blocked flag reports the previous batch's outcome.
-                outgoing.Seal(InputRecord.Ack(sequence, InputRecord.Clock(), !canInject, PendingLeave()), ack);
-                wire.Send(ack);
+                // Acknowledge first when due, so the round trip the Mac measures is the wire, not
+                // the injection that follows; the blocked flag reports the previous batch's outcome.
+                var now = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (pacer.Read(sequence, InputRecord.Clock(), ping, !canInject, PendingLeave().Serial, now))
+                    Acknowledge(sequence, pacer.PendingReceived, deferred: false);
                 var ok = true;
                 foreach (var record in records) ok &= deliver(record);
                 canInject = ok;
+                // An edge-return request this batch raised goes to the Mac now, not a step later.
+                if (pacer.Fresh(PendingLeave().Serial))
+                    Acknowledge(pacer.Pending ?? pacer.LastAcked ?? sequence, pacer.Pending is null ? InputRecord.Clock() : pacer.PendingReceived, deferred: true);
             }
         }
     }
