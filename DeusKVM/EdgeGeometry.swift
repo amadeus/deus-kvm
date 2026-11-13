@@ -59,6 +59,20 @@ struct EdgeGeometry: Equatable, Sendable {
         return along >= cornerSize && along < length - cornerSize && !otherDisplays.contains { $0.contains(outside) }
     }
 
+    /// Straight-line distance from `point` to the switch edge's segment. The cursor cannot reach
+    /// the edge by a shorter path, whichever display it is on.
+    func distance(to point: CGPoint) -> Double {
+        func gap(_ value: Double, _ low: Double, _ high: Double) -> Double {
+            value < low ? low - value : value > high ? value - high : 0
+        }
+        switch edge {
+        case .left: return hypot(point.x - bounds.minX, gap(point.y, bounds.minY, bounds.maxY - 1))
+        case .right: return hypot(point.x - (bounds.maxX - 1), gap(point.y, bounds.minY, bounds.maxY - 1))
+        case .top: return hypot(point.y - bounds.minY, gap(point.x, bounds.minX, bounds.maxX - 1))
+        case .bottom: return hypot(point.y - (bounds.maxY - 1), gap(point.x, bounds.minX, bounds.maxX - 1))
+        }
+    }
+
     func isOutward(dx: Int64, dy: Int64) -> Bool {
         switch edge {
         case .left: dx < 0

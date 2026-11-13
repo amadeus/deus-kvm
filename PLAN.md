@@ -26,6 +26,24 @@ and gestures only matter while controlling Windows.
   edge return unchanged; Mission Control/Spaces gestures still blocked on the PC
   and still working on the Mac.
 
+User report on that build: "maybe slightly better". Pointer motion itself was
+still tapped everywhere on the Mac. Follow-up the same day:
+
+- **Motion tap only near the edge:** the tap is split three ways: keys, modifiers,
+  buttons and media keys (always on); motion and drags; gestures and scrolling
+  (only while remote). On the Mac, motion is tapped while remote, during the
+  return probe, within `PointerProximity.band` (360 pt) of the switch edge, and
+  while the cursor rests (free: no events). Moving elsewhere, the tap is off and
+  the tap thread polls the cursor (1.4 µs a read, ~45 µs a wake against ~105 µs a
+  tapped event) after `distance / 30,000 pt/s`, at most 100 ms, so the cursor
+  cannot reach the edge between polls; a cursor that outruns that is found at the
+  edge by the next poll and crosses as for an arrival event. The hotkey crossing
+  re-reads the cursor position. No edge switching (disabled, no PC) means no
+  motion tap on the Mac at all.
+- **Pending (hardware):** CPU while moving on the Mac away from and near the edge;
+  crossings by slow approach, fast flick and hotkey; return then immediate
+  re-crossing; drags near the edge.
+
 ### Network pointer and SYSTEM relay — 2026-11-08 to 2026-11-11
 
 Bluetooth delivers pointer motion unevenly (macOS keeps the LE connection
