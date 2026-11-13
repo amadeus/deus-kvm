@@ -11,4 +11,15 @@ enum TrackpadGesture {
     static var eventMask: CGEventMask {
         eventTypes.reduce(CGEventMask(0)) { $0 | CGEventMask(1) << CGEventMask($1) }
     }
+
+    /// Type 29: the raw touch frames behind every gesture, sent for any touch on the pad, moving
+    /// the pointer included (as many as pointer moves, and more while fingers rest). macOS acts on
+    /// the dedicated types above, so swallowing those still blocks Mission Control, Spaces,
+    /// pinch and swipes; the frames themselves go to DeusKVM's panel under the parked cursor.
+    static let touchFrames: UInt32 = 29
+
+    /// What is swallowed while controlling Windows.
+    static var remoteMask: CGEventMask {
+        eventMask & ~(CGEventMask(1) << CGEventMask(touchFrames))
+    }
 }

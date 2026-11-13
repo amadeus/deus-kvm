@@ -50,7 +50,7 @@ enum TapMask {
         .otherMouseDown, .otherMouseUp, MediaKeyEvent.eventType
     ])
     static let motion = mask([.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged])
-    static let remote = TrackpadGesture.eventMask | mask([.scrollWheel])
+    static let remote = TrackpadGesture.remoteMask | mask([.scrollWheel])
 
     private static func mask(_ types: [CGEventType]) -> CGEventMask {
         types.reduce(0) { $0 | CGEventMask(1) << CGEventMask($1.rawValue) }

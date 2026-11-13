@@ -40,7 +40,13 @@ final class TapWorkScheduleTests: XCTestCase {
             .leftMouseDragged, .rightMouseDown, .rightMouseUp, .rightMouseDragged,
             .otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel, MediaKeyEvent.eventType
         ].reduce(TrackpadGesture.eventMask) { $0 | CGEventMask(1) << CGEventMask($1.rawValue) }
-        XCTAssertEqual(TapMask.main | TapMask.motion | TapMask.remote, original)
+        // Everything but the raw touch frames, which are no longer swallowed while remote.
+        let touchFrames = CGEventMask(1) << CGEventMask(TrackpadGesture.touchFrames)
+        XCTAssertEqual(TapMask.main | TapMask.motion | TapMask.remote, original & ~touchFrames)
+        XCTAssertEqual(TapMask.remote & touchFrames, 0)
+        for type in TrackpadGesture.eventTypes where type != TrackpadGesture.touchFrames {
+            XCTAssertNotEqual(TapMask.remote & CGEventMask(1) << CGEventMask(type), 0, "gesture type \(type) is still swallowed")
+        }
         XCTAssertEqual(TapMask.main & TapMask.motion, 0)
         XCTAssertEqual(TapMask.main & TapMask.remote, 0)
         XCTAssertEqual(TapMask.motion & TapMask.remote, 0)
