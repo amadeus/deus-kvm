@@ -2,12 +2,11 @@ import XCTest
 
 final class CaptureReadinessTests: XCTestCase {
     func testControlsOpenAtLaunchOnlyWhileSomethingNeedsSettingUp() {
-        XCTAssertFalse(LaunchWindowPolicy.shouldOpen(bluetooth: true, accessibility: true, inputMonitoring: true, pairedPC: true))
-        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(bluetooth: false, accessibility: true, inputMonitoring: true, pairedPC: true))
-        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(bluetooth: true, accessibility: false, inputMonitoring: true, pairedPC: true))
-        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(bluetooth: true, accessibility: true, inputMonitoring: false, pairedPC: true))
+        XCTAssertFalse(LaunchWindowPolicy.shouldOpen(accessibility: true, inputMonitoring: true, pairedPC: true))
+        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(accessibility: false, inputMonitoring: true, pairedPC: true))
+        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(accessibility: true, inputMonitoring: false, pairedPC: true))
         XCTAssertTrue(
-            LaunchWindowPolicy.shouldOpen(bluetooth: true, accessibility: true, inputMonitoring: true, pairedPC: false),
+            LaunchWindowPolicy.shouldOpen(accessibility: true, inputMonitoring: true, pairedPC: false),
             "no PC paired yet"
         )
     }
@@ -43,6 +42,7 @@ final class CaptureReadinessTests: XCTestCase {
         CaptureReadiness(
             enabled: true,
             target: true,
+            stream: true,
             accessibility: true,
             keyboardMonitoring: true,
             tap: true,
@@ -54,7 +54,7 @@ final class CaptureReadinessTests: XCTestCase {
 
     func testConnectedMacCannotOfferANonfunctionalSwitchButton() {
         XCTAssertTrue(ready.canSwitch)
-        for key in [\CaptureReadiness.enabled, \.target, \.accessibility, \.keyboardMonitoring, \.tap, \.display, \.granted] {
+        for key in [\CaptureReadiness.enabled, \.target, \.stream, \.accessibility, \.keyboardMonitoring, \.tap, \.display, \.granted] {
             var state = ready
             state[keyPath: key] = false
             XCTAssertFalse(state.canSwitch)

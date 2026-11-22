@@ -3,7 +3,4 @@
 which xcodegen || brew install xcodegen
 
 cd "${CI_PRIMARY_REPOSITORY_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
-for file in company_ids service_uuids; do
-    [ -f "DeusKVM/Resources/$file.json" ] || curl -fsSL -o "DeusKVM/Resources/$file.json" "https://raw.githubusercontent.com/NordicSemiconductor/bluetooth-numbers-database/master/v1/$file.json"
-done
 xcodegen generate

@@ -1,4 +1,3 @@
-import CoreBluetooth
 import Foundation
 
 /// Connection readiness, independent of whether input is currently on Mac or PC.
@@ -15,10 +14,10 @@ enum StatusBarConnectionState: Equatable {
     }
 
     static func resolve(
-        enabled: Bool, bluetooth: CBManagerState, secureInput: Bool = false, link: Link, now: TimeInterval
+        enabled: Bool, listening: Bool, secureInput: Bool = false, link: Link, now: TimeInterval
     ) -> Self {
         guard enabled else { return .disabled }
-        guard bluetooth == .poweredOn else { return .unavailable }
+        guard listening else { return .unavailable }
         // Secure Input blocks capture whatever the link is doing; showing it as connecting hides the cause.
         if secureInput { return .secureInput }
         if link.waiting { return .waiting }
@@ -31,9 +30,9 @@ enum StatusBarConnectionState: Equatable {
     func symbol(isRemote: Bool) -> String {
         switch self {
         case .disabled: "pause.circle"
-        case .unavailable: "antenna.radiowaves.left.and.right.slash"
+        case .unavailable: "network.slash"
         case .secureInput: "lock.shield"
-        case .searching: "antenna.radiowaves.left.and.right"
+        case .searching: "network"
         case .connecting: "arrow.triangle.2.circlepath"
         case .waiting: "clock"
         case .ready: isRemote ? "keyboard.fill" : "keyboard"
@@ -43,7 +42,7 @@ enum StatusBarConnectionState: Equatable {
     var label: String {
         switch self {
         case .disabled: "DeusKVM disabled"
-        case .unavailable: "DeusKVM — Bluetooth unavailable"
+        case .unavailable: "DeusKVM — network listener unavailable"
         case .secureInput: "DeusKVM — Secure Input is blocking switching"
         case .searching: "DeusKVM — searching for a PC"
         case .connecting: "DeusKVM — connecting to PC"

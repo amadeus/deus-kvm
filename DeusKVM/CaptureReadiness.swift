@@ -16,6 +16,8 @@ struct StatusText: Equatable, Sendable {
 struct CaptureReadiness {
     var enabled = false
     var target = false
+    /// The PC's input stream is connected (keys and pointer travel only on it).
+    var stream = false
     var accessibility = false
     var keyboardMonitoring = false
     var tap = false
@@ -41,17 +43,18 @@ struct CaptureReadiness {
         if !tap { return StatusText(label: "Capture not ready", detail: "Input capture is not ready; check permissions in Setup") }
         if !display { return StatusText(label: "No display selected", detail: "Choose an available Mac display in Configuration") }
         if secureInput { return StatusText(label: "Secure Input on", detail: "Secure Input is active on this Mac") }
-        if !target { return StatusText(label: "PC not connected", detail: "Waiting for the allowed PC's keyboard and mouse connection") }
+        if !target { return StatusText(label: "PC not connected", detail: "Waiting for an allowed PC's companion to connect") }
         if waiting { return StatusText(label: "Waiting for Windows", detail: "Waiting for Windows to transfer control") }
         if !granted { return StatusText(label: "Awaiting companion approval", detail: "Waiting for Windows companion to grant control") }
+        if !stream { return StatusText(label: "Connecting input", detail: "Waiting for the PC's input connection") }
         return nil
     }
 }
 
 /// Whether the controls window should open when DeusKVM launches: only while a permission is
-/// missing or no Windows PC has been paired yet.
+/// missing or no Windows PC has been allowed yet.
 enum LaunchWindowPolicy {
-    static func shouldOpen(bluetooth: Bool, accessibility: Bool, inputMonitoring: Bool, pairedPC: Bool) -> Bool {
-        !(bluetooth && accessibility && inputMonitoring && pairedPC)
+    static func shouldOpen(accessibility: Bool, inputMonitoring: Bool, pairedPC: Bool) -> Bool {
+        !(accessibility && inputMonitoring && pairedPC)
     }
 }

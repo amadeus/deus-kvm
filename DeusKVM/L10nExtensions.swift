@@ -15,10 +15,6 @@ extension L10n {
             "device_info.device"
         }
 
-        static var manufacturer: LocalizedStringKey {
-            "device_info.manufacturer"
-        }
-
         static var advertisement: LocalizedStringKey {
             "device_info.advertisement"
         }
@@ -60,27 +56,11 @@ extension L10n {
         static var deviceNameLimitation: LocalizedStringKey {
             "setup.device_name_limitation"
         }
-
-        static var bluetoothOffTitle: LocalizedStringKey {
-            "setup.bluetooth_off_title"
-        }
-
-        static var bluetoothOffMessage: LocalizedStringKey {
-            "setup.bluetooth_off_message"
-        }
     }
 
     enum Settings {
         static var connection: LocalizedStringKey {
             "settings.connection"
-        }
-
-        static var autoAdvertise: LocalizedStringKey {
-            "settings.auto_advertise"
-        }
-
-        static var autoAdvertiseHint: LocalizedStringKey {
-            "settings.auto_advertise_hint"
         }
 
         static var advanced: LocalizedStringKey {
@@ -125,10 +105,6 @@ extension L10n {
                 String(localized: "error.failed_to_connect"),
                 reason
             )
-        }
-
-        static var sdpPublishFailed: String {
-            String(localized: "error.sdp_publish_failed")
         }
 
         static func deviceNotPaired(_ name: String) -> String {

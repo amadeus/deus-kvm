@@ -23,17 +23,6 @@
           }
         }
       }
-    },
-    "NSBluetoothAlwaysUsageDescription" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "DeusKVM uses Bluetooth to act as a wireless keyboard, mouse, and media remote for your computer, TV, or other devices."
-          }
-        }
-      }
     }
   },
   "version" : "1.0"

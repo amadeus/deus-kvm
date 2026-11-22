@@ -1,6 +1,6 @@
 import Foundation
 
-/// Orders captured input around crossings on the Bluetooth queue. Input for a remote session
+/// Orders captured input around crossings on the input queue. Input for a remote session
 /// the coordinator has not approved yet waits here and is released in capture order once it
 /// starts; a stop, a refused crossing or a newer session discards it.
 struct InputGate<Event> {

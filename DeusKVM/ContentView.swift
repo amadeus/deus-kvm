@@ -1,4 +1,3 @@
-import CoreBluetooth
 import SwiftUI
 
 struct ContentView: View {
@@ -25,8 +24,7 @@ struct ContentView: View {
     }
 
     private var permissionsGranted: Bool {
-        CBManager.authorization == .allowedAlways
-            && AccessibilityPermission.isTrusted
+        AccessibilityPermission.isTrusted
             && KeyboardMonitoringPermission.isGranted
     }
 }

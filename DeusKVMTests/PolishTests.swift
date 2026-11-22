@@ -32,20 +32,4 @@ final class PolishTests: XCTestCase {
         state.finish(next)
         XCTAssertFalse(state.isRunning)
     }
-
-    func testDisabledAdvertisingPreservesAllowedHostAndResumesReadinessPolicy() {
-        let pc = UUID()
-        var policy = HIDHostPolicy(allowed: [pc])
-        XCTAssertFalse(policy.shouldAdvertise(enabled: false, poweredOn: true, serviceAdded: true))
-        XCTAssertTrue(policy.shouldAdvertise(enabled: true, poweredOn: true, serviceAdded: true))
-        XCTAssertFalse(policy.shouldAdvertise(enabled: true, poweredOn: false, serviceAdded: true))
-        XCTAssertFalse(policy.shouldAdvertise(enabled: true, poweredOn: true, serviceAdded: false))
-        policy.reconcile(ready: [pc])
-        XCTAssertFalse(policy.shouldAdvertise(enabled: true, poweredOn: true, serviceAdded: true))
-        XCTAssertEqual(policy.target, pc)
-        policy.reconcile(ready: [])
-        XCTAssertEqual(policy.allowed, [pc])
-        XCTAssertFalse(policy.shouldAdvertise(enabled: false, poweredOn: true, serviceAdded: true))
-        XCTAssertTrue(policy.shouldAdvertise(enabled: true, poweredOn: true, serviceAdded: true))
-    }
 }

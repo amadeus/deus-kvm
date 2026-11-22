@@ -8,7 +8,7 @@ import os
 ///
 /// It uses a BSD socket on a dedicated thread rather than Network.framework: a pointer step is
 /// written to the socket the moment it is captured, with no dispatch hop, and acknowledgements
-/// are read by a blocking recv on the same thread. Sends use MSG_DONTWAIT so the Bluetooth queue
+/// are read by a blocking recv on the same thread. Sends use MSG_DONTWAIT so the input queue
 /// that calls `send` is never blocked; a step that cannot be queued at once is dropped (motion
 /// coalesces, the stall check closes a truly stuck link). The same thread pings and checks for
 /// stalls when `InputStreamState.nextCheck` comes due, with no periodic timer: at rest it wakes
@@ -93,7 +93,7 @@ final class InputNetworkServer: @unchecked Sendable {
 
     // MARK: Hot path
 
-    /// Bluetooth queue: one captured event. Writes inline, no dispatch hop.
+    /// Input queue: one captured event. Writes inline, no dispatch hop.
     func send(_ event: NetworkInputEvent) {
         lock.withLock {
             guard up else { return }

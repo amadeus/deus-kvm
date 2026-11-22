@@ -46,7 +46,7 @@ struct ControlsSettingsView: View {
                     Toggle("Share clipboard with Windows", isOn: $clipboardEnabled)
                         .toggleStyle(.switch)
                     Text(
-                        "Shares text up to 64 KiB over Bluetooth and one file up to 2 GB over the local network. "
+                        "Shares text up to 64 KiB and one file up to 2 GB over the local network. "
                             + "Skips marked private items and pauses while locked."
                     )
                     .font(.caption).foregroundStyle(.secondary)

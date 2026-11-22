@@ -1,8 +1,7 @@
 import Foundation
 
-/// Input sent on the local-network stream instead of the Bluetooth HID reports: pointer
-/// motion and buttons the tap routed there, and (companions at `inputNetwork` 2) the whole
-/// keyboard state, the held media key and scroll steps.
+/// Input sent on the local-network stream: pointer motion and buttons, the whole keyboard
+/// state, the held media key and scroll steps.
 enum NetworkInputEvent: Sendable, Equatable {
     case motion(Int32, Int32)
     case button(MouseButtons, Bool)
@@ -13,7 +12,7 @@ enum NetworkInputEvent: Sendable, Equatable {
 }
 
 /// What the PC needs to connect to the Mac's input listener: the same shape as the file
-/// network offer, sent over the Bluetooth companion link as `inputOffer`.
+/// network offer, sent over the companion control link as `inputOffer`.
 struct InputNetworkOffer: Codable, Sendable, Equatable {
     let hosts: [String]
     let port: UInt16
@@ -22,12 +21,12 @@ struct InputNetworkOffer: Codable, Sendable, Equatable {
 
 /// What the stream can do for the tap right now.
 enum NetworkCarrier: Sendable, Equatable {
-    /// No connection: Bluetooth as before.
+    /// No connection: input cannot reach the PC (capture waits for the stream).
     case down
     /// Connected and the PC injects: pointer events go over the network.
     case up
     /// Connected but the PC cannot inject (a UAC prompt or the lock screen holds the secure
-    /// desktop): everything goes over the Bluetooth mouse, which Windows takes anywhere.
+    /// desktop without the SYSTEM relay): input is dropped until it can again.
     case unavailable
 }
 
@@ -42,8 +41,8 @@ struct InputAck: Sendable, Equatable {
     var deferred = false
 }
 
-/// An edge-return request carried on an acknowledgement: the same fields as the Bluetooth
-/// leave message, so both paths reach the same checks.
+/// An edge-return request carried on an acknowledgement: the same fields as the control
+/// link's leave message, so both paths reach the same checks.
 struct InputLeave: Sendable, Equatable {
     let switchID: UInt8
     let edge: UInt8

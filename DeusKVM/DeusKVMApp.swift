@@ -1,4 +1,3 @@
-import CoreBluetooth
 import SwiftUI
 
 @main
@@ -7,22 +6,18 @@ struct DeusKVMApp: App {
     // Owned for the life of the process but not observed here: observing them made every
     // publication, including each crossing, re-evaluate all scenes and rebuild the menu on
     // the main thread that also forwards input. Views observe what they display.
-    private let lowEnergy: HIDPeripheral
-    private let central: HIDCentral
+    private let link: PCLink
     private let coordinator: EdgeSwitchCoordinator
     private let deviceNames: DeviceNameStore
 
     init() {
-        UserDefaults.standard.register(defaults: [AppSettings.useServiceChangedKey: true])
-        let peripheral = HIDPeripheral()
-        let central = HIDCentral()
+        let link = PCLink()
         let names = DeviceNameStore()
-        peripheral.companion.onComputerName = { [weak names] id, name in
+        link.companion.onComputerName = { [weak names] id, name in
             names?.rememberName(name, for: id)
         }
-        let coordinator = EdgeSwitchCoordinator(lowEnergy: peripheral, central: central)
-        lowEnergy = peripheral
-        self.central = central
+        let coordinator = EdgeSwitchCoordinator(link: link)
+        self.link = link
         self.coordinator = coordinator
         deviceNames = names
         AppDelegate.coordinator = coordinator
@@ -32,7 +27,7 @@ struct DeusKVMApp: App {
         controls
         Settings {
             ContentView()
-                .modifier(AppEnvironment(lowEnergy: lowEnergy, central: central, names: deviceNames, coordinator: coordinator))
+                .modifier(AppEnvironment(link: link, names: deviceNames, coordinator: coordinator))
         }
         .defaultSize(width: 480, height: 600)
         .windowResizability(.contentSize)
@@ -53,7 +48,7 @@ struct DeusKVMApp: App {
     private var controlsWindow: some Scene {
         Window("DeusKVM", id: LaunchWindow.controlsID) {
             ContentView()
-                .modifier(AppEnvironment(lowEnergy: lowEnergy, central: central, names: deviceNames, coordinator: coordinator))
+                .modifier(AppEnvironment(link: link, names: deviceNames, coordinator: coordinator))
         }
         .defaultSize(width: 480, height: 600)
         .windowResizability(.contentSize)
@@ -67,7 +62,6 @@ enum LaunchWindow {
 
     @MainActor static var shouldOpenNow: Bool {
         LaunchWindowPolicy.shouldOpen(
-            bluetooth: CBManager.authorization == .allowedAlways,
             accessibility: AccessibilityPermission.isTrusted,
             inputMonitoring: KeyboardMonitoringPermission.isGranted,
             pairedPC: !(UserDefaults.standard.stringArray(forKey: AppSettings.allowedHostsKey) ?? []).isEmpty
@@ -193,16 +187,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// Injects the shared objects without observing them; each view observes what it reads.
 private struct AppEnvironment: ViewModifier {
-    let lowEnergy: HIDPeripheral
-    let central: HIDCentral
+    let link: PCLink
     let names: DeviceNameStore
     let coordinator: EdgeSwitchCoordinator
 
     func body(content: Content) -> some View {
         content
-            .environmentObject(lowEnergy)
-            .environmentObject(lowEnergy.companion)
-            .environmentObject(central)
+            .environmentObject(link)
+            .environmentObject(link.companion)
             .environmentObject(names)
             .environmentObject(coordinator)
     }

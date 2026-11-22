@@ -1,22 +1,19 @@
 import AppKit
-import CoreBluetooth
 import SwiftUI
 
 struct SetupView: View {
-    @EnvironmentObject private var lowEnergy: HIDPeripheral
-    @EnvironmentObject private var central: HIDCentral
+    @EnvironmentObject private var link: PCLink
     @EnvironmentObject private var names: DeviceNameStore
     @EnvironmentObject private var companion: CompanionService
     @AppStorage(AppSettings.developerModeKey) private var developerMode = false
-    @AppStorage(AppSettings.networkPointerKey) private var networkPointer = true
     @StateObject private var login = LaunchAtLoginController()
     @State private var showReset = false
     @AppStorage(AppSettings.hasSeenWelcomeKey) private var hasSeenWelcome = false
     @State private var selectedInfoID: UUID?
     @EnvironmentObject private var coordinator: EdgeSwitchCoordinator
 
-    private var bluetoothError: String? {
-        lowEnergy.lastError ?? central.lastError
+    private var linkError: String? {
+        link.lastError
     }
 
     var body: some View {
@@ -36,12 +33,12 @@ struct SetupView: View {
             if developerMode {
                 diagnosticsSection
             }
-            if bluetoothError != nil || (lowEnergy.isHIDServiceAdded && coordinator.lastError != nil) {
+            if linkError != nil || (link.listening && coordinator.lastError != nil) {
                 Section(header: Text(L10n.Section.lastError)) {
-                    if let lastError = bluetoothError {
+                    if let lastError = linkError {
                         Text(verbatim: lastError).foregroundColor(.red).font(.caption)
                     }
-                    if lowEnergy.isHIDServiceAdded, let lastError = coordinator.lastError {
+                    if link.listening, let lastError = coordinator.lastError {
                         Text(verbatim: lastError).foregroundColor(.red).font(.caption)
                     }
                 }
@@ -63,9 +60,8 @@ struct SetupView: View {
 
     private var devicesSection: some View {
         Section {
-            if lowEnergy.state != .poweredOn {
-                row(L10n.Status.bluetooth, Text(lowEnergy.state.localizedLabel))
-                Button("Open Bluetooth Settings", action: _openBluetoothSettings)
+            if !link.listening {
+                row("Network", Text(verbatim: "Not listening for PCs"))
             }
             if _connectedDevices.isEmpty {
                 Text(L10n.SettingsOrganization.noDevices).foregroundStyle(.secondary)
@@ -75,14 +71,14 @@ struct SetupView: View {
             Text(L10n.SettingsOrganization.devices)
         } footer: {
             if _connectedDevices.isEmpty {
-                Text("Pair through the Windows companion, then turn on Enable control. To replace a PC, turn off its control first.")
+                Text(
+                    "On the PC, choose Add Mac… in the DeusKVM companion and pick this Mac; it appears here once it " +
+                        "connects. Then turn on Enable control."
+                )
             } else {
                 Text("Saved per device. When several enabled devices are ready, choose Use device to select the PC to control.")
             }
         }
-        .onAppear(perform: _seedAliasesFromScan)
-        .onChange(of: lowEnergy.connectedCentrals) { _ in _seedAliasesFromScan() }
-        .onChange(of: central.discovered) { _ in _seedAliasesFromScan() }
     }
 
     private var startupSection: some View {
@@ -100,7 +96,6 @@ struct SetupView: View {
     private var advancedSection: some View {
         Section(header: Text(L10n.Settings.advanced)) {
             Toggle(L10n.Settings.developerMode, isOn: $developerMode)
-            Toggle("Send pointer motion to Windows over the local network", isOn: $networkPointer)
             Button(role: .destructive) { showReset = true } label: {
                 Label(L10n.Settings.reset, systemImage: "trash")
             }
@@ -109,51 +104,30 @@ struct SetupView: View {
 
     private var diagnosticsSection: some View {
         Section(L10n.SettingsOrganization.diagnostics) {
-            row(L10n.Status.bluetooth, Text(lowEnergy.state.localizedLabel))
-            row(L10n.Status.advertising, Text(lowEnergy.isAdvertising ? L10n.Value.yes : L10n.Value.no))
-            row(L10n.Status.hidService, Text(lowEnergy.isHIDServiceAdded ? L10n.Status.hidServiceAdded : L10n.Value.none))
-            row(L10n.Status.subscribedCentrals, Text(lowEnergy.subscribedCentrals.count, format: .number))
-            row(L10n.Status.connectedPeripherals, Text(central.connected.count, format: .number))
-            row(L10n.Status.hostLEDs, Text(verbatim: lowEnergy.keyboardLEDs.localizedLabel))
-            row("Network pointer", Text(verbatim: coordinator.networkPointerState))
+            row(
+                "Control link",
+                Text(verbatim: link.listening ? "Listening on port \(link.server.port.map(String.init) ?? "?")" : "Not listening")
+            )
+            row("This Mac's id", Text(verbatim: link.id?.uuidString.lowercased() ?? "none"))
+            row("Connected PCs", Text(companion.subscribedHosts.count, format: .number))
+            row("Input stream", Text(verbatim: coordinator.networkPointerState))
         }
     }
 
     /// Offer hosts after a PC companion handshake; retain saved control choices while offline.
     private var _connectedDevices: [DeviceEntry] {
-        companion.ready.union(lowEnergy.hostPolicy.allowed)
+        companion.ready.union(companion.subscribedHosts).union(link.hostPolicy.allowed)
             .map { uuid in
                 let alias = names.name(for: uuid)
-                let subscribed = lowEnergy.subscribedCentrals.keys.contains(uuid)
                 return DeviceEntry(
                     id: uuid,
                     name: alias ?? "",
                     isNamed: alias != nil,
-                    rssi: 0,
-                    advertisedServices: [],
-                    companyID: nil,
-                    txPower: nil,
-                    isConnectable: nil,
-                    isHostConnected: lowEnergy.connectedCentrals.contains(uuid),
-                    isCentralConnected: false,
-                    isConnecting: false,
-                    isSubscribed: subscribed,
-                    isActive: lowEnergy.hostPolicy.target == uuid
+                    isHostConnected: companion.subscribedHosts.contains(uuid),
+                    isActive: link.hostPolicy.target == uuid
                 )
             }
             .sorted { $0.id.uuidString < $1.id.uuidString }
-    }
-
-    private func _seedAliasesFromScan() {
-        for uuid in lowEnergy.connectedCentrals where names.name(for: uuid) == nil {
-            guard let scanned = central.discovered.first(where: { $0.id == uuid && $0.isNamed })?.name else { continue }
-            names.rememberName(scanned, for: uuid)
-        }
-    }
-
-    private func _openBluetoothSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings") else { return }
-        NSWorkspace.shared.open(url)
     }
 
     private func connectedDeviceRow(_ entry: DeviceEntry) -> some View {
@@ -186,13 +160,13 @@ struct SetupView: View {
                 }
             }
             Toggle("Enable control", isOn: Binding(
-                get: { lowEnergy.hostPolicy.allowed.contains(entry.id) },
-                set: { lowEnergy.setAllowed(entry.id, $0) }
+                get: { link.hostPolicy.allowed.contains(entry.id) },
+                set: { link.setAllowed(entry.id, $0) }
             ))
             .toggleStyle(.switch)
             .accessibilityLabel(Text("Enable control: \(entry.displayName)"))
-            if lowEnergy.hostPolicy.allowed.contains(entry.id), lowEnergy.hostPolicy.ready.contains(entry.id), !entry.isActive {
-                Button("Use device") { lowEnergy.selectHost(entry.id) }
+            if link.hostPolicy.allowed.contains(entry.id), link.hostPolicy.ready.contains(entry.id), !entry.isActive {
+                Button("Use device") { link.selectHost(entry.id) }
             }
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -201,8 +175,8 @@ struct SetupView: View {
     private func _deviceStatus(_ entry: DeviceEntry) -> String {
         if entry.isActive { return "Current input device" }
         if !entry.isHostConnected { return "Disconnected" }
-        if lowEnergy.hostPolicy.ready.contains(entry.id) { return "Ready" }
-        return "Waiting for keyboard and mouse"
+        if link.hostPolicy.ready.contains(entry.id) { return "Ready" }
+        return "Connecting"
     }
 
     private func row(_ title: LocalizedStringKey, _ value: Text) -> some View {
@@ -214,42 +188,12 @@ struct SetupView: View {
     }
 
     private func _resetAll() {
-        lowEnergy.clearAllowedHosts()
+        link.clearAllowedHosts()
         names.clear()
         if let bundleID = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: bundleID)
         }
         hasSeenWelcome = false
         coordinator.setEnabled(true)
-    }
-}
-
-private extension CBManagerState {
-    var localizedLabel: LocalizedStringKey {
-        switch self {
-        case .unknown: L10n.BluetoothState.unknown
-        case .resetting: L10n.BluetoothState.resetting
-        case .unsupported: L10n.BluetoothState.unsupported
-        case .unauthorized: L10n.BluetoothState.unauthorized
-        case .poweredOff: L10n.BluetoothState.poweredOff
-        case .poweredOn: L10n.BluetoothState.poweredOn
-        @unknown default: L10n.BluetoothState.unavailable
-        }
-    }
-}
-
-private extension KeyboardLEDs {
-    var localizedLabel: String {
-        var parts: [String] = []
-        if contains(.numLock) {
-            parts.append(L10n.KeyboardLED.numLock)
-        }
-        if contains(.capsLock) {
-            parts.append(L10n.KeyboardLED.capsLock)
-        }
-        if contains(.scrollLock) {
-            parts.append(L10n.KeyboardLED.scrollLock)
-        }
-        return parts.isEmpty ? L10n.Value.noneString : ListFormatter.localizedString(byJoining: parts)
     }
 }

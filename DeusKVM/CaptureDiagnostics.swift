@@ -1,5 +1,4 @@
 import AppKit
-import CoreBluetooth
 import CoreGraphics
 import Darwin
 import Foundation
@@ -13,7 +12,7 @@ import os
 @MainActor
 final class CaptureDiagnostics {
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "Capture")
-    /// Input timing is recorded on the Bluetooth queue, where forwarding now happens.
+    /// Input timing is recorded on the input queue, where forwarding now happens.
     private let stats: TransportStats
     let tapStats = TapStats()
     private let file: DiagnosticsLog
@@ -31,7 +30,7 @@ final class CaptureDiagnostics {
     private var windowsReport = WindowsReportRequest()
     private var windowsReportDone: (@MainActor ([String]) -> Void)?
     private struct LinkState {
-        let bluetooth: CBManagerState
+        let listening: Bool
         let target: Bool
         let companion: Bool
     }
@@ -98,11 +97,11 @@ final class CaptureDiagnostics {
     }
 
     /// Records link changes only, not every refresh.
-    func link(bluetooth: CBManagerState, target: Bool, companion: Bool) {
+    func link(listening: Bool, target: Bool, companion: Bool) {
         let previous = logged
-        logged = LinkState(bluetooth: bluetooth, target: target, companion: companion)
-        if previous?.bluetooth != bluetooth { note("bluetooth state=\(bluetooth.rawValue)") }
-        if previous?.target != target { note(target ? "PC keyboard/mouse link ready" : "PC keyboard/mouse link lost") }
+        logged = LinkState(listening: listening, target: target, companion: companion)
+        if previous?.listening != listening { note("control link \(listening ? "listening" : "not listening")") }
+        if previous?.target != target { note(target ? "allowed PC connected" : "no allowed PC connected") }
         if previous?.companion != companion { note(companion ? "Windows companion ready" : "Windows companion not ready") }
     }
 
@@ -160,31 +159,20 @@ final class CaptureDiagnostics {
         }
     }
 
-    /// Writes the context, the Bluetooth queue state and the recent per-second samples at once,
-    /// then the Windows companion's report (when it supports one) and bluetoothd's recent link
-    /// lines, and calls `completion` with the file it wrote.
+    /// Writes the context and the recent per-second samples at once, then the Windows
+    /// companion's report (when it supports one), and calls `completion` with the file it wrote.
     func writeProblemReport(
-        context: [String], transport: BluetoothTransport, companion: CompanionService, target: UUID?,
+        context: [String], stats: TransportStats, companion: CompanionService, target: UUID?,
         completion: @escaping @MainActor @Sendable (URL) -> Void
     ) {
-        transport.snapshot { state in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { [weak self] in
-                    guard let self else { return }
-                    var lines = context + [state, "partial \(summary.line)"]
-                    let samples = history.samples
-                    lines.append("recent samples: \(samples.count) (oldest first)")
-                    lines += samples.map { "sample \(clock.string(from: $0.date)) \($0.line)" }
-                    file.writeReport(lines)
-                    requestWindowsReport(companion: companion, target: target) { [file] windows in
-                        file.writeReport(windows)
-                        BluetoothLinkLog.capture { lines in
-                            file.writeReport(lines + ["=== end problem report ==="])
-                            DispatchQueue.main.async { MainActor.assumeIsolated { completion(file.url) } }
-                        }
-                    }
-                }
-            }
+        var lines = context + ["partial \(summary.line)"]
+        let samples = history.samples
+        lines.append("recent samples: \(samples.count) (oldest first)")
+        lines += samples.map { "sample \(clock.string(from: $0.date)) \($0.line)" }
+        file.writeReport(lines)
+        requestWindowsReport(companion: companion, target: target) { [file] windows in
+            file.writeReport(windows + ["=== end problem report ==="])
+            completion(file.url)
         }
     }
 

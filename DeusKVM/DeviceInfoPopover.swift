@@ -47,12 +47,6 @@ struct DeviceInfoPopover: View {
                     .textSelection(.enabled)
             }
             .foregroundStyle(.secondary)
-            if let manufacturer = entry.manufacturer {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(L10n.DeviceInfo.manufacturer).font(.caption).foregroundStyle(.secondary)
-                    Text(verbatim: manufacturer).textSelection(.enabled)
-                }
-            }
         }
         .frame(width: 320, alignment: .leading)
         .padding(16)

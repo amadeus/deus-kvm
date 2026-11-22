@@ -1,7 +1,6 @@
 import AppKit
 import Carbon
 import Combine
-import CoreBluetooth
 
 struct EdgeDisplay: Identifiable, Equatable {
     let id: String
@@ -11,17 +10,16 @@ struct EdgeDisplay: Identifiable, Equatable {
 
 @MainActor
 final class EdgeSwitchCoordinator: ObservableObject {
-    private lazy var clipboard = MacClipboardSync(service: lowEnergy.companion)
-    private let lowEnergy: HIDPeripheral
-    private let central: HIDCentral
+    private lazy var clipboard = MacClipboardSync(service: link.companion)
+    private let link: PCLink
     private let cursor = CursorConcealer()
     private let diagnostics: CaptureDiagnostics
-    /// Remote input goes from the tap thread straight to the Bluetooth queue; only crossings,
+    /// Remote input goes from the tap thread straight to the input queue; only crossings,
     /// returns and tap lifecycle events come here.
     private lazy var tap = InputTap(
         output: { [weak self] event in self?._receive(event) },
-        forward: { [transport = lowEnergy.transport] in
-            transport.input($1, generation: $0, capturedAt: $2)
+        forward: { [input = link.input] in
+            input.input($1, generation: $0, capturedAt: $2)
         },
         network: { [server = networkPointer.server] in server.carrier },
         stats: diagnostics.tapStats
@@ -94,10 +92,9 @@ final class EdgeSwitchCoordinator: ObservableObject {
         didSet { if shortcut != oldValue { _save() } }
     }
 
-    init(lowEnergy: HIDPeripheral, central: HIDCentral) {
-        self.lowEnergy = lowEnergy
-        self.central = central
-        diagnostics = CaptureDiagnostics(stats: lowEnergy.transport.stats)
+    init(link: PCLink) {
+        self.link = link
+        diagnostics = CaptureDiagnostics(stats: link.input.stats)
         let defaults = UserDefaults.standard
         isEnabled = defaults.object(forKey: AppSettings.enabledKey) as? Bool ?? true
         connectionState = isEnabled ? .unavailable : .disabled
@@ -121,44 +118,44 @@ final class EdgeSwitchCoordinator: ObservableObject {
         diagnostics.started(enabled: isEnabled)
         wireDiagnostics()
         networkPointer.note = { [weak self] in self?.diagnostics.note($0) }
-        networkPointer.onStateChange = { [weak self] in self?.networkPointerState = $0 }
+        // Capture needs the stream: every change can open or close the switch.
+        networkPointer.onStateChange = { [weak self] in self?.networkPointerState = $0; self?._refresh() }
+        link.note = { [weak self] in self?.diagnostics.note($0) }
         // The stream belongs to the capture target, so its requests go through the same checks.
         networkPointer.onLeave = { [weak self] leave in
             guard let self, let target = captureTarget else { return }
             _returnFromPC(target: target, switchID: leave.switchID, edge: leave.edge, fraction: leave.fraction, via: "network")
         }
-        lowEnergy.companion.onReady = { [weak self] _ in self?._configureCompanion(); self?._refresh() }
-        lowEnergy.companion.onActivity = { [weak self] id in
+        link.companion.onReady = { [weak self] _ in self?._configureCompanion(); self?._refresh() }
+        link.companion.onActivity = { [weak self] id in
             guard let self, started, isEnabled, id == currentTarget else { return }
             let recovering = companionDeadlineTimer == nil
             companionDeadlineTimer?.invalidate(); companionDeadlineTimer = nil
             if recovering { _refresh() } else { scheduleChecks() }
         }
-        lowEnergy.companion.onSelection = { [weak self] in self?._refresh() }
-        lowEnergy.companion.onDisableRequested = { [weak self] current, acknowledge in
+        link.companion.onSelection = { [weak self] in self?._refresh() }
+        link.companion.onDisableRequested = { [weak self] current, acknowledge in
             guard let self else { return }
             if current { setEnabled(false) } else {
                 returnLocal(reason: "previous Windows ownership revoked")
-                lowEnergy.releaseInputForDisable()
+                link.releaseInputForDisable()
             }
-            lowEnergy.afterInputRelease(acknowledge)
+            link.afterInputRelease(acknowledge)
         }
-        lowEnergy.companion.onLeave = { [weak self] target, switchID, edge, fraction in
-            self?._returnFromPC(target: target, switchID: switchID, edge: edge, fraction: fraction, via: "Bluetooth")
+        link.companion.onLeave = { [weak self] target, switchID, edge, fraction in
+            self?._returnFromPC(target: target, switchID: switchID, edge: edge, fraction: fraction, via: "control link")
         }
         _refreshDisplays()
-        lowEnergy.onTargetWillChange = { [weak self] in
+        link.onTargetWillChange = { [weak self] in
             self?.returnLocal(reason: "input target changed")
             self?.clipboard.update(target: nil, remote: false, enabled: false, available: false)
         }
-        lowEnergy.setEnabled(isEnabled)
-        central.setEnabled(isEnabled)
-        lowEnergy.$hostPolicy.combineLatest(lowEnergy.$state)
+        link.setEnabled(isEnabled)
+        link.$hostPolicy.combineLatest(link.$listening)
             .sink { [weak self] _ in
                 DispatchQueue.main.async { self?._refresh() }
             }.store(in: &subscriptions)
-        lowEnergy.$subscribedCentrals.map { _ in () }
-            .merge(with: lowEnergy.companion.objectWillChange.map { _ in () })
+        link.companion.objectWillChange
             .sink { [weak self] in
                 DispatchQueue.main.async { self?._refresh() }
             }.store(in: &subscriptions)
@@ -196,7 +193,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     func stop() {
         started = false
         returnLocal()
-        lowEnergy.companion.setAvailability(enabled: false, allowed: lowEnergy.hostPolicy.allowed)
+        link.companion.setAvailability(enabled: false, allowed: link.hostPolicy.allowed)
         clipboard.stop()
         timer?.invalidate()
         timer = nil
@@ -210,7 +207,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
         tap.stop()
         tapReady = false
         tapStarting = false
-        lowEnergy.transport.flush()
         diagnostics.stopping()
     }
 
@@ -223,10 +219,9 @@ final class EdgeSwitchCoordinator: ObservableObject {
         if !value {
             tap.stop(); tapReady = false; tapStarting = false; keyboardMonitoringReady = false
         }
-        central.setEnabled(value)
-        if value { lowEnergy.companion.prepareControlRequest() }
-        lowEnergy.setEnabled(value)
-        if value { lowEnergy.companion.requestControl() }
+        if value { link.companion.prepareControlRequest() }
+        link.setEnabled(value)
+        if value { link.companion.requestControl() }
         _refresh()
     }
 
@@ -245,16 +240,16 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private func _returnLocal(at point: CGPoint?, reason: String) {
         let wasRemote = isRemote
         let startedAt = ProcessInfo.processInfo.systemUptime
-        // End the session first: the tap forwards straight to the Bluetooth queue, and nothing
+        // End the session first: the tap forwards straight to the input queue, and nothing
         // captured for this session may follow EXIT there.
         tap.forceLocal()
         if isRemote, let target = captureTarget {
-            lowEnergy.companion.send(.exit, payload: Data([switchID]), to: target)
+            link.companion.send(.exit, payload: Data([switchID]), to: target)
         }
         companionCapture = false
         cursor.restore(at: point)
         if wasRemote { tap.observeReturn(since: startedAt) }
-        lowEnergy.transport.stopInput()
+        link.input.stopInput()
         if wasRemote { isRemote = false; networkPointer.logSession() }
         captureTarget = nil
         refreshClipboard()
@@ -294,7 +289,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         let secure = IsSecureEventInputEnabled()
         if permissionGranted != permission { permissionGranted = permission }
         if secureInput != secure { secureInputChanged(to: secure) }
-        let nextTarget = isEnabled && lowEnergy.state == .poweredOn ? lowEnergy.hostPolicy.target : nil
+        let nextTarget = isEnabled && link.listening ? link.hostPolicy.target : nil
         if nextTarget != currentTarget {
             companionDeadlineTimer?.invalidate(); companionDeadlineTimer = nil
             currentTarget = nextTarget
@@ -303,7 +298,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         if targetAvailable != available { targetAvailable = available }
         refreshCaptureReadiness()
         if isEnabled { _refreshCompanion() } else { setCompanionStatus(.disabled) }
-        networkPointer.refresh(enabled: isEnabled, target: currentTarget, companion: lowEnergy.companion)
+        networkPointer.refresh(enabled: isEnabled, target: currentTarget, companion: link.companion)
         _refreshConnectionState()
         refreshClipboard()
         if isRemote, !canSwitch || captureTarget != currentTarget {
@@ -320,7 +315,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
 
     private func refreshClipboard() {
         clipboard.update(
-            target: canSwitch ? lowEnergy.hostPolicy.target : nil,
+            target: canSwitch ? link.hostPolicy.target : nil,
             remote: isRemote,
             enabled: UserDefaults.standard.object(forKey: AppSettings.clipboardEnabledKey) as? Bool ?? true,
             available: !secureInput
@@ -353,7 +348,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
     }
 
     private func _refreshCompanion() {
-        let companion = lowEnergy.companion
+        let companion = link.companion
         let fresh = currentTarget.flatMap { companion.lastSeen[$0] }.map {
             ProcessInfo.processInfo.systemUptime - $0 < 10
         } ?? false
@@ -373,8 +368,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
     }
 
     private func _configureCompanion() {
-        guard let target = currentTarget, lowEnergy.companion.allowsControl(target) else { return }
-        let companion = lowEnergy.companion
+        guard let target = currentTarget, link.companion.allowsControl(target) else { return }
+        let companion = link.companion
         let monitors = companion.monitors[target] ?? []
         if let monitor = monitors.first(where: { $0.id == pcMonitorID }) ??
             (pcMonitorID.isEmpty ? monitors.first(where: \.primary) ?? monitors.first : nil)
@@ -423,20 +418,20 @@ final class EdgeSwitchCoordinator: ObservableObject {
             let setupMs = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
             beginDiagnostics(setupMs: setupMs)
             switchID &+= 1
-            companionCapture = currentTarget.map { lowEnergy.companion.ready.contains($0) } ?? false
+            companionCapture = currentTarget.map { link.companion.ready.contains($0) } ?? false
             if let target = currentTarget {
                 let fraction = geometry.fraction(at: origin)
                 let entry = CompanionEntry.packet(
                     id: switchID, edge: edge.opposite.wireValue, fraction: fraction,
-                    fromEdge: fromEdge, supportsCenter: lowEnergy.companion.supportsCenter(target)
+                    fromEdge: fromEdge, supportsCenter: link.companion.supportsCenter(target)
                 )
-                lowEnergy.companion.send(
+                link.companion.send(
                     CompanionProtocol.Message(rawValue: entry.type)!, payload: entry.payload, to: target
                 )
             }
-            // Input captured since the crossing waits on the Bluetooth queue until this point,
+            // Input captured since the crossing waits on the input queue until this point,
             // so it follows ENTER and never forwards for a refused crossing.
-            lowEnergy.transport.startInput(generation: generation, network: networkPointer.server)
+            link.input.startInput(generation: generation, network: networkPointer.server)
         case let .end(generation):
             if tap.isCurrent(generation) { returnLocal(reason: "toggle hotkey") }
         case .disabled:
@@ -450,12 +445,12 @@ final class EdgeSwitchCoordinator: ObservableObject {
 
 extension EdgeSwitchCoordinator {
     private func _refreshConnectionState() {
-        let companion = lowEnergy.companion
+        let companion = link.companion
         let state = StatusBarConnectionState.resolve(
-            enabled: isEnabled, bluetooth: lowEnergy.state, secureInput: secureInput,
+            enabled: isEnabled, listening: link.listening, secureInput: secureInput,
             link: .init(
-                target: lowEnergy.hostPolicy.target,
-                subscribers: Set(lowEnergy.subscribedCentrals.keys).union(companion.subscribedHosts),
+                target: link.hostPolicy.target,
+                subscribers: companion.subscribedHosts,
                 companions: companion.ready, lastSeen: companion.lastSeen,
                 captureReady: canSwitch, waiting: currentTarget.map { companion.isWaiting($0) } ?? false
             ), now: ProcessInfo.processInfo.systemUptime
@@ -480,7 +475,7 @@ extension EdgeSwitchCoordinator {
             }
         } else { timer?.invalidate(); timer = nil }
         guard companionDeadlineTimer == nil,
-              let seen = currentTarget.flatMap({ lowEnergy.companion.lastSeen[$0] }),
+              let seen = currentTarget.flatMap({ link.companion.lastSeen[$0] }),
               let deadline = CoordinatorSchedule.linkDeadline(lastSeen: seen, now: ProcessInfo.processInfo.systemUptime)
         else { return }
         companionDeadlineTimer = Timer.scheduledTimer(
@@ -496,20 +491,20 @@ extension EdgeSwitchCoordinator {
     /// Each refresh: link changes; while remote, a diagnostic ping and the per-second sample.
     private func recordDiagnostics() {
         if isRemote {
-            if let captureTarget { lowEnergy.companion.ping(captureTarget) }
-            let companion = lowEnergy.companion
+            if let captureTarget { link.companion.ping(captureTarget) }
+            let companion = link.companion
             diagnostics.sample(parkingPoint: cursor.parkingPoint, blind: companion.blind.values.sorted(), pings: companion.takePings())
         }
         let companion = currentTarget.map { id in
-            lowEnergy.companion.ready.contains(id) && lowEnergy.companion.lastSeen[id].map {
+            link.companion.ready.contains(id) && link.companion.lastSeen[id].map {
                 ProcessInfo.processInfo.systemUptime - $0 < 10
             } == true
         } ?? false
-        diagnostics.link(bluetooth: lowEnergy.state, target: targetAvailable, companion: companion)
+        diagnostics.link(listening: link.listening, target: targetAvailable, companion: companion)
     }
 
-    /// An edge-return request from the PC, over the network stream (normally) or Bluetooth (its
-    /// fallback). Whichever arrives first returns; the rest no longer match and are ignored.
+    /// An edge-return request from the PC, over the input stream (normally) or the control link
+    /// (its fallback). Whichever arrives first returns; the rest no longer match and are ignored.
     private func _returnFromPC(target: UUID, switchID: UInt8, edge: UInt8, fraction: UInt16, via: String) {
         guard isRemote, !locked, !recordingShortcut, target == captureTarget, switchID == self.switchID,
               edge == self.edge.opposite.wireValue, let geometry else { return }
@@ -531,7 +526,7 @@ extension EdgeSwitchCoordinator {
     }
 
     private func wireDiagnostics() {
-        lowEnergy.companion.onReport = { [weak self] _, token, text in self?.diagnostics.receiveWindowsReport(token: token, text: text) }
+        link.companion.onReport = { [weak self] _, token, text in self?.diagnostics.receiveWindowsReport(token: token, text: text) }
         observeUnlock()
     }
 
@@ -545,19 +540,19 @@ extension EdgeSwitchCoordinator {
     }
 
     private func beginDiagnostics(setupMs: Int) {
-        lowEnergy.companion.cancelPing()
-        _ = lowEnergy.companion.takePings()
+        link.companion.cancelPing()
+        _ = link.companion.takePings()
         diagnostics.began("remote capture began setupMs=\(setupMs)")
     }
 
-    /// Writes what the app knows right now, the recent per-second samples, the Windows
-    /// companion's report and bluetoothd's recent link-parameter lines, then calls `completion`
+    /// Writes what the app knows right now, the recent per-second samples and the Windows
+    /// companion's report, then calls `completion`
     /// with the file it wrote. Used for lag, early returns or anything else that misbehaves.
     func reportProblem(completion: @escaping @MainActor @Sendable (URL) -> Void) {
         guard !reportingProblem else { return }
         reportingProblem = true
         let now = ProcessInfo.processInfo.systemUptime
-        let companion = lowEnergy.companion
+        let companion = link.companion
         let seen = currentTarget.flatMap { companion.lastSeen[$0] }.map { String(Int((now - $0) * 1000)) } ?? "none"
         let ping = companion.pingOutstandingAge(now: now).map { String(Int($0 * 1000)) } ?? "none"
         let state: [String] = [
@@ -565,19 +560,21 @@ extension EdgeSwitchCoordinator {
             "secureInput=\(secureInput)", "target=\(currentTarget != nil)", "captureTarget=\(captureTarget != nil)",
             "companionCapture=\(companionCapture)"
         ]
-        let link: [String] = [
+        let linkState: [String] = [
             "status=\(companionStatus)", "ready=\(currentTarget.map { companion.ready.contains($0) } ?? false)",
             "lastSeenAgeMs=\(seen)", "pingOutstandingMs=\(ping)", "blind=\(companion.blind.values.sorted())"
         ]
-        let context = [
+        let port = link.server.port.map(String.init) ?? "none"
+        let listener = "link: listening=\(link.listening) port=\(port) connected=\(companion.subscribedHosts.count) " +
+            "ready=\(companion.ready.count) stream=\(networkPointerState)"
+        let context: [String] = [
             "=== problem report === \(CaptureDiagnostics.version) uptimeS=\(Int(now))",
             "state: " + state.joined(separator: " "),
-            "companion: " + link.joined(separator: " "),
-            "bluetooth: state=\(lowEnergy.state.rawValue) advertising=\(lowEnergy.isAdvertising) " +
-                "subscribed=\(lowEnergy.subscribedCentrals.count) connected=\(lowEnergy.connectedCentrals.count)"
+            "companion: " + linkState.joined(separator: " "),
+            listener
         ]
         diagnostics.writeProblemReport(
-            context: context, transport: lowEnergy.transport, companion: companion, target: currentTarget
+            context: context, stats: link.input.stats, companion: companion, target: currentTarget
         ) { [weak self] url in
             self?.reportingProblem = false
             completion(url)
@@ -585,9 +582,10 @@ extension EdgeSwitchCoordinator {
     }
 
     private func refreshCaptureReadiness() {
-        let companion = lowEnergy.companion
+        let companion = link.companion
         let state = CaptureReadiness(
-            enabled: isEnabled, target: targetAvailable, accessibility: permissionGranted,
+            enabled: isEnabled, target: targetAvailable, stream: networkPointer.server.carrier != .down,
+            accessibility: permissionGranted,
             keyboardMonitoring: keyboardMonitoringReady, tap: tapReady, display: geometry != nil,
             secureInput: secureInput, granted: currentTarget.map { companion.allowsControl($0) } ?? false,
             waiting: currentTarget.map { companion.isWaiting($0) } ?? false

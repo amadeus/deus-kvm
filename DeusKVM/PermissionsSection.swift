@@ -1,16 +1,12 @@
 import AppKit
-import CoreBluetooth
 import SwiftUI
 
 /// Permission requests belong to onboarding, and remain usable while DeusKVM is disabled.
 struct PermissionsSection: View {
     @EnvironmentObject private var coordinator: EdgeSwitchCoordinator
-    @State private var bluetoothAuthorization = CBManager.authorization
     @State private var keyboardGranted = KeyboardMonitoringPermission.isGranted
     @State private var accessibilityGranted = AccessibilityPermission.isTrusted
-    @State private var isExpanded = !(CBManager.authorization == .allowedAlways
-        && AccessibilityPermission.isTrusted && KeyboardMonitoringPermission.isGranted)
-    @State private var permissionManager: CBCentralManager?
+    @State private var isExpanded = !(AccessibilityPermission.isTrusted && KeyboardMonitoringPermission.isGranted)
 
     var body: some View {
         Section {
@@ -47,9 +43,9 @@ struct PermissionsSection: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermissions()
         }
-        .task(id: bluetoothAuthorization == .notDetermined || !keyboardGranted) {
+        .task(id: !keyboardGranted) {
             // Only permission setup needs retries; an already-authorized view has no timer.
-            while bluetoothAuthorization == .notDetermined || !keyboardGranted {
+            while !keyboardGranted {
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
                 refreshPermissions()
             }
@@ -57,18 +53,11 @@ struct PermissionsSection: View {
     }
 
     private var allGranted: Bool {
-        bluetoothAuthorization == .allowedAlways && accessibilityGranted && keyboardGranted
+        accessibilityGranted && keyboardGranted
     }
 
     @ViewBuilder
     private var permissionRows: some View {
-        permissionRow(
-            "Bluetooth",
-            detail: "Connect to your Windows PC.",
-            granted: bluetoothAuthorization == .allowedAlways,
-            restricted: bluetoothAuthorization == .restricted,
-            action: requestBluetooth
-        )
         permissionRow(
             "Accessibility",
             detail: "Switch screens and control the pointer.",
@@ -100,10 +89,8 @@ struct PermissionsSection: View {
     }
 
     private func refreshPermissions() {
-        let bluetooth = CBManager.authorization
         let keyboard = KeyboardMonitoringPermission.isGranted
         let accessibility = AccessibilityPermission.isTrusted
-        if bluetoothAuthorization != bluetooth { bluetoothAuthorization = bluetooth }
         if keyboardGranted != keyboard { keyboardGranted = keyboard }
         if accessibilityGranted != accessibility { accessibilityGranted = accessibility }
     }
@@ -127,17 +114,5 @@ struct PermissionsSection: View {
                 .accessibilityLabel("\(title): \(granted || restricted ? "Open Settings" : "Allow access")")
         }
         .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func requestBluetooth() {
-        if CBManager.authorization == .notDetermined {
-            // Creating a manager requests Bluetooth access without scanning or advertising.
-            // Retain it while the system prompt is outstanding, even if the app is disabled.
-            permissionManager = CBCentralManager(
-                delegate: nil, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey: false]
-            )
-        } else if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth") {
-            NSWorkspace.shared.open(url)
-        }
     }
 }

@@ -24,12 +24,14 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>DeusKVM uses Bluetooth as a keyboard and mouse.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>DeusKVM asks Finder which folder should receive the Windows file when you paste.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>DeusKVM transfers copied files between this Mac and your paired Windows PC when you paste.</string>
+	<string>DeusKVM sends your keyboard, pointer and clipboard to your Windows PC over the local network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_deuskvm._tcp</string>
+	</array>
 	<key>LSUIElement</key>
 	<true/>
 </dict>

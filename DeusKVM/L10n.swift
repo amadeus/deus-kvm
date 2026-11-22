@@ -36,36 +36,6 @@ enum L10n {
         }
     }
 
-    enum Status {
-        static var bluetooth: LocalizedStringKey {
-            "status.bluetooth"
-        }
-
-        static var advertising: LocalizedStringKey {
-            "status.advertising"
-        }
-
-        static var hidService: LocalizedStringKey {
-            "status.hid_service"
-        }
-
-        static var hidServiceAdded: LocalizedStringKey {
-            "status.hid_service.added"
-        }
-
-        static var subscribedCentrals: LocalizedStringKey {
-            "status.subscribed_centrals"
-        }
-
-        static var connectedPeripherals: LocalizedStringKey {
-            "status.connected_peripherals"
-        }
-
-        static var hostLEDs: LocalizedStringKey {
-            "status.host_leds"
-        }
-    }
-
     enum Value {
         static var yes: LocalizedStringKey {
             "value.yes"
@@ -155,10 +125,6 @@ enum L10n {
             String(localized: "device.unknown_name")
         }
 
-        static var unknownManufacturer: String {
-            String(localized: "device.unknown_manufacturer")
-        }
-
         static var inactive: LocalizedStringKey {
             "device.inactive"
         }
@@ -196,30 +162,6 @@ enum L10n {
 
 extension L10n {
     enum BluetoothState {
-        static var unknown: LocalizedStringKey {
-            "bluetooth_state.unknown"
-        }
-
-        static var resetting: LocalizedStringKey {
-            "bluetooth_state.resetting"
-        }
-
-        static var unsupported: LocalizedStringKey {
-            "bluetooth_state.unsupported"
-        }
-
-        static var unauthorized: LocalizedStringKey {
-            "bluetooth_state.unauthorized"
-        }
-
-        static var poweredOff: LocalizedStringKey {
-            "bluetooth_state.powered_off"
-        }
-
-        static var poweredOn: LocalizedStringKey {
-            "bluetooth_state.powered_on"
-        }
-
         static var unavailable: LocalizedStringKey {
             "bluetooth_state.unavailable"
         }
@@ -236,16 +178,6 @@ extension L10n {
 
         static var scrollLock: String {
             String(localized: "keyboard_led.scroll_lock")
-        }
-    }
-
-    enum Bluetooth {
-        static var serviceDescription: String {
-            String(localized: "bluetooth.service_description")
-        }
-
-        static var providerName: String {
-            String(localized: "bluetooth.provider_name")
         }
     }
 }

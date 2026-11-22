@@ -1,9 +1,9 @@
 import Foundation
 
-/// Owns the local-network pointer stream for the coordinator. The
-/// listener runs while the active companion can use it and the setting is on; each new
-/// listener port or target gets a fresh offer over the Bluetooth link. A companion that goes
-/// away takes the listener down, so its return makes a new offer.
+/// Owns the local-network input stream for the coordinator. The listener runs while the
+/// active companion can use it; each new listener port or target gets a fresh offer over the
+/// control link. A companion that goes away takes the listener down, so its return makes a
+/// new offer.
 @MainActor
 final class NetworkPointer {
     let server = InputNetworkServer()
@@ -25,8 +25,7 @@ final class NetworkPointer {
     }
 
     func refresh(enabled: Bool, target: UUID?, companion: CompanionService) {
-        let setting = UserDefaults.standard.object(forKey: AppSettings.networkPointerKey) as? Bool ?? true
-        let wanted = enabled && setting && target.map { companion.supportsInputNetwork($0) } == true
+        let wanted = enabled && target.map { companion.supportsInputNetwork($0) } == true
         server.configure(wanted)
         server.acceptKeys(wanted && target.map { companion.inputNetworkLevel($0) >= 2 } == true)
         guard wanted, let target, let port = server.currentPort else {

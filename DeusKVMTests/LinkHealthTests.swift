@@ -131,12 +131,4 @@ final class LinkHealthTests: XCTestCase {
             ["windows companion report:", "windows: link: ready=True", "windows: history (0, oldest first):"]
         )
     }
-
-    func testBluetoothLinkLinesDropHeadersAndKeepTheNewest() {
-        let output = "Timestamp               Ty Process[PID:TID]\nline 1\nline 2\nline 3\n"
-        XCTAssertEqual(
-            BluetoothLinkLog.lines(output, limit: 2),
-            ["bluetoothd link lines: 2 of 3", "bluetoothd: line 2", "bluetoothd: line 3"]
-        )
-    }
 }

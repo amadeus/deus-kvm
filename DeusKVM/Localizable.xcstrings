@@ -265,72 +265,6 @@
         }
       }
     },
-    "bluetooth.provider_name": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "DeusKVM"
-          }
-        }
-      }
-    },
-    "bluetooth.service_description": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Keyboard and Mouse"
-          }
-        }
-      }
-    },
-    "bluetooth_state.powered_off": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Off"
-          }
-        }
-      }
-    },
-    "bluetooth_state.powered_on": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "On"
-          }
-        }
-      }
-    },
-    "bluetooth_state.resetting": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Resetting"
-          }
-        }
-      }
-    },
-    "bluetooth_state.unauthorized": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Not Authorized"
-          }
-        }
-      }
-    },
     "bluetooth_state.unavailable": {
       "extractionState": "manual",
       "localizations": {
@@ -338,28 +272,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Unavailable"
-          }
-        }
-      }
-    },
-    "bluetooth_state.unknown": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unknown"
-          }
-        }
-      }
-    },
-    "bluetooth_state.unsupported": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unsupported"
           }
         }
       }
@@ -441,17 +353,6 @@
         }
       }
     },
-    "device.unknown_manufacturer": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unknown"
-          }
-        }
-      }
-    },
     "device.unknown_name": {
       "extractionState": "manual",
       "localizations": {
@@ -525,17 +426,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Information"
-          }
-        }
-      }
-    },
-    "device_info.manufacturer": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Manufacturer"
           }
         }
       }
@@ -760,17 +650,6 @@
         }
       }
     },
-    "error.sdp_publish_failed": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to publish Bluetooth HID service record."
-          }
-        }
-      }
-    },
     "error.write_failed": {
       "extractionState": "manual",
       "localizations": {
@@ -892,28 +771,6 @@
         }
       }
     },
-    "settings.auto_advertise": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start advertising on launch"
-          }
-        }
-      }
-    },
-    "settings.auto_advertise_hint": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Advertise as a Bluetooth device automatically when the app opens."
-          }
-        }
-      }
-    },
     "settings.connection": {
       "extractionState": "manual",
       "localizations": {
@@ -1002,28 +859,6 @@
         }
       }
     },
-    "setup.bluetooth_off_message": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bluetooth must be on to proceed. Enable it and try again."
-          }
-        }
-      }
-    },
-    "setup.bluetooth_off_title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Turn On Bluetooth"
-          }
-        }
-      }
-    },
     "setup.device_name_limitation": {
       "extractionState": "manual",
       "localizations": {
@@ -1075,83 +910,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sort"
-          }
-        }
-      }
-    },
-    "status.advertising": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Advertising"
-          }
-        }
-      }
-    },
-    "status.bluetooth": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bluetooth"
-          }
-        }
-      }
-    },
-    "status.connected_peripherals": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Connected Peripherals"
-          }
-        }
-      }
-    },
-    "status.hid_service": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "HID Service"
-          }
-        }
-      }
-    },
-    "status.hid_service.added": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Added"
-          }
-        }
-      }
-    },
-    "status.host_leds": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Host LEDs"
-          }
-        }
-      }
-    },
-    "status.subscribed_centrals": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Subscribed Centrals"
           }
         }
       }

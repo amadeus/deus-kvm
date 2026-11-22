@@ -1,10 +1,10 @@
-import CoreBluetooth
 import Foundation
 import os
 
+/// The companion protocol with each PC, over the control link (`ControlServer`). Clients are
+/// keyed by the PC's id (its identity key's hash); a PC is `ready` once its HELLO arrives.
 @MainActor
 final class CompanionService: ObservableObject {
-    nonisolated(unsafe) static let uuid = CBUUID(string: "d5df0001-fd35-4b5c-8fc9-39dd1c43cb1d")
     @Published private(set) var ready: Set<UUID> = []
     @Published private(set) var subscribedHosts: Set<UUID> = []
     @Published private(set) var monitors: [UUID: [PCMonitor]] = [:]
@@ -18,26 +18,19 @@ final class CompanionService: ObservableObject {
     var onComputerName: ((UUID, String) -> Void)?
     /// A problem report answered by Windows: (companion, token, text).
     var onReport: ((UUID, UInt32, String) -> Void)?
-    /// Frames are encoded here and sent from the Bluetooth queue.
-    var transport: BluetoothTransport?
+    /// The control link packets are sent on.
+    var server: ControlServer?
     private var clients: [UUID: Client] = [:]
     private var selection = CompanionSelection()
     var onSelection: (() -> Void)?
     var onDisableRequested: ((Bool, @escaping () -> Void) -> Void)?
     private var wantsControl = false
-    private var chars: [CBMutableCharacteristic] = []
     /// Link round trips while controlling Windows; diagnostics only.
     private var pings = PingTracker()
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "Companion")
 
     private struct Client {
-        let central: CBCentral
-        var subscriptions: Set<Int> = []
-        var controlEncoder = CompanionProtocol.Encoder()
-        var bulkEncoder = CompanionProtocol.Encoder()
-        var controlDecoder = CompanionProtocol.Decoder()
-        var bulkDecoder = CompanionProtocol.Decoder()
-        var helloSent = false
+        let token: Int
         var supportsResume = false
         var supportsCenter = false
         var supportsClipboard = false
@@ -48,28 +41,6 @@ final class CompanionService: ObservableObject {
         var supportsTakeover = false
         var supportsReport = false
         var inputNetwork = 0
-    }
-
-    func build() -> CBMutableService {
-        reset()
-        let service = CBMutableService(type: Self.uuid, primary: true)
-        let properties: [CBCharacteristicProperties] = [
-            .notifyEncryptionRequired,
-            .writeWithoutResponse,
-            .notifyEncryptionRequired,
-            .write,
-            .read
-        ]
-        chars = (0 ..< 5).map { index in
-            CBMutableCharacteristic(
-                type: CBUUID(string: String(format: "d5df%04x-fd35-4b5c-8fc9-39dd1c43cb1d", index + 2)),
-                properties: properties[index], value: nil,
-                permissions: index == 1 || index == 3 ? .writeEncryptionRequired : .readEncryptionRequired
-            )
-        }
-        service.characteristics = chars
-        transport?.configureCompanion(chars)
-        return service
     }
 
     func setAvailability(enabled: Bool, allowed: Set<UUID>) {
@@ -102,33 +73,36 @@ final class CompanionService: ObservableObject {
         selection.reset()
         subscribedHosts.removeAll()
         clients.removeAll(); ready.removeAll(); monitors.removeAll(); blind.removeAll(); lastSeen.removeAll()
-        chars.removeAll(); transport?.resetCompanion()
     }
 
-    func owns(_ characteristic: CBCharacteristic) -> Bool {
-        chars.contains { $0.uuid == characteristic.uuid }
+    /// A PC finished the link handshake: the Mac's HELLO goes out first, as before.
+    func connected(_ id: UUID, token: Int) {
+        disconnect(id)
+        clients[id] = Client(token: token)
+        subscribedHosts.insert(id)
+        sendJSON(CompanionHello(
+            v: 1, role: "mac", name: Host.current().localizedName ?? "Mac", chunk: CompanionProtocol.maximumChunkSize,
+            clipboard: 1, files: 1, fileReceive: 1, fileNetwork: 1, images: 1,
+            selection: 1, available: selection.available(to: id), availabilityEpoch: selection.epoch,
+            takeover: true, requestControl: wantsControl
+        ), type: .hello, to: id)
     }
 
-    func subscribed(_ central: CBCentral, _ characteristic: CBCharacteristic) {
-        guard let index = chars.firstIndex(where: { $0.uuid == characteristic.uuid }) else { return }
-        var client = clients[central.identifier] ?? Client(central: central)
-        client.subscriptions.insert(index)
-        let sendHello = client.subscriptions.contains(0) && client.subscriptions.contains(2) && !client.helloSent
-        client.helloSent = client.helloSent || sendHello
-        clients[central.identifier] = client
-        if !subscribedHosts.contains(central.identifier) { subscribedHosts.insert(central.identifier) }
-        if sendHello {
-            sendJSON(CompanionHello(
-                v: 1, role: "mac", name: "DeusKVM", chunk: CompanionProtocol.frameLimit(central.maximumUpdateValueLength),
-                clipboard: 1, files: 1, fileReceive: 1, fileNetwork: 1, images: 1,
-                selection: 1, available: selection.available(to: central.identifier), availabilityEpoch: selection.epoch,
-                takeover: true, requestControl: wantsControl
-            ), type: .hello, to: central.identifier)
+    /// The link to a PC closed; a stale token (an older, replaced connection) is ignored.
+    func disconnected(_ id: UUID, token: Int) {
+        guard clients[id]?.token == token else { return }
+        disconnect(id)
+    }
+
+    func receive(_ packet: CompanionProtocol.Packet, from id: UUID, token: Int) {
+        guard clients[id]?.token == token else { return }
+        do {
+            try handle(packet, from: id)
+        } catch {
+            log.error("invalid companion message: \(String(describing: error), privacy: .public)")
+            disconnect(id)
+            server?.close(id)
         }
-    }
-
-    func unsubscribed(_ central: CBCentral) {
-        disconnect(central.identifier)
     }
 
     private func disconnect(_ id: UUID) {
@@ -137,34 +111,6 @@ final class CompanionService: ObservableObject {
         subscribedHosts.remove(id)
         clients.removeValue(forKey: id); ready.remove(id); monitors.removeValue(forKey: id)
         blind.removeValue(forKey: id); lastSeen.removeValue(forKey: id)
-        transport?.dropCompanion(for: id)
-    }
-
-    /// The Bluetooth queue held more than 512 frames for this client.
-    func overflowed(_ id: UUID) {
-        disconnect(id)
-    }
-
-    func receive(_ write: CompanionWrite) -> CBATTError.Code {
-        guard write.offset == 0, let value = write.value, write.index == 1 || write.index == 3,
-              var client = clients[write.central] else { return .writeNotPermitted }
-        do {
-            let packet = try write.index == 1 ? client.controlDecoder.receive(value) : client.bulkDecoder.receive(value)
-            clients[write.central] = client
-            if let packet {
-                guard packet.stream == (write.index == 1 ? 0 : 1) else { throw CompanionProtocol.Failure.malformed }
-                try handle(packet, from: write.central)
-            }
-            return .success
-        } catch {
-            log.error("invalid companion message: \(String(describing: error), privacy: .public)")
-            disconnect(write.central)
-            return .unlikelyError
-        }
-    }
-
-    func readValue(for id: UUID) -> Data {
-        Data("{\"v\":1,\"ready\":\(ready.contains(id))}".utf8)
     }
 
     private func handle(_ packet: CompanionProtocol.Packet, from id: UUID) throws {
@@ -244,8 +190,7 @@ final class CompanionService: ObservableObject {
 
     private func receiveHello(_ data: Data, from id: UUID) throws {
         let hello = try JSONDecoder().decode(CompanionHello.self, from: data)
-        guard hello.v == 1, hello.role == "pc", hello.chunk >= 20,
-              clients[id]?.helloSent == true else { throw CompanionProtocol.Failure.malformed }
+        guard hello.v == 1, hello.role == "pc", clients[id] != nil else { throw CompanionProtocol.Failure.malformed }
         clients[id]?.supportsResume = hello.resume == true
         clients[id]?.supportsCenter = hello.center == true
         clients[id]?.supportsClipboard = hello.clipboard == 1
@@ -256,10 +201,6 @@ final class CompanionService: ObservableObject {
         clients[id]?.supportsTakeover = hello.takeover == true
         clients[id]?.supportsReport = hello.report == 1
         clients[id]?.inputNetwork = hello.inputNetwork ?? 0
-        if let central = clients[id]?.central {
-            // Our HELLO already went out at 20 bytes; later bulk frames fit both receive limits.
-            clients[id]?.bulkEncoder.chunkSize = CompanionProtocol.frameLimit(min(hello.chunk, central.maximumUpdateValueLength))
-        }
         selection.disconnect(id)
         if let name = hello.computerName { onComputerName?(id, name) }
         ready.insert(id)
@@ -370,10 +311,7 @@ final class CompanionService: ObservableObject {
     }
 
     private func enqueue(_ type: CompanionProtocol.Message, stream: UInt8, payload: Data, to id: UUID) {
-        guard var client = clients[id], payload.count <= CompanionProtocol.maximumPayload else { return }
-        let packet = CompanionProtocol.Packet(stream: stream, type: type.rawValue, payload: payload)
-        let frames = stream == 0 ? client.controlEncoder.encode(packet) : client.bulkEncoder.encode(packet)
-        clients[id] = client
-        transport?.enqueueCompanion(frames, control: stream == 0, to: client.central)
+        guard clients[id] != nil, payload.count <= CompanionProtocol.maximumPayload else { return }
+        server?.send(CompanionProtocol.Packet(stream: stream, type: type.rawValue, payload: payload), to: id)
     }
 }

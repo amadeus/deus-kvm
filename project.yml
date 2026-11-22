@@ -33,8 +33,6 @@ targets:
     resources:
       - DeusKVM/Assets.xcassets
       - DeusKVM/PrivacyInfo.xcprivacy
-      - DeusKVM/Resources/company_ids.json
-      - DeusKVM/Resources/service_uuids.json
     settings:
       base:
         PRODUCT_NAME: DeusKVM
@@ -55,8 +53,6 @@ targets:
     sources:
       - DeusKVMTests
       - DeusKVM/LowEnergy/HIDReports.swift
-      - DeusKVM/LowEnergy/HIDNotificationQueue.swift
-      - DeusKVM/LowEnergy/HIDProfile.swift
       - DeusKVM/DirectInputEvent.swift
       - DeusKVM/MacKeyboardMapping.swift
       - DeusKVM/RawKeyboardState.swift
@@ -70,13 +66,14 @@ targets:
       - DeusKVM/ReturnMotionProbe.swift
       - DeusKVM/HandoffState.swift
       - DeusKVM/TapRunState.swift
-      - DeusKVM/HIDHostPolicy.swift
+      - DeusKVM/HostPolicy.swift
       - DeusKVM/StatusBarConnectionState.swift
       - DeusKVM/CaptureReadiness.swift
       - DeusKVM/TapWorkSchedule.swift
       - DeusKVM/CoordinatorSchedule.swift
       - DeusKVM/Companion/CompanionProtocol.swift
       - DeusKVM/Companion/CompanionSelection.swift
+      - DeusKVM/Companion/ControlLink.swift
       - DeusKVM/Clipboard/FinderPasteGesture.swift
       - DeusKVM/Clipboard/FileNetworkCrypto.swift
       - DeusKVM/Clipboard/FileNetworkServer.swift
@@ -89,7 +86,7 @@ targets:
       - DeusKVM/Clipboard/FileNetworkReceiver.swift
       - DeusKVM/DiagnosticsLog.swift
       - DeusKVM/LinkHealth.swift
-      - DeusKVM/BluetoothLinkLog.swift
+      - DeusKVM/DeviceEntry.swift
       - DeusKVM/LowEnergy/TransportStats.swift
       - DeusKVM/TrackpadGesture.swift
       - DeusKVM/PointerRouting.swift

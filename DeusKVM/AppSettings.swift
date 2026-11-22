@@ -3,10 +3,9 @@ import Foundation
 enum AppSettings {
     static let enabledKey = "DeusKVM.enabled"
     static let clipboardEnabledKey = "DeusKVM.clipboardEnabled"
-    static let allowedHostsKey = "DeusKVM.allowedHosts"
-    static let autoAdvertiseKey = "DeusKVM.autoAdvertise"
+    /// PC ids (control-link identities) allowed to take input; the Bluetooth-era key was DeusKVM.allowedHosts.
+    static let allowedHostsKey = "DeusKVM.allowedPCs"
     static let developerModeKey = "DeusKVM.developerMode"
-    static let useServiceChangedKey = "DeusKVM.useServiceChanged"
     /// Pointer motion and buttons over the local network when the companion offers it (default on).
     static let networkPointerKey = "DeusKVM.networkPointer"
     static let deviceNamesKey = "DeusKVM.deviceNames"
