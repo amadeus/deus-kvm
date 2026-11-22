@@ -23,6 +23,7 @@ final class InputNetworkServer: @unchecked Sendable {
     private var running = false
     private var up = false
     private var blocked = false
+    private var keysAccepted = false
     private var port: UInt16?
     private var listenFD: Int32 = -1
     private var connFD: Int32 = -1
@@ -45,6 +46,16 @@ final class InputNetworkServer: @unchecked Sendable {
     /// Connected and the PC injects: the controller sends pointer events here.
     var isUp: Bool {
         lock.withLock { up && !blocked }
+    }
+
+    /// Up and the companion takes keyboard, media-key and scroll records (`inputNetwork` 2).
+    var keysUp: Bool {
+        lock.withLock { up && !blocked && keysAccepted }
+    }
+
+    /// Whether the current companion takes keyboard, media-key and scroll records.
+    func acceptKeys(_ value: Bool) {
+        lock.withLock { keysAccepted = value }
     }
 
     /// For the tap's routing: down, up, or connected but unable to inject.
@@ -82,7 +93,7 @@ final class InputNetworkServer: @unchecked Sendable {
 
     // MARK: Hot path
 
-    /// Bluetooth queue: one captured pointer event. Writes inline, no dispatch hop.
+    /// Bluetooth queue: one captured event. Writes inline, no dispatch hop.
     func send(_ event: NetworkInputEvent) {
         lock.withLock {
             guard up else { return }
@@ -92,6 +103,11 @@ final class InputNetworkServer: @unchecked Sendable {
                 if let record = state.motion(dx: dx, dy: dy, now: now) { writeLocked(record) }
             case let .button(button, down):
                 for record in state.button(button, down: down, now: now) {
+                    writeLocked(record)
+                }
+            case .keyboard, .consumer, .scroll:
+                guard keysAccepted else { return }
+                for record in state.immediate(event, now: now) {
                     writeLocked(record)
                 }
             }

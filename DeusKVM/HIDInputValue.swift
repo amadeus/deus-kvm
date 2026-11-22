@@ -11,4 +11,6 @@ struct HIDInput {
     /// The local-network pointer stream and whether it is up right now; nil without one.
     var sendNetwork: ((NetworkInputEvent) -> Void)?
     var networkReady: (() -> Bool)?
+    /// The stream is up and carries keys, media keys and scroll too.
+    var networkKeysReady: (() -> Bool)?
 }

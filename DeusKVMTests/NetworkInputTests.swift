@@ -102,6 +102,40 @@ final class NetworkInputTests: XCTestCase {
         XCTAssertEqual(state.inflight, 7, "buttons do not wait for the PC")
     }
 
+    func testKeyboardMediaAndScrollRecordsHaveTheDocumentedLayout() {
+        let report = KeyboardReport(modifiers: [.leftShift, .rightGUI], keys: [.a, Keycode(rawValue: 0x4C)])
+        XCTAssertEqual(
+            Array(InputRecord.keyboard(sequence: 7, captured: 9, report: report)),
+            [4, 7, 0, 0, 0, 9, 0, 0, 0, 0x82, 2, 0x04, 0x4C]
+        )
+        XCTAssertEqual(Array(InputRecord.keyboard(sequence: 1, captured: 1, report: .zero).suffix(2)), [0, 0], "nothing held")
+        let many = KeyboardReport(keys: (0 ..< 40).map { Keycode(rawValue: UInt8(4 + $0)) })
+        XCTAssertEqual(
+            InputRecord.keyboard(sequence: 1, captured: 1, report: many).count, 9 + 2 + InputRecord.maxKeys,
+            "no 6-key limit, but bounded"
+        )
+        XCTAssertEqual(
+            Array(InputRecord.consumer(sequence: 7, captured: 9, key: .volumeUp)), [5, 7, 0, 0, 0, 9, 0, 0, 0, 0xE9, 0x00]
+        )
+        XCTAssertEqual(Array(InputRecord.consumer(sequence: 7, captured: 9, key: .none).suffix(2)), [0, 0])
+        XCTAssertEqual(Array(InputRecord.scroll(sequence: 7, captured: 9, wheel: -3, pan: 1)), [6, 7, 0, 0, 0, 9, 0, 0, 0, 0xFD, 0x01])
+    }
+
+    func testKeysAndScrollGoOutAfterPendingMotionAndAreNeverCoalesced() {
+        var state = InputStreamState()
+        for index in 0 ..< 4 {
+            _ = state.motion(dx: 1, dy: 1, now: Double(index) * 0.001)
+        }
+        XCTAssertNil(state.motion(dx: 3, dy: 0, now: 5), "behind: motion is pending")
+        let records = state.immediate(.keyboard(KeyboardReport(keys: [.a])), now: 6)
+        XCTAssertEqual(records.map(\.first), [InputRecord.motion, InputRecord.keyboard])
+        XCTAssertEqual(state.immediate(.scroll(wheel: 1, pan: 0), now: 6).map(\.first), [InputRecord.scroll], "still behind, still sent")
+        XCTAssertEqual(state.immediate(.consumer(.mute), now: 6).map(\.first), [InputRecord.consumer])
+        XCTAssertEqual(state.keys, 2)
+        XCTAssertEqual(state.scrolls, 1)
+        XCTAssertTrue(state.summary.contains("keys=2 scrolls=1"))
+    }
+
     func testStallAndPingTiming() {
         var state = InputStreamState()
         XCTAssertFalse(state.stalled(now: 10))

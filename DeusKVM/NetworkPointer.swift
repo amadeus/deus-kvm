@@ -28,6 +28,7 @@ final class NetworkPointer {
         let setting = UserDefaults.standard.object(forKey: AppSettings.networkPointerKey) as? Bool ?? true
         let wanted = enabled && setting && target.map { companion.supportsInputNetwork($0) } == true
         server.configure(wanted)
+        server.acceptKeys(wanted && target.map { companion.inputNetworkLevel($0) >= 2 } == true)
         guard wanted, let target, let port = server.currentPort else {
             if !wanted { offered = nil }
             return

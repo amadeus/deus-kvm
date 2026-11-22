@@ -25,7 +25,8 @@ enum CompanionProtocol {
         /// stream with the token and UTF-8 diagnostic text. Offered via HELLO `report: 1`.
         case reportRequest = 0x30, report = 0x31
         /// The Mac's local-network pointer listener (bulk stream, JSON `InputNetworkOffer`).
-        /// Offered via HELLO `inputNetwork: 1` from the companion.
+        /// Offered via HELLO `inputNetwork: 1` from the companion; 2 also takes keyboard, media-key
+        /// and scroll records on the stream.
         case inputOffer = 0x32
         case nack = 0x7F
     }

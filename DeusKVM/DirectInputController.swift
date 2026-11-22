@@ -19,8 +19,14 @@ final class DirectInputController {
     private var scroll = ScrollAccumulator()
     private var sendNetwork: ((NetworkInputEvent) -> Void)?
     private var networkReady: (() -> Bool)?
+    private var networkKeysReady: (() -> Bool)?
     /// Buttons pressed over the network stream, released there when capture stops.
     private var networkButtons: MouseButtons = []
+    /// Where the last keyboard and media-key reports went (nil: none yet this session). Each
+    /// report is the whole state, so a carrier change sends the old carrier an empty report and
+    /// the new one everything held.
+    private var keyboardOnNetwork: Bool?
+    private var consumerOnNetwork: Bool?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -34,6 +40,9 @@ final class DirectInputController {
         sendConsumer = hid.sendConsumer
         sendNetwork = hid.sendNetwork
         networkReady = hid.networkReady
+        networkKeysReady = hid.networkKeysReady
+        keyboardOnNetwork = nil
+        consumerOnNetwork = nil
         capsLock = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift)
         scroll.reset()
         isCapturing = true
@@ -50,9 +59,14 @@ final class DirectInputController {
         for button: MouseButtons in [.left, .right, .middle] where networkButtons.contains(button) {
             sendNetwork?(.button(button, false))
         }
+        if keyboardOnNetwork == true { sendNetwork?(.keyboard(.zero)) }
+        if consumerOnNetwork == true { sendNetwork?(.consumer(.none)) }
+        keyboardOnNetwork = nil
+        consumerOnNetwork = nil
         networkButtons = []
         sendNetwork = nil
         networkReady = nil
+        networkKeysReady = nil
         sendKeyboard = nil
         sendMouse = nil
         sendConsumer = nil
@@ -86,7 +100,7 @@ final class DirectInputController {
             pressedConsumerKeys.removeAll { $0 == key }
             if down { pressedConsumerKeys.append(key) }
             let current = pressedConsumerKeys.last
-            if previous != current { sendConsumer?(ConsumerReport(key: current ?? .none)) }
+            if previous != current { sendConsumerKey(current ?? .none) }
         case let .mouseMove(dx, dy):
             mouseMove(dx, dy)
         case let .mouseButton(button, isDown):
@@ -103,6 +117,10 @@ final class DirectInputController {
             let vertical = defaults.bool(forKey: AppSettings.invertVerticalScrollKey) ? -scaled.wheel : scaled.wheel
             let horizontal = defaults.bool(forKey: AppSettings.invertHorizontalScrollKey) ? -scaled.pan : scaled.pan
             guard vertical != 0 || horizontal != 0 else { return }
+            if networkKeysReady?() == true {
+                sendNetwork?(.scroll(wheel: vertical, pan: horizontal))
+                return
+            }
             // Wheel and pan are relative: one report per step. A trailing zero report doubled
             // scroll traffic and filled CoreBluetooth's queue; reads never replay relative fields.
             sendMouse?(MouseReport(buttons: pressedMouseButtons, wheel: vertical, pan: horizontal))
@@ -149,6 +167,21 @@ final class DirectInputController {
         // supports the latter as its context-menu key. Keep physical identities
         // in pressedKeys so releasing either source cannot release the other.
         let keys = Set(pressedKeys.map { $0 == .menu ? .application : $0 })
-        sendKeyboard?(KeyboardReport(modifiers: modifiers, keys: keys.sorted { $0.rawValue < $1.rawValue }))
+        let report = KeyboardReport(modifiers: modifiers, keys: keys.sorted { $0.rawValue < $1.rawValue })
+        let network = networkKeysReady?() == true
+        if let previous = keyboardOnNetwork, previous != network {
+            if previous { sendNetwork?(.keyboard(.zero)) } else { sendKeyboard?(.zero) }
+        }
+        keyboardOnNetwork = network
+        if network { sendNetwork?(.keyboard(report)) } else { sendKeyboard?(report) }
+    }
+
+    private func sendConsumerKey(_ key: ConsumerKey) {
+        let network = networkKeysReady?() == true
+        if let previous = consumerOnNetwork, previous != network {
+            if previous { sendNetwork?(.consumer(.none)) } else { sendConsumer?(.zero) }
+        }
+        consumerOnNetwork = network
+        if network { sendNetwork?(.consumer(key)) } else { sendConsumer?(ConsumerReport(key: key)) }
     }
 }

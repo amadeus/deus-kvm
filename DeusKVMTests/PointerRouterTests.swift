@@ -91,4 +91,49 @@ final class PointerRouterTests: XCTestCase {
         controller.stop()
         XCTAssertEqual(network, [.button(.middle, false)], "capture ends with network buttons released")
     }
+
+    func testKeysMediaAndScrollUseTheNetworkWhenItCarriesThemAndHandOverCleanly() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "network-keys-\(UUID())"))
+        let controller = DirectInputController(defaults: defaults)
+        var keyboard: [KeyboardReport] = []
+        var consumer: [ConsumerReport] = []
+        var mouse: [MouseReport] = []
+        var network: [NetworkInputEvent] = []
+        var keysReady = true
+        controller.start(HIDInput(
+            sendMouse: { mouse.append($0) }, sendKeyboard: { keyboard.append($0) }, sendConsumer: { consumer.append($0) },
+            isActive: true, isConnected: true, activeError: nil,
+            sendNetwork: { network.append($0) }, networkReady: { true }, networkKeysReady: { keysReady }
+        ))
+        keyboard.removeAll(); consumer.removeAll(); mouse.removeAll()
+        controller.handle(DirectInputEvent(kind: .keyDown(.a), modifiers: [.leftShift]))
+        controller.handle(DirectInputEvent(kind: .consumer(.volumeUp, down: true), modifiers: []))
+        controller.handle(DirectInputEvent(kind: .scroll(wheel: 2, pan: 0), modifiers: []))
+        XCTAssertEqual(network, [
+            .keyboard(KeyboardReport(modifiers: [.leftShift], keys: [.a])), .consumer(.volumeUp), .scroll(wheel: 2, pan: 0)
+        ])
+        XCTAssertTrue(keyboard.isEmpty && consumer.isEmpty && mouse.isEmpty, "nothing on Bluetooth")
+
+        // The stream stops carrying keys while A is held: the network side is emptied and
+        // Bluetooth gets the whole state.
+        network.removeAll()
+        keysReady = false
+        controller.handle(DirectInputEvent(kind: .keyDown(.b), modifiers: [.leftShift]))
+        XCTAssertEqual(network, [.keyboard(.zero)])
+        XCTAssertEqual(keyboard, [KeyboardReport(modifiers: [.leftShift], keys: [.a, .b])])
+        controller.handle(DirectInputEvent(kind: .scroll(wheel: 1, pan: 0), modifiers: []))
+        XCTAssertEqual(mouse.count, 1, "scroll falls back to the Bluetooth mouse")
+
+        // Back on the network: Bluetooth is emptied first.
+        network.removeAll(); keyboard.removeAll()
+        keysReady = true
+        controller.handle(DirectInputEvent(kind: .keyUp(.b), modifiers: [.leftShift]))
+        XCTAssertEqual(keyboard, [.zero])
+        XCTAssertEqual(network, [.keyboard(KeyboardReport(modifiers: [.leftShift], keys: [.a]))])
+
+        // Stopping capture releases what the network holds.
+        network.removeAll()
+        controller.stop()
+        XCTAssertEqual(network, [.keyboard(.zero), .consumer(.none)])
+    }
 }

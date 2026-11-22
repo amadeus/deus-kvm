@@ -1,9 +1,15 @@
 import Foundation
 
-/// Pointer input the tap routed to the local-network stream instead of the Bluetooth mouse.
+/// Input sent on the local-network stream instead of the Bluetooth HID reports: pointer
+/// motion and buttons the tap routed there, and (companions at `inputNetwork` 2) the whole
+/// keyboard state, the held media key and scroll steps.
 enum NetworkInputEvent: Sendable, Equatable {
     case motion(Int32, Int32)
     case button(MouseButtons, Bool)
+    case keyboard(KeyboardReport)
+    case consumer(ConsumerKey)
+    /// Already scaled and inverted; HID orientation (wheel up and pan right are positive).
+    case scroll(wheel: Int8, pan: Int8)
 }
 
 /// What the PC needs to connect to the Mac's input listener: the same shape as the file
@@ -54,6 +60,11 @@ enum InputRecord {
     static let motion: UInt8 = 1
     static let button: UInt8 = 2
     static let ping: UInt8 = 3
+    static let keyboard: UInt8 = 4
+    static let consumer: UInt8 = 5
+    static let scroll: UInt8 = 6
+    /// Keys a keyboard record can carry; the network has no six-key rollover limit.
+    static let maxKeys = 32
     static let ackLength = 12
     static let ackBlockedFlag: UInt32 = 1
     static let ackLeaveFlag: UInt32 = 2
@@ -77,6 +88,21 @@ enum InputRecord {
 
     static func ping(sequence: UInt32, captured: UInt32) -> Data {
         Data([ping]) + u32(sequence) + u32(captured)
+    }
+
+    /// The whole keyboard state: modifier bits, then every held usage (page 7) in order.
+    static func keyboard(sequence: UInt32, captured: UInt32, report: KeyboardReport) -> Data {
+        let keys = report.keys.prefix(maxKeys).map(\.rawValue)
+        return Data([keyboard]) + u32(sequence) + u32(captured) + Data([report.modifiers.rawValue, UInt8(keys.count)] + keys)
+    }
+
+    /// The one consumer usage (page 12) held now, 0 for none.
+    static func consumer(sequence: UInt32, captured: UInt32, key: ConsumerKey) -> Data {
+        Data([consumer]) + u32(sequence) + u32(captured) + Data([UInt8(key.rawValue & 0xFF), UInt8(key.rawValue >> 8)])
+    }
+
+    static func scroll(sequence: UInt32, captured: UInt32, wheel: Int8, pan: Int8) -> Data {
+        Data([scroll]) + u32(sequence) + u32(captured) + Data([UInt8(bitPattern: wheel), UInt8(bitPattern: pan)])
     }
 
     static func ack(_ data: Data) -> InputAck? {
@@ -146,6 +172,8 @@ struct InputStreamState: Sendable, Equatable {
     private var lastMotionAt: TimeInterval?
     private(set) var frames = 0
     private(set) var buttons = 0
+    private(set) var keys = 0
+    private(set) var scrolls = 0
     private(set) var coalesced = 0
     private(set) var stalls = 0
     private var rttSum = 0.0
@@ -182,6 +210,32 @@ struct InputStreamState: Sendable, Equatable {
         if let pending = flushPending(now: now) { records.append(pending) }
         buttons += 1
         records.append(next(now: now) { InputRecord.button(sequence: $0, captured: $1, button: button, down: down) })
+        return records
+    }
+
+    /// Keyboard, media-key and scroll records: like buttons, after any pending motion and never
+    /// deferred. Keys and media keys are state (the last one wins on the PC); scroll steps are
+    /// few and each one counts.
+    mutating func immediate(_ event: NetworkInputEvent, now: TimeInterval) -> [Data] {
+        let build: (UInt32, UInt32) -> Data
+        switch event {
+        case let .keyboard(report):
+            keys += 1
+            build = { InputRecord.keyboard(sequence: $0, captured: $1, report: report) }
+        case let .consumer(key):
+            keys += 1
+            build = { InputRecord.consumer(sequence: $0, captured: $1, key: key) }
+        case let .scroll(wheel, pan):
+            scrolls += 1
+            build = { InputRecord.scroll(sequence: $0, captured: $1, wheel: wheel, pan: pan) }
+        case let .motion(dx, dy):
+            return motion(dx: dx, dy: dy, now: now).map { [$0] } ?? []
+        case let .button(button, down):
+            return self.button(button, down: down, now: now)
+        }
+        var records: [Data] = []
+        if let pending = flushPending(now: now) { records.append(pending) }
+        records.append(next(now: now, build))
         return records
     }
 
@@ -234,7 +288,7 @@ struct InputStreamState: Sendable, Equatable {
     var summary: String {
         let rttAverage = rttCount == 0 ? 0 : rttSum / Double(rttCount)
         let jitter = deliveryMin.flatMap { low in deliveryMax.map { Double($0 - low) / 10 } } ?? 0
-        return "frames=\(frames) buttons=\(buttons) coalesced=\(coalesced) stalls=\(stalls) " +
+        return "frames=\(frames) buttons=\(buttons) keys=\(keys) scrolls=\(scrolls) coalesced=\(coalesced) stalls=\(stalls) " +
             "rttAvgMs=\(String(format: "%.1f", rttAverage)) rttMaxMs=\(String(format: "%.1f", rttMax)) " +
             "jitterMs=\(String(format: "%.1f", jitter)) gapMaxMs=\(String(format: "%.1f", gapMax)) inflight=\(inflight)"
     }

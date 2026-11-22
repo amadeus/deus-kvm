@@ -241,7 +241,8 @@ final class BluetoothTransport: NSObject, CBPeripheralManagerDelegate, @unchecke
                 sendConsumer: { [weak self] in self?.sendConsumer($0) },
                 isActive: true, isConnected: true, activeError: nil,
                 sendNetwork: { [weak network] in network?.send($0) },
-                networkReady: { [weak network] in network?.isUp ?? false }
+                networkReady: { [weak network] in network?.isUp ?? false },
+                networkKeysReady: { [weak network] in network?.keysUp ?? false }
             ))
             network?.resetSession()
             for (event, captured) in gate.start(generation) {
