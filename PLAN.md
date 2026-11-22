@@ -1,5 +1,32 @@
 # DeusKVM: implementation plan
 
+### Bluetooth removed: the companion link and discovery on the network — 2026-11-22 (branch `network-only`)
+
+Everything now travels over the local network. The PC's service (its "link worker",
+formerly the BLE worker) finds Macs with one-shot Bonjour queries for `_deuskvm._tcp`
+on every IPv4 interface, or from `%ProgramData%\DeusKVM\mac-hosts.txt`, and connects to
+the Mac's control listener (port 53400, ephemeral if busy). Each side opens with a hello
+carrying a P-256 identity key and nonce; static ECDH gives the AES-GCM keys, and a peer is
+named by its key's hash, so ids are proven. The companion messages ride the link
+unchanged (no GATT chunking). Trust: the PC's **Add Mac…** saves a Bonjour-found Mac's id
+(elevated `--configure`); the Mac's **Enable control** approves a connected PC. Input uses
+only the stream (capture waits for it); the HID service, advertising, scanning, pairing,
+the Bluetooth permission/entitlement, KnownMacRecovery and the Mac-mouse detection are
+gone. Bluetooth-era saved Macs and allowed PCs are ignored.
+
+- Validation: Mac lint and 163 tests (including the control server on loopback and a
+  cross-language handshake vector); companion solution builds; 229 companion tests
+  (net10.0), including the control connection against a fake Mac and the mDNS parser.
+  Interop smoke test on this Mac: the real C# discovery and connection code found the
+  real Swift ControlServer through mDNSResponder (legacy unicast answers), completed the
+  handshake and exchanged HELLO, ping/pong and a 60 KB frame.
+- Hardware pending: fresh setup (Add Mac, Enable control, switch); both Macs and
+  takeover; reconnect after Mac app restart, PC service restart, PC reboot, Mac
+  sleep/wake and a network drop; clipboard text, images and file paste both ways; edge
+  return, hotkey return, secure desktop and UAC; Windows Firewall lets the tray's and the
+  service's mDNS answers in; macOS Local Network permission prompt; net48 P-256
+  import/export/ECDH on real Windows; identity.bin ACL.
+
 ### Keys, media keys and scroll on the network stream — 2026-11-22 (branch `network-only`)
 
 First step toward input that no longer depends on the PC's Bluetooth adapter (on

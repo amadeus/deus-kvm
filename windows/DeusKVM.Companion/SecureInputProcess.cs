@@ -9,7 +9,7 @@ namespace DeusKVM.Companion;
 /// Launches `--secure-worker` as SYSTEM in the console session, so it can attach to and inject
 /// on the secure desktop. Built from the service's own primary token: duplicate it, move the
 /// copy to the console session (needs SE_TCB, which LocalSystem holds), and CreateProcessAsUser.
-/// Any failure throws and the caller leaves the Bluetooth fallback in place.
+/// Any failure throws and the desktop worker keeps injecting itself.
 /// </summary>
 internal sealed class SecureInputProcess : IDisposable
 {

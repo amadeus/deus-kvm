@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 
 namespace DeusKVM.Companion.Core;
 
-// An epoch belongs to the Mac's enabled state, not to a Bluetooth connection.
+// An epoch belongs to the Mac's enabled state, not to a connection.
 public sealed class MacAvailability
 {
     public bool Negotiated { get; private set; }

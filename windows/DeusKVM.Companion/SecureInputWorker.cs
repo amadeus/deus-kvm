@@ -17,7 +17,7 @@ namespace DeusKVM.Companion;
 /// it could not inject while the switch is under way (up to 300 ms) and replaying them once it
 /// can. It reports whether it can inject, and every ten seconds what the path cost; the service
 /// relays both to the desktop worker, which falls back to injecting itself (or the Mac to
-/// Bluetooth) while this worker cannot. Headless: no window, no message loop.
+/// the Mac drops input) while this worker cannot. Headless: no window, no message loop.
 /// </summary>
 internal sealed class SecureInputWorker
 {
@@ -35,7 +35,7 @@ internal sealed class SecureInputWorker
     private long lastBatch = long.MinValue / 2;
     // Records not yet injected, oldest first, while injection fails (a desktop switch under way).
     // Kept a little longer than the desktop worker's 250 ms grace: past that it has fallen back
-    // (to injecting itself, or the Mac to Bluetooth), and replaying older steps would repeat them.
+    // (to injecting itself, or the Mac to dropping input), and replaying older steps would repeat them.
     private const int OwedLimit = 512;
     private static readonly long OwedTicks = Stopwatch.Frequency * 3 / 10;
     private readonly Queue<byte[]> owed = new();

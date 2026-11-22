@@ -3,7 +3,9 @@
 >
 > Status 2026-11-11: this is the September 14 polish checkpoint. Current install
 > steps and labels are in the [README](../README.md); the Mac's Layout and Settings
-> are now the **Configuration** and **Setup** tabs.
+> are now the **Configuration** and **Setup** tabs. Bluetooth was removed on
+> 2026-11-22: the pairing, advertising and Bluetooth-settings steps below no longer
+> apply; **Add Mac…** now lists Macs found on the network.
 
 # Setup, startup, centering and disable controls
 

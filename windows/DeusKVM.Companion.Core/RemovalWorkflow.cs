@@ -9,7 +9,7 @@ public interface IRemovalSteps
 
 public static class RemovalWorkflow
 {
-    // Bluetooth pairings belong to Windows and survive automatic-mode removal.
+    // Removal leaves nothing behind but the downloaded EXE.
     // Never claim success or delete files if an earlier cleanup step failed.
     public static async Task Run(IRemovalSteps steps)
     {

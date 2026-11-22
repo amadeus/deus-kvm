@@ -1,5 +1,10 @@
 # Bluetooth reconnect investigation
 
+> **Historical — 2026-11-22:** DeusKVM no longer uses Bluetooth. The network-only
+> work removed Bluetooth HID, pairing and the companion's automatic BLE reconnect;
+> the PC now finds the Mac with Bonjour and connects over TCP (see
+> [windows/README.md](../windows/README.md)). This record is kept for history only.
+>
 > Status 2026-11-11: the recommendation below shipped. The Windows companion
 > service reconnects previously verified Macs itself (uncached GATT discovery and
 > `GattSession.MaintainConnection`), so the PowerShell workaround is only a manual

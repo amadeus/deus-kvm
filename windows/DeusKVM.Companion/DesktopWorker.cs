@@ -41,7 +41,7 @@ internal sealed class DesktopWorker : ApplicationContext
     // connected, is stuck, or has reported failures for longer than the grace period. Block says
     // where the fallback cannot inject either: the input desktop is not the default one (UAC
     // prompt, lock screen), or an elevated window has the foreground, where Windows (UIPI) silently
-    // discards this process's input; the Mac is then told to use the Bluetooth mouse. The desktop
+    // discards this process's input; the Mac is then told the PC cannot inject. The desktop
     // is re-checked every 100 ms while records arrive, on every record while blocked and on each
     // idle ping; the foreground window on every record (cached per window, so normally one call).
     private enum Block : byte { None, SecureDesktop, Elevated }
@@ -307,9 +307,9 @@ internal sealed class DesktopWorker : ApplicationContext
     }
 
     // Asks the Mac to take the pointer back: on the network stream's acknowledgements (the next
-    // one is a pointer step away), and over Bluetooth only while the stream is down or once the
+    // one is a pointer step away), and over the control link only while the stream is down or once the
     // Mac has not taken it back within 150 ms. Every outward step at the edge qualifies, but
-    // Bluetooth gets at most one per 100 ms: one per step (~120/s) outran a briefly slow link, and
+    // The control link gets at most one per 100 ms: one per step (~120/s) outran a briefly slow link, and
     // the backlog delayed the return by seconds. The Mac acts on the first that arrives and
     // ignores the rest (it is no longer remote, or the switch id moved on).
     private void RequestLeave(byte id, byte edge, ushort fraction, string detail)
@@ -355,7 +355,7 @@ internal sealed class DesktopWorker : ApplicationContext
     // One record from the stream, on the receiving thread, while the Mac owns the handoff: handed
     // to the SYSTEM relay (or, as the fallback, injected here at once, since SendInput needs no
     // particular thread). Returns whether the PC can deliver the pointer right now; false rides on
-    // the next acknowledgement so the Mac switches to the Bluetooth mouse within a round trip. The
+    // the next acknowledgement so the Mac stops sending input within a round trip. The
     // edge test runs on the desktop thread over the motion accumulated since its last turn.
     private bool Inject(InputEvent record)
     {
@@ -617,7 +617,7 @@ internal sealed class DesktopWorker : ApplicationContext
     {
         public double FirstForward = -1, FirstOk = -1;
         public int Forwarded, Failures;
-        public bool FellBack; // to Bluetooth: neither the relay nor this process could inject
+        public bool FellBack; // neither the relay nor this process could inject
         public string? Failure;
         public string Summary(double end) => FormattableString.Invariant(
             $"{kind}: ms={end - start:F0} relay={relay} firstForwardMs={At(FirstForward)} firstInjectedMs={At(FirstOk)} forwarded={Forwarded} failures={Failures} bluetooth={FellBack}") +

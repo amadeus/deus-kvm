@@ -231,7 +231,7 @@ internal sealed class LinkWorker : ApplicationContext
             }
             else if (!previous.Link.Active)
             {
-                previous.Link.SetActive(true); // same physical owner after GATT recovery
+                previous.Link.SetActive(true); // same owner after its link reconnected
                 previous.Link.RefreshDesktop();
             }
         }
@@ -253,7 +253,7 @@ internal sealed class LinkWorker : ApplicationContext
             }
         }
         // A connected non-owner is disabled on the Mac itself. Explicit Enable
-        // is the only way it can replace an existing owner, with Bluetooth intact.
+        // is the only way it can replace an existing owner, with its link intact.
         if (arbiter.Owner is not null || arbiter.Requested is not null)
             foreach (var attempt in attempts.Values)
                 if (attempt.Link.Mac.Connection != arbiter.Owner && attempt.Link.Mac.Connection != arbiter.Requested &&

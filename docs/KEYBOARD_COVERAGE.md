@@ -11,14 +11,14 @@ aliases. The fixture records input/output usages, modifiers, and Quartz/NX codes
 
 | Keys | Forwarding and coverage |
 | --- | --- |
-| Letters, numbers, Tab, Escape, Enter, Space, Backspace | Quartz key down/up to Bluetooth HID keyboard reports |
+| Letters, numbers, Tab, Escape, Enter, Space, Backspace | Quartz key down/up to HID keyboard usages in the network keyboard state |
 | All lower-layer punctuation, including backslash and pipe | Quartz event flags travel with the key; shifted aliases need no separate character whitelist |
 | Both sides of Ctrl, Shift, Alt, GUI | Eight distinct HID modifier bits; Windows interprets right Alt according to its layout |
 | Delete, Home, End, Page Up/Down, arrows, F1–F12 | Physical keys with corresponding releases |
 | Print Screen, Scroll Lock, Pause, Insert | Raw HID preserves PC usages instead of confusing them with Mac F13–F15/Help |
 | `KC_MENU` | Raw Keyboard Menu `0x76` becomes Windows Application `0x65`; overlapping Menu/Application presses retain correct held state |
 | Caps Lock | One press/release pair per macOS latch transition |
-| Brightness, volume, mute, play/pause | Consumer HID reports; effects depend on Windows and the display/application |
+| Brightness, volume, mute, play/pause | Consumer usages on the network stream; effects depend on Windows and the display/application |
 | Layers, transparent/disabled positions, RGB, Cloud reactive mode, bootloader tap dance | Firmware-local; no host key event to forward. Layer-selected keys and Caps Word's emitted Shift/letters use normal paths |
 | Cloud encoder | Base-layer volume uses the consumer path; other layers control firmware RGB |
 
@@ -35,8 +35,8 @@ Both Backslash usages now use Quartz `0x2A`, retaining modifiers on the event.
 Windows maps HID `0x31` and non-US `0x32` to scan code `0x2B`, so normalizing that
 alias preserves Windows key behavior. ISO non-US Backslash `0x64` remains
 distinct. QMK `KC_MENU` (`0x76`) also differs from `KC_APP` (`0x65`); Windows
-supports Application as its context-menu key. DeusKVM translates Menu at report
-generation without changing firmware or local Mac input. See Microsoft's
+supports Application as its context-menu key. DeusKVM translates Menu when it builds
+the keyboard state without changing firmware or local Mac input. See Microsoft's
 [HID-to-scan-code table](https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input#scan-codes).
 
 ## Keeping coverage current
@@ -50,23 +50,23 @@ python3 scripts/check-qmk-coverage.py /path/to/vial_qmk
 Alternatively pass individual `keymap.c` paths. The read-only checker fails on
 unclassified keycodes/controls in matrix and encoder definitions. Add each new
 entry's actual emitted usage and expected behavior to the fixture, then run
-`QMKKeymapCoverageTests` and the existing keyboard/raw/handoff/HID queue tests.
+`QMKKeymapCoverageTests` and the existing keyboard/raw/handoff/network input tests.
 Adding a name alone does not establish hardware support. This source inventory
 check cannot read Vial EEPROM remappings or evaluate arbitrary firmware macros.
 
 ## Boundaries and hardware checklist
 
 The keyboard stays connected to the Mac: remote mode forwards to Windows, and
-local mode leaves native Mac input in place. Keys travel as Bluetooth HID reports,
-or, with an updated companion, as whole keyboard states on the local-network stream
-while it is up; the companion maps the same usages to the scan codes Windows' own
-HID keyboard driver would produce. This
+local mode leaves native Mac input in place. Keys travel as whole keyboard states
+(HID usages) on the local-network input stream; the companion maps them to the
+scan codes Windows' own HID keyboard driver would produce. Bluetooth is no longer
+used (since 2026-11-22). This
 does not add Windows-connected keyboard control of a Mac. Shortcuts and characters follow the receiving OS's
 layout; matching US layouts produce the symbols printed in these QMK layouts.
 The configured DeusKVM toggle shortcut is intentionally consumed locally.
 
-The HID descriptor supports six simultaneous non-modifier keys plus all eight
-modifiers. More than six produces ErrorRollOver until enough keys are released.
+A keyboard state carries up to 32 simultaneous non-modifier keys plus all eight
+modifiers (the Bluetooth HID report's six-key limit no longer applies).
 Extended keyboard usages through `0xDD` retain the raw fallback, but Windows may
 not assign them an action. This audit does not promise support for arbitrary
 vendor controls or every Consumer-page usage. Input Monitoring/Accessibility
@@ -74,8 +74,8 @@ must be granted, and Secure Input can prevent capture. Since 2026-11-01 the tap
 re-reads held keys from macOS when Secure Input ends, on screen unlock and on tap
 re-enable, so a release hidden by the lock screen no longer blocks switching.
 
-Pending physical validation of the 2026-10-26 keyboard changes (Mac app only;
-no companion update or Bluetooth re-pair needed):
+Pending physical validation of the 2026-10-26 keyboard changes (now to be checked
+over the network stream with current builds of both apps):
 
 - [ ] In Windows and again after returning to Mac, type every lower-layer symbol,
       especially alternating pipe/backslash, rapid taps, and held repeat.

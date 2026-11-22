@@ -4,6 +4,9 @@
 > added the Windows companion (pairing with **Add Mac…**, Windows edge return,
 > clipboard) and removed the edge delay. Current setup is in the
 > [README](../README.md). The checks below remain useful for regressions.
+> Since 2026-11-22 Bluetooth is no longer used: **Add Mac…** finds the Mac on the
+> network instead of pairing, and the Bluetooth permission and pairing steps below
+> no longer apply.
 
 ## Run
 

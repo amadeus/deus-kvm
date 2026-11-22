@@ -6,18 +6,19 @@ companion service handles reconnecting, cursor placement, edge return, and
 clipboard sharing, including input control at the Windows login screen, UAC
 prompts, and administrator windows.
 
-Keyboard and mouse input use Bluetooth LE HID, and the companion's control and
-text clipboard channel also uses BLE, so Bluetooth alone is enough to control
-the PC. When both computers are on the same private local network, DeusKVM also
-uses it: pointer motion and clicks travel over the network (falling back to
-Bluetooth), edge return requests ride the same stream, and screenshot images and
-file paste require it.
+Everything travels over your local network: the Windows companion finds the
+Mac with Bonjour and connects to it, keys, pointer, scrolling and media keys
+stream to the PC, and edge return, clipboard, screenshots and file paste use the
+same link. Bluetooth is not used. Both computers must be on the same private
+network (or the PC must list the Mac's address, for example a Tailscale name;
+see the [Windows guide](windows/README.md)).
 
 ## Setup
 
 1. Unzip **DeusKVM-mac-arm64.zip** and open **DeusKVM.app** on the Mac (Apple
    Silicon only). In **Setup → Permissions**, use each
-   **Allow…** button to grant Bluetooth, Accessibility, and Input Monitoring.
+   **Allow…** button to grant Accessibility and Input Monitoring. When macOS asks
+   whether DeusKVM may find devices on your local network, allow it.
    Each button requests access or opens the relevant System Settings pane.
    If DeusKVM is missing from Accessibility or Input Monitoring, use
    **Show DeusKVM in Finder**, then add that app with **+** in System Settings.
@@ -27,12 +28,10 @@ file paste require it.
    directly). Approve the administrator prompt. The EXE installs
    or updates the service and opens its settings; no scripts or separate .NET
    installation are required.
-3. For first-time pairing, leave **System Settings → Bluetooth** open on the
-   Mac. Choose **Add Mac…** in the Windows companion and approve the
-   pairing prompts. Choose your Mac's computer name. If it is missing, try
-   **Show all devices**. Windows Bluetooth Settings is not needed for this flow.
-4. In the Mac's **Setup** tab, turn on **Enable control** for your PC. Advertising
-   stops when an allowed PC is ready and resumes when none is available.
+3. Choose **Add Mac…** in the Windows companion, pick your Mac's computer name
+   from the Macs found on the network, and approve the administrator prompt.
+4. The PC appears in the Mac's **Setup → Devices** a few seconds later; turn on
+   **Enable control** for it.
 5. In **Configuration**, choose the Mac display and exit edge, leave edge switching enabled,
    and select the Windows display. **Setup → Devices** shows **Windows edge return ready**.
    Return through the opposite edge on Windows.
@@ -47,7 +46,7 @@ something still needs setting up.
 - Windows automatically uses the first connected, enabled DeusKVM Mac. A second
   Mac connects in a disabled state. Click **Enable DeusKVM** on that Mac to take
   control: Windows disables the previous Mac before granting the new one.
-  Both Macs stay paired and Bluetooth stays on. Each Mac keeps its own layout.
+  Add each Mac once with **Add Mac…**. Each Mac keeps its own layout.
   Update Windows and both Macs; see the [takeover checkpoint](docs/AUTOMATIC_MAC_CHECKPOINT.md).
 
 - Edge crossings place the cursor at the corresponding position on the other
@@ -66,18 +65,18 @@ something still needs setting up.
   supports [on-demand file paste in both directions](docs/FILE_PASTE_CHECKPOINT.md)
   for one regular file up to 2 GB, using networking only. Windows → Mac uses
   Finder Cmd+V with DeusKVM progress/cancel UI. Contents transfer only when pasted.
-- On a shared private network, pointer motion and clicks go to Windows over the
-  local network at the trackpad's own rate, and Windows edge return requests come
-  back the same way; Bluetooth carries them whenever the stream is down. With an
-  updated companion, keys, media keys and scrolling use the stream too (Windows
-  repeats held keys at its own keyboard delay and rate; Ctrl+Alt+Delete and Win+L
-  work through the companion's service). Turn this off with **Setup → Advanced →
-  Send pointer motion to Windows over the local network** (on by default);
-  with **Developer Mode** on, **Setup → Diagnostics** shows the network pointer's state.
+- Pointer motion and clicks go to Windows at the trackpad's own rate, keys as
+  whole keyboard states (no six-key limit), plus media keys and scroll steps.
+  Windows repeats held keys at its own keyboard delay and rate; Ctrl+Alt+Delete
+  and Win+L work through the companion's service. Windows edge return requests
+  come back on the same stream. Switching to the PC waits until its input
+  connection is up; if the link drops while you are on the PC, the Mac takes
+  input back. With **Developer Mode** on, **Setup → Diagnostics** shows the link
+  and stream state.
 - **Configuration → Input settings** sets the **Scroll speed** on Windows and
   inverts vertical and horizontal scrolling independently.
 - **Disable DeusKVM** in **Configuration** or the menu bar restores local input and
-  stops advertising, input capture, and clipboard exchange. Enabling reuses
+  stops input capture and clipboard exchange; the PC sees the Mac as paused. Enabling reuses
   saved devices. The menu bar icon shows the connection state (searching,
   connecting, waiting for Windows, ready, Secure Input, or disabled), and the
   menu adds a short companion status such as **Edge return ready**.
@@ -90,7 +89,7 @@ something still needs setting up.
 The Windows service supports control at the login screen and across sign-in.
 A SYSTEM helper injects the pointer on UAC prompts, the lock screen, and
 administrator windows, which ordinary input cannot reach; if the helper cannot
-run there, the pointer falls back to Bluetooth.
+run there, the desktop worker injects where it can.
 Clipboard access remains limited to the signed-in desktop. See the
 [Windows guide](windows/README.md) for service controls and diagnostics.
 
@@ -99,19 +98,23 @@ Clipboard access remains limited to the signed-in desktop. See the
 Quit the old Mac app and open the new **DeusKVM.app**. Keep the app in a stable
 location if using launch-at-login. On Windows, open the new downloaded EXE;
 it updates the installation and closes the old companion automatically.
-Existing Bluetooth pairings and preferences are retained.
+Preferences are retained.
+
+**Updating from a Bluetooth build:** the PC and the Mac now know each other by
+network identities, so add the Mac again with **Add Mac…** and turn on
+**Enable control** for the PC again. Old Bluetooth pairings are no longer used;
+remove them from both computers' Bluetooth settings if you like.
 
 **First installation after the full rename:** use the previous Windows app's
 cleanup command before installing this build. On the Mac, turn off launch at
-login in the previous app, quit it, and grant Bluetooth, Accessibility, and
-Input Monitoring permissions to this app. Set up pairing, Enable control, and
+login in the previous app, quit it, and grant Accessibility and Input
+Monitoring permissions to this app. Add the Mac, Enable control, and
 your layout again. This build uses new app/service identities and settings;
 there is no automatic migration from earlier development builds.
 
 To remove the Windows installation, choose **Remove DeusKVM from this PC…**.
 It removes the service, startup entries, installed files and settings/logs.
-Wait for the completion message, then delete the downloaded EXE/ZIP. Windows
-Bluetooth pairings are kept.
+Wait for the completion message, then delete the downloaded EXE/ZIP.
 
 ## Build
 
@@ -180,5 +183,6 @@ DeusKVM is licensed under [AGPL-3.0-only](LICENSE).
 DeusKVM was forked from [BTRemote by jqssun](https://github.com/jqssun/darwin-bt-remote).
 We built a new Mac-to-Windows KVM app on top of its Bluetooth HID foundation,
 adding screen-edge switching, a Windows companion service, login-screen control,
-and shared text clipboard support. Thanks to the original author and contributors
+and shared text clipboard support, and later moved everything onto the local
+network. Thanks to the original author and contributors
 for making that foundation available as open source.

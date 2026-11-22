@@ -2,7 +2,8 @@
 
 > Status (2026-11-11): shipped and current; transport follow-ups are recorded at
 > the end. The release table below lists the original 2026-09-22 builds, since
-> superseded. The hardware item remains open.
+> superseded. The hardware item remains open. Since 2026-11-22 text, metadata and
+> authentication travel on the TCP control link instead of Bluetooth.
 
 User authorized: retain text and metadata/authentication over paired encrypted
 Bluetooth; send file contents only over LAN, cap one regular file at **2 GB

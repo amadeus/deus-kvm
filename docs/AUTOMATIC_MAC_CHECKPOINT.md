@@ -1,10 +1,17 @@
 # Enable to take over — two-Mac checkpoint
 
-Update **Windows and both Macs**. Keep Bluetooth enabled and retain both pairings.
+Update **Windows and both Macs**. Add each Mac once with **Add Mac…** on the PC
+and turn on **Enable control** for the PC on each Mac.
 The earlier Windows-only build does not implement this flow.
 
 Status 2026-11-11: takeover is in every later build, including the current
 release ZIPs. The two-Mac checks below have not yet been recorded as passed.
+
+Status 2026-11-22: Bluetooth was removed; the PC finds and connects to both Macs
+over the local network, and takeover works as before. Steps below that mention
+pairings, Bluetooth or the HID mouse describe the earlier Bluetooth builds; the
+dated sections (file paste prototype, performance trial, pointer experiments,
+stutter follow-up) are history.
 
 ## File paste prototype (2026-09-22, superseded)
 
@@ -45,7 +52,8 @@ reports. Saved experimental preferences are ignored; no reset or re-pairing is
 needed. Update Windows and both Macs using the current ZIPs below. Automatic
 ownership/takeover, the display-selection fix and bounded recovery polling remain.
 (Since 2026-11-08, pointer motion and clicks also travel over the local network
-when both computers share a private network, falling back to Bluetooth HID.)
+when both computers share a private network, falling back to Bluetooth HID.
+Since 2026-11-22 all input uses the network stream; there is no Bluetooth HID.)
 
 ## Update
 
@@ -59,7 +67,7 @@ when both computers share a private network, falling back to Bluetooth HID.)
 3. If a Mac cannot switch, read the PC's status in **Setup → Devices** (the menu bar
    shows a short form). The status distinguishes waiting for Windows control from
    missing permissions or unavailable capture. Follow that specific status; do not
-   remove Bluetooth pairings.
+   remove and re-add the Mac as a first step.
 
 ## Test this first
 
@@ -69,7 +77,7 @@ when both computers share a private network, falling back to Bluetooth HID.)
    should automatically become **Disabled**; Windows keeps the main Mac active.
    If the laptop was already saved as disabled, it should stay disabled.
 3. Click **Enable DeusKVM** on the laptop. Windows should disable the main Mac,
-   wait for its input release, then make the laptop active. No Bluetooth toggle.
+   wait for its input release, then make the laptop active. No network change is needed.
 4. On the laptop, test **Switch to PC**, typing, pointer movement, and edge return.
 5. Click **Enable DeusKVM** on the main Mac. Control should move back and the
    laptop should become disabled. Each Mac should use its own edge/display.
@@ -90,10 +98,10 @@ been reproduced on hardware; the new readiness checks should expose a blocker.
   and no keys/buttons remain held on Windows.
 - Quit/reopen either app, sleep/wake, restart the Windows service, and test
   lock/unlock and reboot/login. Saved disabled state persists across Mac restarts.
-  Previously verified paired Macs receive reconnect maintenance. Startup prefers
+  Added Macs reconnect when they are found again. Startup prefers
   the last active eligible Mac, then stable endpoint order; a second Mac is disabled.
-- If the previous owner stops responding, Windows must wait for release or an
-  actual Bluetooth disconnect. A heartbeat timeout alone must not let two Macs
+- If the previous owner stops responding, Windows must wait for release or the
+  end of that Mac's connection. A heartbeat timeout alone must not let two Macs
   capture at once. The Mac returns local on companion heartbeat loss.
 
 ## Diagnostics
@@ -101,7 +109,7 @@ been reproduced on hardware; the new readiness checks should expose a blocker.
 Windows: **Open diagnostics** opens `C:\ProgramData\DeusKVM` with `status.json`
 and `service.log`. Mac: choose **Report Problem Now** in the menu bar (it also saves
 the PC's state), and report the Setup → Devices status and Setup permissions.
-No uninstall or re-pairing test is needed.
+No uninstall or re-adding test is needed.
 
 Builds and automated tests do not establish hardware success. This checkpoint
 is pending until both updated Macs and Windows are tested together.

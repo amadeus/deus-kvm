@@ -2,10 +2,10 @@
 
 Clipboard sharing is enabled by default in the Mac app's **Configuration → Input
 settings → Share clipboard with Windows**. The toggle controls both directions:
-text up to 64 KiB over Bluetooth, and screenshot images and one file up to 2 GB
-over the local network. Both machines need this
-build; the Windows service and signed-in desktop worker handle sharing even
-when the tray window is closed. Keep the existing Bluetooth pairing.
+text up to 64 KiB over the encrypted companion control link, and screenshot
+images and one file up to 2 GB over separate local-network connections. Both
+machines need this build; the Windows service and signed-in desktop worker handle
+sharing even when the tray window is closed. Bluetooth is not used.
 
 ## Text clipboard test
 
@@ -17,7 +17,7 @@ when the tray window is closed. Keep the existing Bluetooth pairing.
    different sentence in Notepad, return to the Mac and paste into a text editor.
 4. Repeat with emoji, accented characters, multiple lines and approximately
    20 KB of text. Check that typing and edge return stay responsive during
-   transfer. BLE transfer time needs measurement on the actual hardware.
+   transfer.
 5. Make several successive copies in both directions. A newer local copy must
    not be replaced by an older transfer, and switching back and forth without
    copying must not cause clipboard feedback loops.
@@ -30,8 +30,9 @@ when the tray window is closed. Keep the existing Bluetooth pairing.
 
 The handoff-only Mac update is tested using isolated named pasteboards, including
 native reads/writes and stale-write rejection; the user's clipboard is untouched.
-Bluetooth timing, real handoffs and Finder/Explorer integration still require the
-hardware checks above. Automated tests do not establish live end-to-end behavior.
+Real handoffs and Finder/Explorer integration still require the hardware checks
+above (text has not yet been checked on hardware over the network-only link, since
+2026-11-22). Automated tests do not establish live end-to-end behavior.
 
 ## Behavior and limits
 
@@ -80,8 +81,10 @@ sharing preference/session. Windows then primes its desktop snapshot before
 handling a pending remote offer. This ordering prevents a first snapshot from
 cancelling an import that started during connection setup.
 
-All integers below are little-endian. Control messages fit one 20-byte frame;
-bulk frames grow to the size both sides negotiate in HELLO (20–244 bytes).
+All integers below are little-endian. Each message travels as one sealed frame
+on the TCP control link (stream 0 control, 1 bulk), in order. The Bluetooth
+builds' 20-byte frames and CRC-32C chunking are gone; the message payloads are
+unchanged.
 
 | Message | Stream | Payload |
 | --- | --- | --- |
@@ -90,12 +93,11 @@ bulk frames grow to the size both sides negotiate in HELLO (20–244 bytes).
 | CLIP_DATA (0x22) | 1 | epoch u32, copy sequence u32, byte offset u32, 0–1024 bytes |
 | CLIP_STATE (0x23) | 0 | epoch u32, availability/enabled u8 |
 
-The receiver requests one 1 KiB block at a time; multi-frame blocks use the
-existing CRC-32C framing. A missing block request retries after five seconds,
-up to three times. Control traffic retains priority over bulk. No HID descriptor,
-mouse/keyboard report logic, third stream or pairing change is involved.
+The receiver requests one 1 KiB block at a time. A missing block request retries
+after five seconds, up to three times. Input never shares this link: it uses the
+separate input stream.
 
-The Windows BLE worker coordinates the transfer but does not access the
+The Windows link worker coordinates the transfer but does not access the
 Session 0 clipboard. `DesktopClipboard` uses a dedicated STA thread within the
 signed-in desktop worker, isolated from the Raw Input STA; it wakes on clipboard
 change notifications (`AddClipboardFormatListener`), service commands and session
@@ -172,9 +174,9 @@ unavailable LAN, and existing text/Finder/Explorer paste. See
 ## On-demand file paste
 
 The sharing toggle supports **one regular file up to 2 GB (2,000,000,000 bytes)**
-in both directions. Text and file metadata/authentication use Bluetooth. File
-contents use authenticated local IPv4 networking only, in blocks up to 256 KiB.
-There is no Bluetooth file fallback or pre-download. Mac → Windows keeps the
+in both directions. Text and file metadata/authentication use the control link.
+File contents use a separate authenticated local IPv4 connection, in blocks up to
+256 KiB. There is no pre-download. Mac → Windows keeps the
 native Explorer virtual-file stream; Windows → Mac uses Finder Cmd+V with
 DeusKVM progress/cancel UI, as authorized by the user. Other Finder paste commands
 and destination apps are not intercepted.

@@ -23,8 +23,8 @@ public readonly record struct InputEvent(byte Type, uint Sequence, uint Captured
 /// and pan as i8 steps, HID orientation, already scaled and inverted on the Mac. The Mac
 /// sends each one sealed and prefixed by its sealed length; the PC answers every record with a
 /// sealed twelve-byte acknowledgement per read carrying the last sequence, its own clock and
-/// flags: bit 0 says the PC cannot inject right now, so the Mac should use the Bluetooth mouse
-/// until it clears. Bit 1 is an edge-return request, the same as the Bluetooth leave message:
+/// flags: bit 0 says the PC cannot inject right now, so the Mac holds input
+/// until it clears. Bit 1 is an edge-return request, the same as the control link's leave message:
 /// bits 2-3 the edge, 8-15 the switch id, 16-31 the fraction along the edge.
 /// </summary>
 public static class InputRecord

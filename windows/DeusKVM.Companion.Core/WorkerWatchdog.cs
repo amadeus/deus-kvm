@@ -1,6 +1,6 @@
 namespace DeusKVM.Companion.Core;
 
-// heartbeat freshness and Bluetooth-operation progress are separate: the STA
+// heartbeat freshness and connection-attempt progress are separate: the STA
 // may keep pumping heartbeats while a WinRT discovery call never completes.
 public sealed class WorkerWatchdog
 {

@@ -38,7 +38,7 @@ internal sealed class ForegroundIntegrity
         if (pid == (uint)RuntimeCompat.ProcessId) return false;
         var process = OpenProcess(ProcessQueryLimitedInformation, false, pid);
         // A process this one cannot even query (another user's, a protected one) is relayed too:
-        // the SYSTEM worker can inject for it, and the Mac falls back to Bluetooth without one.
+        // the SYSTEM worker can inject for it, and without one the Mac's input is dropped until it can.
         if (process == IntPtr.Zero) return true;
         try { var level = Level(process); return level < 0 || level > own; }
         finally { CloseHandle(process); }

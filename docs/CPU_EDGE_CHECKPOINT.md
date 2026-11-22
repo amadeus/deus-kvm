@@ -8,6 +8,8 @@
 > the local-network stream with Bluetooth as the fallback (2026-11-10). If return
 > sticks, choose **Report Problem Now** in the Mac menu bar before restarting
 > either app; `edge-return.log` is still written to the same folder.
+> Since 2026-11-22 Bluetooth is gone: the stream is the only input path, and the
+> control link (TCP) is the edge-return fallback; ignore the pairing advice below.
 
 Use the two current ZIPs in the visible `releases/` folder:
 

@@ -8,7 +8,7 @@ checkpoints retain this file-transfer behavior.
 Quit the old Mac app, extract and launch the new Apple Silicon app. On Windows,
 open the new companion EXE and approve the administrator prompt; it updates the
 installation and closes the old companion automatically.
-Keep pairings and **Configuration → Input settings → Share clipboard with Windows**
+Keep **Configuration → Input settings → Share clipboard with Windows**
 enabled on the Mac. Both
 computers must be reachable on the local network. Allow Mac local-network access
 if prompted. No Windows listening port or new inbound firewall rule is required.
@@ -48,14 +48,17 @@ paste is running; it is renamed on success and removed on cancellation/failure.
 - Replace the source clipboard, modify/delete the source, disable DeusKVM, lock,
   disconnect or change ownership during transfer: it must stop without reporting
   a successful mixed/truncated copy.
-- Disconnect networking but retain Bluetooth: plain text still works; file paste
-  fails without falling back to Bluetooth. Restore networking and copy again.
+- Disconnect networking during a transfer: the paste fails without a partial
+  result. Since 2026-11-22 text and control also use the network, so they drop
+  too, and the Mac takes input back if it was on the PC. Restore networking and
+  copy again.
 - Check mouse, typing, edge switching and hotkey return throughout.
 
 One regular file at a time, maximum 2 GB. No folders, symlinks, multiple selection,
 cut/move or arbitrary destination apps. Keep the source unchanged and copied until
 paste completes. File contents are authenticated/encrypted LAN traffic; text,
-file metadata and transfer authentication stay on encrypted paired Bluetooth.
+file metadata and transfer authentication travel on the encrypted companion
+control link (TCP since 2026-11-22; earlier builds used paired Bluetooth).
 Local IPv4 reachability is required; guest isolation and IPv6-only networks fail.
 
 Both directions passed full 2 GB socket transfers with matching SHA-256 locally.
