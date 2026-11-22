@@ -1,23 +1,23 @@
+using System.Net;
 using DeusKVM.Companion.Core;
-using Windows.Devices.Bluetooth;
-using Windows.Devices.Bluetooth.GenericAttributeProfile;
 
 namespace DeusKVM.Companion;
 
-// Owns one connection lifetime. A superseded asynchronous discovery may finish,
-// but its results are disposed here and cannot reach a replacement session.
+// Owns one connection lifetime: the TCP connect and handshake (off the worker's thread), then
+// the protocol session. A superseded connect may finish, but its result is disposed here and
+// cannot reach a replacement session.
 internal sealed class MacSession : IDisposable
 {
-    private static readonly Guid HidUuid = new("00001812-0000-1000-8000-00805f9b34fb");
-    private readonly SynchronizationContext context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-    private readonly Action<bool> connectionChanged;
+    private readonly ControlIdentity identity;
+    private readonly Func<Guid, bool> trusted;
     private readonly Action<string> detail;
-    private readonly List<GattDeviceService> services = [];
-    private BluetoothLEDevice? device;
-    private GattSession? session;
-    private BluetoothControl? control;
-    private bool disposed, changed;
+    private ControlConnection? connection;
+    private ControlSession? control;
+    private bool disposed;
     public ConnectedMac Mac { get; }
+    public IPEndPoint[] Endpoints { get; }
+    /// <summary>The Mac's id, proven by the handshake.</summary>
+    public Guid PeerId { get; private set; }
     public bool Verified { get; private set; }
     public bool Unsupported { get; private set; }
     public bool Attached => control?.Attached == true;
@@ -31,90 +31,73 @@ internal sealed class MacSession : IDisposable
     public uint AvailabilityEpoch => control?.AvailabilityEpoch ?? 0;
     public bool Active => control?.Active == true;
     public void SetActive(bool active) => control?.SetActive(active);
-    public bool NeedsReconnect => changed || control?.NeedsReconnect == true;
-    public int ServiceCount => services.Count;
+    public bool NeedsReconnect => control?.NeedsReconnect == true;
+    public int ServiceCount => Verified ? 1 : 0;
     public string? Error { get; private set; }
 
-    public MacSession(ConnectedMac mac, Action<bool> connectionChanged, Action<string> detail)
+    public MacSession(ConnectedMac mac, IPEndPoint[] endpoints, ControlIdentity identity, Func<Guid, bool> trusted, Action<string> detail)
     {
-        Mac = mac; this.connectionChanged = connectionChanged; this.detail = detail;
+        Mac = mac; Endpoints = endpoints; this.identity = identity; this.trusted = trusted; this.detail = detail;
     }
 
     public async Task Open()
     {
         try
         {
-            var opened = await BluetoothLEDevice.FromIdAsync(Mac.Id);
-            if (disposed) { opened?.Dispose(); return; }
-            device = opened ?? throw new IOException("Windows denied service-account access to this paired BLE endpoint.");
-            device.ConnectionStatusChanged += ConnectionChanged;
-            device.GattServicesChanged += ServicesChanged;
-            if (device.ConnectionStatus != BluetoothConnectionStatus.Connected)
-            { connectionChanged(false); return; }
-            // Only an observed connected candidate is actively probed.
-            var result = await device.GetGattServicesAsync(BluetoothCacheMode.Uncached);
-            if (disposed) { foreach (var service in result.Services) service.Dispose(); return; }
-            services.AddRange(result.Services);
-            if (result.Status != GattCommunicationStatus.Success)
-                throw new IOException($"Uncached discovery: {result.Status}; ATT error: {result.ProtocolError}");
-            var companion = services.FirstOrDefault(service => service.Uuid == Protocol.Uuid(1));
-            Verified = companion is not null && services.Any(service => service.Uuid == HidUuid);
-            if (!Verified) { Unsupported = true; return; }
-            // Companion handshakes stay alive for paused/waiting Macs; only the
-            // elected connection can create a desktop or clipboard session.
+            var opened = await Task.Run(Connect);
+            if (disposed) { opened.Dispose(); return; }
+            PeerId = opened.PeerId;
+            // A Bonjour entry names the Mac it advertises; the handshake must prove it is that Mac.
+            if (!trusted(PeerId) || (Guid.TryParse(Mac.Id, out var advertised) && advertised != PeerId))
+            {
+                opened.Dispose();
+                Unsupported = true;
+                Error = $"{Mac.Name} is not an allowed Mac (id {PeerId}); add it with Add Mac…";
+                return;
+            }
+            connection = opened;
+            Verified = true;
         }
-        catch (Exception error) { if (!disposed) Error = Describe(error); }
+        catch (Exception error) when (error is IOException or System.Net.Sockets.SocketException or System.Security.Cryptography.CryptographicException)
+        { if (!disposed) Error = error.Message; }
     }
 
-    public async Task Attach()
+    // Each endpoint in turn (a Mac on Ethernet and Wi-Fi has two); the last failure is reported.
+    private ControlConnection Connect()
     {
-        try
+        IOException? last = null;
+        foreach (var endpoint in Endpoints)
         {
-            if (disposed || !Verified || device is null) return;
-            var opened = await GattSession.FromDeviceIdAsync(device.BluetoothDeviceId);
-            if (disposed) { opened?.Dispose(); return; }
-            session = opened;
-            if (session is not null && session.CanMaintainConnection) session.MaintainConnection = true;
-            control = new BluetoothControl(value => { if (!disposed) detail(value); }, () => session?.MaxPduSize ?? 23);
-            await control.Attach(services.First(service => service.Uuid == Protocol.Uuid(1)), CancellationToken.None);
+            try { return ControlConnection.Connect(endpoint, identity); }
+            catch (IOException error) { last = error; }
         }
-        catch (Exception error) { if (!disposed) Error = Describe(error); }
+        throw last ?? new IOException($"No address for {Mac.Name}");
+    }
+
+    public Task Attach()
+    {
+        if (disposed || !Verified || connection is null) return Task.CompletedTask;
+        control = new ControlSession(detail);
+        control.Attach(connection);
+        connection = null; // the session owns it now
+        return Task.CompletedTask;
     }
 
     public void Tick()
     {
-        if (!disposed && device is not null && control is not null)
-            control.Tick(device.BluetoothAddress.ToString("X12"));
+        if (!disposed) control?.Tick();
     }
 
     public void RefreshDesktop()
     {
-        if (!disposed && device is not null && control is not null)
-            control.RefreshDesktop(device.BluetoothAddress.ToString("X12"));
+        if (!disposed) control?.RefreshDesktop();
     }
-
-    private void ConnectionChanged(BluetoothLEDevice sender, object args)
-    {
-        var connected = sender.ConnectionStatus == BluetoothConnectionStatus.Connected;
-        context.Post(_ => { if (!disposed && sender == device) connectionChanged(connected); }, null);
-    }
-    private void ServicesChanged(BluetoothLEDevice sender, object args) => context.Post(_ =>
-    {
-        if (!disposed && sender == device) changed = true;
-    }, null);
-    private static string Describe(Exception error) => $"{error.Message} (HRESULT 0x{error.HResult:X8}).";
 
     public void Dispose()
     {
         if (disposed) return;
         disposed = true;
         control?.Dispose(); control = null;
-        foreach (var service in services) service.Dispose(); services.Clear();
-        if (session is not null) { session.MaintainConnection = false; session.Dispose(); session = null; }
-        if (device is not null)
-        {
-            device.ConnectionStatusChanged -= ConnectionChanged; device.GattServicesChanged -= ServicesChanged;
-            device.Dispose(); device = null;
-        }
+        connection?.Dispose(); connection = null;
     }
 }

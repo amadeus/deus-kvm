@@ -26,9 +26,9 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
     public bool Connected { get; private set; }
     public string Detail { get; private set; } = "Waiting for signed-in console desktop";
 
-    public void Refresh(string address)
+    public void Refresh()
     {
-        try { RefreshConsole(address); }
+        try { RefreshConsole(); }
         catch (Exception error)
         {
             Stop();
@@ -37,7 +37,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
         }
     }
 
-    private void RefreshConsole(string address)
+    private void RefreshConsole()
     {
         launchStep = "reading console session";
         var console = ConsoleSession.Read();
@@ -80,7 +80,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
                 launchStep = "creating pointer pipe";
                 pointerPipe = new PointerPipeServer(name + ".Pointer", security, records => pointer?.Invoke(records));
                 launchStep = "creating console process";
-                process = DesktopProcess.Launch(token, name, address);
+                process = DesktopProcess.Launch(token, name);
                 lifetime = new CancellationTokenSource();
                 outgoing = Channel.CreateBounded<DesktopMessage>(32);
                 lastMessage = RuntimeCompat.TickCount64;

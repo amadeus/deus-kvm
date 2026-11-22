@@ -84,7 +84,7 @@ internal sealed class TrayContext : ApplicationContext
             {
                 var snapshot = JsonFiles.Read<ServiceSnapshot>(Paths.Status);
                 if (snapshot is not null && ServicePolicy.IsFresh(snapshot.UpdatedAt, DateTimeOffset.UtcNow))
-                    statusItem.Text = snapshot.Worker.DeviceName is { } name ? $"Active: {name}" : "Waiting for a paired Mac";
+                    statusItem.Text = snapshot.Worker.DeviceName is { } name ? $"Active: {name}" : "Waiting for a Mac";
             }
             settings?.RefreshControls(state, automaticItem.Checked, trayStartupItem.Checked, busy);
             settings?.RefreshStatus(state.ToString());
@@ -119,7 +119,7 @@ internal sealed class TrayContext : ApplicationContext
     {
         if (busy) return;
         if (MessageBox.Show(settings,
-            "Remove DeusKVM, its service, startup settings and saved data from this PC? Windows Bluetooth pairings are kept.",
+            "Remove DeusKVM, its service, startup settings and saved data from this PC?",
             "Remove DeusKVM from this PC", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
         await ControlAsync("--remove");

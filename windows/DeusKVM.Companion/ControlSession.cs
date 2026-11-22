@@ -1,14 +1,13 @@
 using System.Buffers.Binary;
 using System.Text.Json;
 using DeusKVM.Companion.Core;
-using Windows.Devices.Bluetooth;
-using Windows.Devices.Bluetooth.GenericAttributeProfile;
-using Windows.Storage.Streams;
 
 namespace DeusKVM.Companion;
 
-// Runs on the service's STA BLE worker. Desktop observations are requests; the Mac remains the routing authority.
-internal sealed partial class BluetoothControl(Action<string> status, Func<int> maxPduSize) : IDisposable
+// The companion protocol with one Mac over its control link, on the link worker's STA thread
+// (the connection's threads post here). Desktop observations are requests; the Mac remains the
+// routing authority.
+internal sealed partial class ControlSession(Action<string> status) : IDisposable
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -16,28 +15,22 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         PropertyNameCaseInsensitive = true
     };
     private readonly SynchronizationContext context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-    private readonly Queue<(GattCharacteristic Characteristic, byte[] Data, bool HelloEnd, bool Leave)> controls = new(), bulk = new();
-    // A leave request is still waiting in `controls`: a newer one adds nothing (the Mac acts on the
-    // first), and piling them up behind a slow link delays everything else, pings included.
-    private bool leaveQueued;
     private readonly CompanionHandoff handoff = new();
     private readonly StateReporter stateReport = new();
     private (uint Token, string[] Service)? pendingReport;
-    private Protocol.Encoder controlEncoder = new(), bulkEncoder = new();
-    private Protocol.Decoder controlDecoder = new(), bulkDecoder = new();
-    private GattCharacteristic? controlRead, controlWrite, bulkRead, bulkWrite;
+    private ControlConnection? connection;
     private DesktopHost? desktop;
     private MonitorInfo[] monitors = [];
     private byte[]? inputOffer;
     // SYSTEM secure-input worker: injects on the secure desktop (UAC, lock screen) when the
     // user desktop worker cannot. Spawned while a Mac is active; its connection and each injection
-    // status are pushed to the desktop worker so it relays or falls back to Bluetooth. Volatile:
+    // status are pushed to the desktop worker so it relays or injects itself. Volatile:
     // the desktop pipe's reader thread forwards pointer records to it directly.
     private volatile SecureInputHost? secureInput;
     private bool lastSecureReady;
     private EdgeConfiguration? config => handoff.Configuration;
     private long lastSeen, connectedAt;
-    private bool subscribing, ready, writing, helloSent, disposed;
+    private bool ready, disposed;
     private int generation;
     private byte blind = 4;
     private MacAvailability availability = new();
@@ -54,49 +47,26 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     public uint AvailabilityEpoch => availability.Epoch;
     public bool Active => active;
     public bool NeedsReconnect { get; private set; }
-    public bool Attached => controlRead is not null;
-    public string Detail { get; private set; } = "Waiting for Mac control service";
+    public bool Attached => connection is not null;
+    public string Detail { get; private set; } = "Waiting for the Mac's HELLO";
 
-    public async Task Attach(GattDeviceService service, CancellationToken stop)
+    // Takes over a connected, verified link; the Mac sends HELLO first.
+    public void Attach(ControlConnection link)
     {
-        if (disposed) return;
+        if (disposed) { link.Dispose(); return; }
         ResetLink();
+        connection = link;
         var epoch = generation;
-        var result = await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached).AsTask(stop);
-        if (disposed || epoch != generation) return;
-        if (result.Status != GattCommunicationStatus.Success) throw new IOException("Control characteristic discovery: " + result.Status);
-        GattCharacteristic Find(int id) => result.Characteristics.FirstOrDefault(item => item.Uuid == Protocol.Uuid(id))
-            ?? throw new IOException("Missing companion characteristic " + id);
-        controlRead = Find(2); controlWrite = Find(3); bulkRead = Find(4); bulkWrite = Find(5);
-        foreach (var characteristic in new[] { controlRead, controlWrite, bulkRead, bulkWrite })
-            characteristic.ProtectionLevel = GattProtectionLevel.EncryptionRequired;
-        // Clear persisted CCCDs first so macOS starts a fresh per-connection handshake.
-        foreach (var characteristic in new[] { controlRead, bulkRead })
-        {
-            var outcome = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
-                GattClientCharacteristicConfigurationDescriptorValue.None).AsTask(stop);
-            if (disposed || epoch != generation) return;
-            if (outcome != GattCommunicationStatus.Success) throw new IOException("Companion subscription reset: " + outcome);
-        }
-        controlRead.ValueChanged += Notification;
-        bulkRead.ValueChanged += Notification;
-        subscribing = true;
         connectedAt = RuntimeCompat.TickCount64;
-        foreach (var characteristic in new[] { controlRead, bulkRead })
-        {
-            var outcome = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
-                GattClientCharacteristicConfigurationDescriptorValue.Notify).AsTask(stop);
-            if (disposed || epoch != generation) return;
-            if (outcome != GattCommunicationStatus.Success) throw new IOException("Companion subscription: " + outcome);
-        }
-        subscribing = false;
-        Drain();
+        link.Start(
+            packet => context.Post(_ => { if (!disposed && epoch == generation) Receive(packet); }, null),
+            reason => context.Post(_ => { if (!disposed && epoch == generation) Fail(reason); }, null));
     }
 
-    public void Tick(string address)
+    public void Tick()
     {
         if (disposed) return;
-        RefreshDesktop(address);
+        RefreshDesktop();
         RefreshSecureInput();
         UpdateClipboardSession();
         if (clipboardEnabled) Clipboard.Tick(ClipboardNow);
@@ -117,7 +87,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
 
     // Also called on activation so the console worker (needed for ENTER placement and
     // edge return) starts immediately rather than at the next three-second tick.
-    public void RefreshDesktop(string address)
+    public void RefreshDesktop()
     {
         if (disposed || !active) return;
         if (desktop is null)
@@ -129,7 +99,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 message => context.Post(_ => { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null),
                 records => secureInput?.Forward(records));
         }
-        desktop.Refresh(address);
+        desktop.Refresh();
         RefreshSecureInput();
     }
 
@@ -210,31 +180,17 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         RequestSerial = Interlocked.Increment(ref nextRequest);
     }
 
-    private void Notification(GattCharacteristic sender, GattValueChangedEventArgs args)
+    private void Receive(Protocol.Packet packet)
     {
-        using var reader = DataReader.FromBuffer(args.CharacteristicValue);
-        if (reader.UnconsumedBufferLength > Protocol.MaximumChunkSize) { context.Post(_ => Fail("Oversized companion frame"), null); return; }
-        var bytes = new byte[reader.UnconsumedBufferLength];
-        reader.ReadBytes(bytes);
-        context.Post(_ => Receive(sender, bytes), null);
-    }
-
-    private void Receive(GattCharacteristic source, byte[] frame)
-    {
-        if (NeedsReconnect || (source != controlRead && source != bulkRead)) return;
+        if (NeedsReconnect) return;
         try
         {
-            var control = source == controlRead;
-            var packet = (control ? controlDecoder : bulkDecoder).Receive(frame);
-            if (packet is null) return;
-            if (packet.Stream != (control ? 0 : 1)) throw new InvalidDataException("Wrong companion stream");
             var type = (Protocol.Message)packet.Type;
             if (type == Protocol.Message.Hello)
             {
                 using var hello = JsonDocument.Parse(packet.Payload);
                 if (ready || hello.RootElement.GetProperty("v").GetInt32() != 1 ||
-                    hello.RootElement.GetProperty("role").GetString() != "mac" ||
-                    hello.RootElement.GetProperty("chunk").GetInt32() < 20) throw new InvalidDataException("Invalid HELLO");
+                    hello.RootElement.GetProperty("role").GetString() != "mac") throw new InvalidDataException("Invalid HELLO");
                 ready = true;
                 stateReport.Reset();
                 var selected = hello.RootElement.TryGetProperty("selection", out var selection) && selection.TryGetInt32(out var version) && version == 1;
@@ -248,11 +204,8 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
                 fileReceivePeer = hello.RootElement.TryGetProperty("fileReceive", out var reverseFiles) && reverseFiles.TryGetInt32(out var reverseVersion) && reverseVersion == 1;
                 filesPeer = hello.RootElement.TryGetProperty("files", out var files) && files.TryGetInt32(out var filesVersion) && filesVersion == 1;
                 imagesPeer = hello.RootElement.TryGetProperty("images", out var images) && images.TryGetInt32(out var imageVersion) && imageVersion == 1;
-                var chunk = Protocol.FrameLimit(maxPduSize() - 3); // ATT write/notify value limit
                 SendJson(Protocol.Message.Hello, new { v = 1, role = "pc", name = "DeusKVM Companion",
-                    computerName = Environment.MachineName, chunk, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, images = 1, selection = 1, takeover = true, report = 1, inputNetwork = 2 });
-                // HELLO itself stays at the 20-byte bootstrap size; later bulk frames fit both receive limits.
-                bulkEncoder.ChunkSize = Protocol.FrameLimit(Math.Min(chunk, hello.RootElement.GetProperty("chunk").GetInt32()));
+                    computerName = Environment.MachineName, chunk = Protocol.MaximumChunkSize, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, images = 1, selection = 1, takeover = true, report = 1, inputNetwork = 2 });
                 UpdateClipboardSession(true);
                 if (active && monitors.Length > 0) SendScreens();
                 SetDetail("Companion connected; waiting for desktop status");
@@ -386,7 +339,7 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
             case "report" when pendingReport?.Token == message.Epoch:
                 FinishReport(message.Epoch, message.Report);
                 break;
-            case "leave" when handoff.Accept(message.SwitchId) && message.Edge == config?.Edge && blind == 0 && !leaveQueued:
+            case "leave" when handoff.Accept(message.SwitchId) && message.Edge == config?.Edge && blind == 0:
                 Send(Protocol.Message.Leave, [message.SwitchId, message.Edge, (byte)message.Fraction, (byte)(message.Fraction >> 8)]);
                 break;
         }
@@ -398,8 +351,8 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
         var age = lastSeen == 0 ? -1 : RuntimeCompat.TickCount64 - lastSeen;
         var service = new[]
         {
-            $"windows companion: version={typeof(BluetoothControl).Assembly.GetName().Version} uptimeS={RuntimeCompat.TickCount64 / 1000}",
-            $"link: ready={ready} active={active} blind={blind} queue={controls.Count}/{bulk.Count} writing={writing} lastSeenAgoMs={age} detail=\"{Detail}\"",
+            $"windows companion: version={typeof(ControlSession).Assembly.GetName().Version} uptimeS={RuntimeCompat.TickCount64 / 1000}",
+            $"link: ready={ready} active={active} blind={blind} mac={connection?.Remote} pendingBytes={connection?.PendingBytes ?? 0} lastSeenAgoMs={age} detail=\"{Detail}\"",
             $"desktop: connected={desktop?.Connected == true} detail=\"{desktop?.Detail}\" monitors={string.Join(",", monitors.Select(item => $"{item.W}x{item.H}@{item.Dpi}"))} edge={config?.Edge}",
             $"clipboard: peer={clipboardPeer} offered={clipboardOffered} enabled={clipboardEnabled} desktop={clipboardDefaultDesktop}/{clipboardDesktopAvailable}"
         };
@@ -437,42 +390,8 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     private void SendState(byte[] state) { if (ready && stateReport.ShouldSend(state, RuntimeCompat.TickCount64)) Send(Protocol.Message.State, state); }
     private void Enqueue(Protocol.Message type, byte stream, byte[] payload)
     {
-        var characteristic = stream == 0 ? controlWrite : bulkWrite;
-        if (characteristic is null || NeedsReconnect) return;
-        var frames = (stream == 0 ? controlEncoder : bulkEncoder).Encode(new Protocol.Packet(stream, (byte)type, payload));
-        if (controls.Count + bulk.Count + frames.Count > 512) { Fail("Companion queue full"); return; }
-        var leave = type == Protocol.Message.Leave && stream == 0;
-        for (var index = 0; index < frames.Count; index++)
-            (stream == 0 ? controls : bulk).Enqueue((characteristic, frames[index],
-                type == Protocol.Message.Hello && index == frames.Count - 1, leave && index == frames.Count - 1));
-        if (leave) leaveQueued = true;
-        Drain();
-    }
-
-    private async void Drain()
-    {
-        if (writing || subscribing || NeedsReconnect) return;
-        writing = true;
-        var epoch = generation;
-        try
-        {
-            while (epoch == generation && !NeedsReconnect && (controls.Count > 0 || bulk.Count > 0))
-            {
-                // The peer must receive the whole HELLO before any control-stream messages.
-                var queue = !helloSent ? bulk : controls.Count > 0 ? controls : bulk;
-                if (queue.Count == 0) break;
-                var item = queue.Dequeue();
-                if (item.Leave) leaveQueued = false;
-                using var writer = new DataWriter(); writer.WriteBytes(item.Data);
-                var result = await item.Characteristic.WriteValueAsync(writer.DetachBuffer(),
-                    item.Characteristic == controlWrite ? GattWriteOption.WriteWithoutResponse : GattWriteOption.WriteWithResponse)
-                    .AsTask().WaitAsync(TimeSpan.FromSeconds(8));
-                if (result != GattCommunicationStatus.Success) throw new IOException("Companion write: " + result);
-                if (epoch == generation && item.HelloEnd) helloSent = true;
-            }
-        }
-        catch (Exception error) { if (epoch == generation) Fail(error.Message); }
-        finally { writing = false; if (epoch != generation) Drain(); }
+        if (connection is null || NeedsReconnect || payload.Length > Protocol.MaximumPayload) return;
+        if (!connection.Send(stream, (byte)type, payload)) Fail("Mac link closed");
     }
 
     private void SetDetail(string value) { if (Detail != value) { Detail = value; status(value); } }
@@ -481,11 +400,8 @@ internal sealed partial class BluetoothControl(Action<string> status, Func<int> 
     {
         SetActive(false);
         generation++;
-        if (controlRead is not null) controlRead.ValueChanged -= Notification;
-        if (bulkRead is not null) bulkRead.ValueChanged -= Notification;
-        controlRead = controlWrite = bulkRead = bulkWrite = null;
-        controls.Clear(); bulk.Clear(); leaveQueued = false; controlEncoder = new(); bulkEncoder = new(); controlDecoder = new(); bulkDecoder = new();
-        ready = subscribing = NeedsReconnect = helloSent = false;
+        connection?.Dispose(); connection = null;
+        ready = NeedsReconnect = false;
         availability = new();
         stateReport.Reset();
         SupportsTakeover = false; RequestSerial = 0; requestedEpoch = disabledEpoch = ReleaseAcknowledged = null;

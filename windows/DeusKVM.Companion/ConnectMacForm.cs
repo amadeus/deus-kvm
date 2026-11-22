@@ -1,21 +1,26 @@
 using DeusKVM.Companion.Core;
-using Windows.Devices.Enumeration;
 
 namespace DeusKVM.Companion;
 
+// "Add Mac": lists the DeusKVM Macs Bonjour finds on the local network and saves the chosen
+// one (by its control-link id) through the elevated --configure command. The service then
+// connects to it; the Mac lists this PC once it connects, where Enable control finishes setup.
 internal sealed class ConnectMacForm : Form
 {
-    private readonly Dictionary<string, DeviceInformation> found = new(StringComparer.Ordinal);
+    private sealed record Choice(DiscoveredMac Mac, Guid Id)
+    {
+        public override string ToString() =>
+            $"{Mac.Name}   ({string.Join(", ", Mac.Endpoints.Select(item => item.Address.ToString()).Distinct())})";
+    }
+
     private readonly ListBox devices = new() { Dock = DockStyle.Fill, IntegralHeight = false };
-    private readonly Button connect = new() { Text = "Connect", AutoSize = true, Enabled = false };
-    private readonly Button rescan = new() { Text = "Search again", AutoSize = true };
+    private readonly Button connect = new() { Text = "Add", AutoSize = true, Enabled = false };
     private readonly Button cancel = new() { Text = "Cancel", AutoSize = true };
-    private readonly CheckBox showAll = new() { Text = "Show all devices", AutoSize = true };
-    private readonly HashSet<string> knownDeviceIds = new(StringComparer.Ordinal);
     private readonly Label status = new() { AutoSize = true, Dock = DockStyle.Fill, MaximumSize = new Size(490, 0) };
-    private readonly CancellationTokenSource stop = new();
-    private DeviceWatcher? watcher;
-    private bool busy, closing;
+    private readonly HashSet<Guid> known = [];
+    private NetworkMacDiscovery? discovery;
+    private bool busy;
+
     public ConnectMacForm()
     {
         SuspendLayout();
@@ -24,106 +29,76 @@ internal sealed class ConnectMacForm : Form
         Font = SystemFonts.MessageBoxFont;
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(540, 440); MinimumSize = new Size(480, 400); StartPosition = FormStartPosition.CenterParent;
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), ColumnCount = 1, RowCount = 5 };
+        ClientSize = new Size(540, 400); MinimumSize = new Size(480, 360); StartPosition = FormStartPosition.CenterParent;
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), ColumnCount = 1, RowCount = 4 };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(new Label { Text = "Enable DeusKVM and open System Settings → Bluetooth on your Mac. Leave it open while choosing and pairing your Mac below.", AutoSize = true, MaximumSize = new Size(490, 0) });
-        layout.Controls.Add(devices); layout.Controls.Add(showAll); layout.Controls.Add(status);
+        layout.Controls.Add(new Label
+        {
+            Text = "Open DeusKVM on your Mac (same network as this PC), then choose it below. After adding it, turn on Enable control for this PC in the Mac's Setup.",
+            AutoSize = true, MaximumSize = new Size(490, 0)
+        });
+        layout.Controls.Add(devices); layout.Controls.Add(status);
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
-        buttons.Controls.Add(connect); buttons.Controls.Add(rescan); buttons.Controls.Add(cancel); layout.Controls.Add(buttons);
+        buttons.Controls.Add(connect); buttons.Controls.Add(cancel); layout.Controls.Add(buttons);
         Controls.Add(layout); AcceptButton = connect; CancelButton = cancel;
         ResumeLayout(true);
-        devices.SelectedIndexChanged += (_, _) => connect.Enabled = !busy && devices.SelectedItem is MacCandidate;
-        showAll.CheckedChanged += (_, _) => Render();
-        connect.Click += async (_, _) => await ConnectAsync();
-        rescan.Click += (_, _) => Search(); cancel.Click += (_, _) => Close();
+        devices.SelectedIndexChanged += (_, _) => connect.Enabled = !busy && devices.SelectedItem is Choice;
+        connect.Click += async (_, _) => await AddAsync();
+        cancel.Click += (_, _) => Close();
         Shown += (_, _) => Search();
-        FormClosing += (_, args) =>
-        {
-            StopSearch();
-            if (busy) { args.Cancel = true; closing = true; stop.Cancel(); status.Text = "Cancelling… Finish or dismiss any Windows pairing prompt."; }
-        };
+        FormClosing += (_, args) => { if (busy) args.Cancel = true; else { discovery?.Dispose(); discovery = null; } };
     }
-    private void Post(DeviceWatcher sender, Action action)
-    {
-        if (IsDisposed || !IsHandleCreated) return;
-        try { BeginInvoke(() => { if (!IsDisposed && watcher == sender && !busy) action(); }); }
-        catch (InvalidOperationException) { }
-    }
+
     private void Search()
     {
-        StopSearch(); found.Clear(); devices.Items.Clear(); status.Text = "Searching for computers… If your Mac is missing, try Show all devices.";
+        status.Text = "Looking for Macs on the network…";
+        var automatic = JsonFiles.Read<AutomaticMacSettings>(Paths.AutomaticMacs);
+        foreach (var mac in automatic?.Macs ?? [])
+            if (Guid.TryParse(mac.DeviceId, out var id)) known.Add(id);
+        discovery = new NetworkMacDiscovery(Render, message => status.Text = message, hostsFile: null);
+    }
+
+    private void Render(IReadOnlyList<DiscoveredMac> macs)
+    {
+        if (IsDisposed || busy) return;
+        var selected = (devices.SelectedItem as Choice)?.Id;
+        var choices = macs.Where(mac => mac.Id is not null).Select(mac => new Choice(mac, mac.Id!.Value))
+            .OrderBy(choice => choice.Mac.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        devices.BeginUpdate(); devices.Items.Clear(); devices.Items.AddRange(choices);
+        devices.SelectedIndex = Array.FindIndex(choices, choice => choice.Id == selected); devices.EndUpdate();
+        var added = choices.Count(choice => known.Contains(choice.Id));
+        status.Text = choices.Length == 0
+            ? "No Mac found yet. Make sure DeusKVM is running on the Mac and both are on the same network."
+            : added > 0 ? $"Found {choices.Length}; {added} already added (choose it again to keep it)." : $"Found {choices.Length}. Choose your Mac.";
+    }
+
+    private async Task AddAsync()
+    {
+        if (busy || devices.SelectedItem is not Choice choice) return;
+        busy = true; connect.Enabled = devices.Enabled = false;
         try
         {
-            knownDeviceIds.Clear();
-            var selected = JsonFiles.Read<CompanionSettings>(Paths.Settings);
-            if (selected is not null)
-            {
-                knownDeviceIds.Add(selected.DeviceId);
-                if (selected.PairingDeviceId is not null) knownDeviceIds.Add(selected.PairingDeviceId);
-            }
-            var automatic = JsonFiles.Read<AutomaticMacSettings>(Paths.AutomaticMacs);
-            if (automatic is not null)
-                foreach (var mac in automatic.Macs)
-                {
-                    knownDeviceIds.Add(mac.DeviceId);
-                    if (mac.PairingDeviceId is not null) knownDeviceIds.Add(mac.PairingDeviceId);
-                }
-            watcher = DeviceInformation.CreateWatcher(MacPairing.Selector, MacPairing.Properties, DeviceInformationKind.AssociationEndpoint);
-            watcher.Added += (sender, info) => Post(sender, () => { found[info.Id] = info; Render(); });
-            watcher.Updated += (sender, update) => Post(sender, () => { if (found.TryGetValue(update.Id, out var info)) info.Update(update); Render(); });
-            watcher.Removed += (sender, update) => Post(sender, () => { found.Remove(update.Id); Render(); });
-            watcher.EnumerationCompleted += (sender, _) => Post(sender, () => status.Text = "Choose your Mac. If missing, keep its Bluetooth settings open and try Show all devices or Search again.");
-            watcher.Stopped += (sender, _) => Post(sender, () => status.Text = "Search stopped. Check Windows Bluetooth and choose Search again.");
-            watcher.Start();
-        }
-        catch (Exception error) { status.Text = error.Message; StopSearch(); }
-    }
-    private void Render()
-    {
-        var selected = (devices.SelectedItem as MacCandidate)?.Id;
-        var items = MacCandidates.Visible(found.Values.Select(info => new MacCandidate(info.Id, info.Name,
-            info.Properties.TryGetValue("System.Devices.Aep.DeviceAddress", out var address) ? address as string : null,
-            info.Pairing.IsPaired, MacPairing.Transport(info),
-            info.Properties.TryGetValue(MacPairing.MajorClassProperty, out var category) && category is ushort major ? major : null)),
-            showAll.Checked, knownDeviceIds);
-        devices.BeginUpdate(); devices.Items.Clear(); devices.Items.AddRange(items);
-        devices.SelectedIndex = Array.FindIndex(items, item => item.Id == selected); devices.EndUpdate();
-    }
-    private void StopSearch()
-    {
-        var old = watcher; watcher = null;
-        if (old?.Status is DeviceWatcherStatus.Started or DeviceWatcherStatus.EnumerationCompleted) old.Stop();
-    }
-    private async Task ConnectAsync()
-    {
-        if (busy || devices.SelectedItem is not MacCandidate candidate) return;
-        busy = true; connect.Enabled = rescan.Enabled = devices.Enabled = showAll.Enabled = false; StopSearch();
-        try
-        {
-            await MacConnection.Connect(new MacPairing(candidate, message => status.Text = message, stop.Token));
+            var settings = new CompanionSettings(choice.Id.ToString(), choice.Mac.Name);
+            settings.Validate();
+            status.Text = "Saving your Mac… Approve the administrator prompt if requested.";
+            await ServiceCommands.ElevateAsync("--configure", ServiceCommands.EncodeSettings(settings));
             DialogResult = DialogResult.OK;
         }
-        catch (OperationCanceledException) { status.Text = "Pairing cancelled or timed out. Existing Mac pairings are unchanged."; }
         catch (Exception error) { status.Text = error.Message; }
         finally
         {
             busy = false;
-            if (DialogResult == DialogResult.OK || closing) Close();
-            else
-            {
-                rescan.Enabled = devices.Enabled = showAll.Enabled = true;
-                connect.Enabled = devices.SelectedItem is MacCandidate;
-            }
+            if (DialogResult == DialogResult.OK) Close();
+            else { devices.Enabled = true; connect.Enabled = devices.SelectedItem is Choice; }
         }
     }
+
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { StopSearch(); stop.Dispose(); }
+        if (disposing) { discovery?.Dispose(); discovery = null; }
         base.Dispose(disposing);
     }
 }

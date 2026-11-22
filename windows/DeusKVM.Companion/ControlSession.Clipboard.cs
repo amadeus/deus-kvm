@@ -3,7 +3,7 @@ using DeusKVM.Companion.Core;
 
 namespace DeusKVM.Companion;
 
-internal sealed partial class BluetoothControl
+internal sealed partial class ControlSession
 {
     private ClipboardTransfer? clipboardTransfer;
     private bool filesPeer, fileReceivePeer, imagesPeer;

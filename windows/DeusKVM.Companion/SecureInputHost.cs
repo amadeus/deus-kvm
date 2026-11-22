@@ -60,7 +60,7 @@ internal sealed class SecureInputHost(Action<string>? note = null, Action<bool>?
         }
         catch (Exception error) when (error is Win32Exception or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            note?.Invoke("secure worker: unavailable, Bluetooth fallback kept (" + error.Message + ")");
+            note?.Invoke("secure worker: unavailable, desktop worker injects instead (" + error.Message + ")");
             Stop();
         }
     }

@@ -13,10 +13,6 @@ internal static class DesktopNative
     [StructLayout(LayoutKind.Sequential)]
     internal struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)]
-    private struct PropertyKey { public Guid Format; public uint Id; }
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct DeviceEntry { public IntPtr Handle; public uint Type; }
-    [StructLayout(LayoutKind.Sequential)]
     private struct MouseInput { public int Dx, Dy; public uint Data, Flags, Time; public IntPtr Extra; }
     [StructLayout(LayoutKind.Sequential)]
     private struct KeyInput { public ushort Vk, Scan; public uint Flags, Time; public IntPtr Extra; }
@@ -85,31 +81,6 @@ internal static class DesktopNative
     internal static extern bool LockWorkStation();
     internal static double Milliseconds() => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
 
-    internal static bool IsMacMouse(IntPtr device, string address)
-    {
-        uint size = 0;
-        if (GetRawInputDeviceInfo(device, 0x20000007, null, ref size) == uint.MaxValue || size > 4096 || size == 0) return false;
-        var name = new StringBuilder((int)size);
-        if (GetRawInputDeviceInfo(device, 0x20000007, name, ref size) == uint.MaxValue) return false;
-        // Resolve the HID interface to its PnP ancestry; match the selected BLE device's address exactly.
-        var key = new PropertyKey { Format = new Guid("78c34fc8-104a-4aca-9ea4-524d52996e57"), Id = 256 };
-        var buffer = new byte[8192];
-        uint bytes = (uint)buffer.Length;
-        if (CM_Get_Device_Interface_Property(name.ToString(), ref key, out _, buffer, ref bytes, 0) != 0) return false;
-        var instance = Encoding.Unicode.GetString(buffer, 0, (int)bytes).TrimEnd('\0');
-        if (CM_Locate_DevNode(out var node, instance, 0) != 0) return false;
-        for (var depth = 0; depth < 16; depth++)
-        {
-            var id = new StringBuilder(4096);
-            if (CM_Get_Device_ID(node, id, id.Capacity, 0) != 0) return false;
-            var parts = id.ToString().Split('\\');
-            if (parts.Length >= 2 && parts[0].Equals("BTHLE", StringComparison.OrdinalIgnoreCase) &&
-                parts[1].Equals("DEV_" + address, StringComparison.OrdinalIgnoreCase)) return true;
-            if (CM_Get_Parent(out var parent, node, 0) != 0) return false;
-            node = parent;
-        }
-        return false;
-    }
 
     internal static bool IsDefaultDesktop() => DesktopState().Desktop == 0;
 
@@ -201,19 +172,6 @@ internal static class DesktopNative
     internal static extern bool RegisterRawInputDevices(RawDevice[] devices, uint count, uint size);
     [DllImport("user32.dll")]
     internal static extern uint GetRawInputData(IntPtr raw, uint command, IntPtr data, ref uint size, uint headerSize);
-    [DllImport("user32.dll")]
-    internal static extern uint GetRawInputDeviceList([Out] DeviceEntry[]? devices, ref uint count, uint size);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetRawInputDeviceInfoW")]
-    private static extern uint GetRawInputDeviceInfo(IntPtr device, uint command, StringBuilder? data, ref uint size);
-    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode, EntryPoint = "CM_Get_Device_Interface_PropertyW")]
-    private static extern uint CM_Get_Device_Interface_Property(string name, ref PropertyKey key, out uint type,
-        [Out] byte[] value, ref uint size, uint flags);
-    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode, EntryPoint = "CM_Locate_DevNodeW")]
-    private static extern uint CM_Locate_DevNode(out uint node, string id, uint flags);
-    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode, EntryPoint = "CM_Get_Device_IDW")]
-    private static extern uint CM_Get_Device_ID(uint node, StringBuilder id, int length, uint flags);
-    [DllImport("cfgmgr32.dll")]
-    private static extern uint CM_Get_Parent(out uint parent, uint node, uint flags);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetCursorPos(out Point point);

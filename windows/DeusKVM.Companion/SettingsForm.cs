@@ -73,17 +73,17 @@ internal sealed class SettingsForm : Form
         SuspendLayout(); layout.SuspendLayout();
         try
         {
-            selected.Text = "Waiting for a paired Mac";
+            selected.Text = "Waiting for a Mac";
             state.Text = $"Service: {serviceState}";
             var snapshot = JsonFiles.Read<ServiceSnapshot>(Paths.Status);
-            if (serviceState != "Running" || snapshot is null) { detail.Text = "Bluetooth recovery is not running."; return; }
+            if (serviceState != "Running" || snapshot is null) { detail.Text = "The DeusKVM service is not running."; return; }
             if (!ServicePolicy.IsFresh(snapshot.UpdatedAt, DateTimeOffset.UtcNow)) { detail.Text = "Waiting for a fresh service status…"; return; }
-            selected.Text = snapshot.Worker.DeviceName is { } active ? $"Active: {active}" : "Waiting for a paired Mac";
+            selected.Text = snapshot.Worker.DeviceName is { } active ? $"Active: {active}" : "Waiting for a Mac";
             if (snapshot.Worker.WaitingMacs is { Length: > 0 } waiting)
                 selected.Text += $"\nWaiting: {string.Join(", ", waiting)}";
             if (snapshot.Worker.PausedMacs is { Length: > 0 } paused)
                 selected.Text += $"\nDisabled or not allowed: {string.Join(", ", paused)}";
-            detail.Text = $"Bluetooth: {snapshot.Worker.State}\n{snapshot.Worker.Detail}";
+            detail.Text = $"Mac link: {snapshot.Worker.State}\n{snapshot.Worker.Detail}";
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         { detail.Text = "Service status is temporarily unavailable."; }

@@ -16,27 +16,26 @@ internal static class Program
             return 0;
         }
 
-        // a dedicated STA with a message loop satisfies WinRT's UI-thread contract.
+        // a dedicated STA with a message loop: the control sessions post their work to it.
         // it runs under the service identity/session, with no interactive windows.
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        if (args is ["--ble-worker"])
+        if (args is ["--link-worker"])
         {
-            using var worker = new BluetoothWorker();
+            using var worker = new LinkWorker();
             Application.Run(worker);
             return worker.ExitCode;
         }
 
-        if (args is ["--desktop-worker", var pipe, var parent, var address] && int.TryParse(parent, out var pid) &&
-            address.Length == 12 && address.All(Uri.IsHexDigit))
+        if (args is ["--desktop-worker", var pipe, var parent] && int.TryParse(parent, out var pid))
         {
-            using var worker = new DesktopWorker(pipe, pid, address);
+            using var worker = new DesktopWorker(pipe, pid);
             Application.Run(worker);
             return 0;
         }
 
         // SYSTEM in the console session: injection only, onto the current (possibly secure)
-        // desktop. Headless, no message loop. Spawned by the service; fails safe to Bluetooth.
+        // desktop. Headless, no message loop. Spawned by the service.
         if (args is ["--secure-worker", var securePipe, var secureParent] && int.TryParse(secureParent, out var securePid))
             return new SecureInputWorker(securePipe, securePid).Run();
 
@@ -53,7 +52,7 @@ internal static class Program
             if (trayOnly && (File.Exists(Paths.RemovalMarker) || !ServiceInstaller.IsInstalledLocation || ServiceInstaller.NeedsInstall())) return 0;
             if (File.Exists(Paths.RemovalMarker))
             {
-                if (MessageBox.Show("A previous removal did not finish. Retry removing DeusKVM? Windows Bluetooth pairings are kept.",
+                if (MessageBox.Show("A previous removal did not finish. Retry removing DeusKVM?",
                     "Finish removing DeusKVM", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK)
                     ServiceCommands.ElevateExecutableAsync(RuntimeCompat.ProcessPath!, "--remove").GetAwaiter().GetResult();
                 return 0;

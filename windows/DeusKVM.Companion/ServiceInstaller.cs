@@ -76,7 +76,7 @@ internal static class ServiceInstaller
             }
             else
                 ServiceCommands.RunSc("config", Paths.ServiceName, "binPath=", imagePath, "obj=", "LocalSystem", "DisplayName=", "DeusKVM Companion");
-            ServiceCommands.RunSc("description", Paths.ServiceName, "Automatically selects the first connected paired DeusKVM Mac independently of user login.");
+            ServiceCommands.RunSc("description", Paths.ServiceName, "Connects to your DeusKVM Macs over the local network and lets the active one control this PC, independently of user login.");
             ServiceCommands.RunSc("failure", Paths.ServiceName, "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000");
             ServiceCommands.RunSc("failureflag", Paths.ServiceName, "0");
             CreateShortcut();

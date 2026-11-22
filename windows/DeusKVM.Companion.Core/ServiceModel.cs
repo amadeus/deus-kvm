@@ -4,13 +4,14 @@ namespace DeusKVM.Companion.Core;
 
 public sealed record CompanionSettings(string DeviceId, string DeviceName)
 {
-    // Fresh pairing may use the Mac's Classic endpoint; workers still use its LE endpoint.
+    // DeviceId is the Mac's control-link id (a Guid). PairingDeviceId was the Bluetooth-era
+    // Classic endpoint; it is kept only so older files still parse.
     public string? PairingDeviceId { get; init; }
 
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(DeviceId) || DeviceId.Length > 4096 || DeviceId.Any(char.IsControl))
-            throw new ArgumentException("Choose one paired Bluetooth LE device.");
+            throw new ArgumentException("Choose one Mac.");
         if (string.IsNullOrWhiteSpace(DeviceName) || DeviceName.Length > 256 || DeviceName.Any(char.IsControl))
             throw new ArgumentException("The selected device name is invalid.");
         if (PairingDeviceId is not null && (string.IsNullOrWhiteSpace(PairingDeviceId) ||

@@ -9,7 +9,7 @@ internal sealed class CompanionService : ServiceBase
 {
     private CancellationTokenSource? shutdown;
     private Task? runner;
-    private volatile WorkerStatus worker = new("Starting", "Starting Bluetooth recovery", DateTimeOffset.UtcNow);
+    private volatile WorkerStatus worker = new("Starting", "Starting the Mac link", DateTimeOffset.UtcNow);
     private readonly object logLock = new();
     private WorkerStatus? savedWorker;
     private (uint Id, string State) savedConsole;
@@ -36,7 +36,7 @@ internal sealed class CompanionService : ServiceBase
         Log("Stop requested; automatic startup preference is unchanged.");
         shutdown?.Cancel();
         if (runner is not null && !runner.Wait(TimeSpan.FromSeconds(10)))
-            throw new System.TimeoutException("Bluetooth worker did not stop within ten seconds.");
+            throw new System.TimeoutException("Link worker did not stop within ten seconds.");
         shutdown?.Dispose();
         shutdown = null;
     }
@@ -88,12 +88,12 @@ internal sealed class CompanionService : ServiceBase
                 WorkingDirectory = AppContext.BaseDirectory
             }
         };
-        process.StartInfo.SetArguments(["--ble-worker"]);
-        worker = new("Starting", "Watching paired Macs under the service account.", DateTimeOffset.UtcNow);
+        process.StartInfo.SetArguments(["--link-worker"]);
+        worker = new("Starting", "Looking for Macs under the service account.", DateTimeOffset.UtcNow);
         using var job = new WorkerJob(allowBreakaway: true);
         process.Start();
         job.Add(process);
-        Log($"Bluetooth worker started: PID {process.Id}");
+        Log($"Link worker started: PID {process.Id}");
         var watchdog = new WorkerWatchdog();
         // Killing the job closes redirected pipes, releasing both asynchronous readers.
         var output = ReadOutputAsync();
@@ -105,7 +105,7 @@ internal sealed class CompanionService : ServiceBase
                 SaveStatus();
                 if (watchdog.IsExpired())
                 {
-                    Log("Bluetooth worker is unresponsive; replacing it.");
+                    Log("Link worker is unresponsive; replacing it.");
                     break;
                 }
                 await Task.Delay(TimeSpan.FromSeconds(2), stop);
@@ -122,7 +122,7 @@ internal sealed class CompanionService : ServiceBase
                 if (!string.IsNullOrWhiteSpace(stderr)) Log($"Worker stderr: {stderr}");
             }
             catch (OperationCanceledException) { }
-            Log($"Bluetooth worker exited: {process.ExitCode}");
+            Log($"Link worker exited: {process.ExitCode}");
         }
 
         async Task ReadOutputAsync()

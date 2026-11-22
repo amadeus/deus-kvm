@@ -3,7 +3,9 @@ using DeusKVM.Companion.Core;
 
 namespace DeusKVM.Companion;
 
-internal sealed class BluetoothWorker : ApplicationContext
+// Finds trusted Macs on the network, holds one control link per Mac, and elects which one
+// owns the PC (the same arbitration as before). Runs on the service's STA child process.
+internal sealed class LinkWorker : ApplicationContext
 {
     private readonly CancellationTokenSource shutdown = new();
     private readonly StreamWriter output = new(Console.OpenStandardOutput()) { AutoFlush = true };
@@ -11,13 +13,16 @@ internal sealed class BluetoothWorker : ApplicationContext
     private readonly Dictionary<long, Attempt> attempts = [];
     private readonly Dictionary<long, int> failures = [];
     private readonly List<(Task Work, long RetiredAt)> retired = [];
-    private WorkerStatus status = new("Starting", "Watching paired Bluetooth devices", DateTimeOffset.UtcNow);
+    private WorkerStatus status = new("Starting", "Looking for Macs on the network", DateTimeOffset.UtcNow);
     private MacPriority priority = new();
     private readonly ControlArbiter arbiter = new();
     private AutomaticMacSettings saved = new(null, []);
     private CompanionSettings? pairingHint;
-    private PairedMacDiscovery? discovery;
-    private KnownMacRecovery? recovery;
+    private NetworkMacDiscovery? discovery;
+    private ControlIdentity? identity;
+    // Where each observed Mac answers, and when Bonjour (or mac-hosts.txt) last listed it.
+    private readonly Dictionary<string, (System.Net.IPEndPoint[] Endpoints, long Seen)> found = new(StringComparer.Ordinal);
+    private const long ForgetAfterMs = 5 * 60 * 1000;
     private bool started;
     private long lastTick;
     private DateTime pairingHintWritten;
@@ -36,7 +41,7 @@ internal sealed class BluetoothWorker : ApplicationContext
         public long ProcessedRequest { get; set; }
     }
 
-    public BluetoothWorker()
+    public LinkWorker()
     {
         heartbeat.Tick += (_, _) => Emit(status);
         heartbeat.Start(); Application.Idle += Start;
@@ -59,15 +64,15 @@ internal sealed class BluetoothWorker : ApplicationContext
     private async Task RunAsync(CancellationToken stop)
     {
         pairingHint = JsonFiles.Read<CompanionSettings>(Paths.Settings);
-        saved = JsonFiles.Read<AutomaticMacSettings>(Paths.AutomaticMacs) ?? AutomaticMacSettings.Migrate(pairingHint);
+        if (pairingHint is not null && !Guid.TryParse(pairingHint.DeviceId, out _)) pairingHint = null; // a Bluetooth-era pairing
+        saved = (JsonFiles.Read<AutomaticMacSettings>(Paths.AutomaticMacs) ?? AutomaticMacSettings.Migrate(pairingHint)).NetworkOnly();
         saved.Validate();
+        identity = ServiceIdentity.Load();
+        Emit(status with { DiscoveryEvent = $"This PC's id: {ControlLink.PeerId(identity.Public)}; trusted Macs: {saved.Macs.Length}" });
         priority = new MacPriority(saved.LastActiveId, requireAvailability: true);
-        discovery = new PairedMacDiscovery(priority, message => Emit(status with { DiscoveryEvent = message }));
-        recovery = new KnownMacRecovery(message => Emit(status with { DiscoveryEvent = message }));
-        recovery.Refresh(saved.Macs);
+        discovery = new NetworkMacDiscovery(Discovered, message => Emit(status with { DiscoveryEvent = message }), Paths.MacHosts);
         while (!stop.IsCancellationRequested)
         {
-            if (discovery.Error is { } error) throw new IOException(error);
             RefreshPairingHint();
             foreach (var connection in new[] { arbiter.Owner, arbiter.Requested }.OfType<long>())
                 if (!priority.Connections.Any(mac => mac.Connection == connection)) arbiter.Disconnected(connection);
@@ -79,11 +84,10 @@ internal sealed class BluetoothWorker : ApplicationContext
             }
             retired.RemoveAll(item => item.Work.IsCompleted);
             if (priority.Active is null && retired.Any(item => RuntimeCompat.TickCount64 - item.RetiredAt > 60000))
-                throw new TimeoutException("A disconnected device's Bluetooth operation stalled; recycling the worker.");
+                throw new TimeoutException("A disconnected Mac's connection attempt stalled; recycling the worker.");
             foreach (var attempt in attempts.Values.ToArray()) AdvanceAttempt(attempt);
 
-            // Serialize GATT discovery. The message loop and disconnect handling
-            // remain responsive while the WinRT operation runs.
+            // One connection attempt at a time; the message loop stays responsive meanwhile.
             if (priority.Enumerated && retired.Count < 4 && !attempts.Values.Any(item => !item.Work.IsCompleted))
             {
                 var candidate = priority.DiscoveryCandidates.FirstOrDefault(mac => !attempts.ContainsKey(mac.Connection));
@@ -92,7 +96,6 @@ internal sealed class BluetoothWorker : ApplicationContext
             if (RuntimeCompat.TickCount64 - lastTick >= 3000)
             {
                 lastTick = RuntimeCompat.TickCount64;
-                recovery.Refresh(saved.Macs);
                 foreach (var attempt in attempts.Values.Where(item => item.Work.IsCompleted && item.Attaching && item.RetryAt == 0))
                     attempt.Link.Tick();
             }
@@ -102,10 +105,37 @@ internal sealed class BluetoothWorker : ApplicationContext
         }
     }
 
+    // One round of discovery: trusted Macs from Bonjour, and every listed manual host (whose id
+    // the handshake reveals). A Mac missing from a round keeps its place for a while: answers
+    // can be lost, and a live link ends by itself if the Mac really went away.
+    private void Discovered(IReadOnlyList<DiscoveredMac> macs)
+    {
+        var now = RuntimeCompat.TickCount64;
+        foreach (var mac in macs)
+        {
+            var id = mac.Id is { } guid ? guid.ToString() : "host:" + mac.ManualHost;
+            if (mac.Id is { } known && !Trusted(known)) continue;
+            var fresh = !priority.Connections.Any(item => item.Id == id);
+            found[id] = (mac.Endpoints, now);
+            priority.Observe(id, mac.Name, string.Join(";", mac.Endpoints.Select(item => item.ToString())), true);
+            if (fresh) Emit(status with { DiscoveryEvent = $"Found {mac.Name} at {string.Join(", ", mac.Endpoints.Select(item => item.ToString()))}" });
+        }
+        foreach (var old in priority.Connections)
+        {
+            if (!found.TryGetValue(old.Id, out var entry) || now - entry.Seen < ForgetAfterMs) continue;
+            if (attempts.TryGetValue(old.Connection, out var attempt) && attempt.Link.Ready) continue;
+            priority.Remove(old.Id); found.Remove(old.Id);
+            Emit(status with { DiscoveryEvent = $"No longer found: {old.Name}" });
+        }
+        priority.CompleteEnumeration();
+    }
+
+    private bool Trusted(Guid id) => saved.Macs.Any(mac => Guid.TryParse(mac.DeviceId, out var trusted) && trusted == id);
+
     private void Open(ConnectedMac mac)
     {
-        var link = new MacSession(mac,
-            connected => { if (priority.IsCurrent(mac)) discovery?.ConnectionChanged(mac.Id, connected); },
+        var endpoints = found.TryGetValue(mac.Id, out var entry) ? entry.Endpoints : [];
+        var link = new MacSession(mac, endpoints, identity!, Trusted,
             detail => { if (priority.Active?.Connection == mac.Connection) Emit(status with { Detail = detail }); });
         attempts[mac.Connection] = new Attempt(link, link.Open()) { Failures = failures.GetValueOrDefault(mac.Connection) };
     }
@@ -118,7 +148,7 @@ internal sealed class BluetoothWorker : ApplicationContext
             if (RuntimeCompat.TickCount64 - attempt.Started > 45000)
             {
                 if (priority.Active?.Connection == link.Mac.Connection)
-                    throw new TimeoutException($"Bluetooth operation stalled for {link.Mac.Name}; recycling the worker.");
+                    throw new TimeoutException($"The link to {link.Mac.Name} stalled; recycling the worker.");
                 // An unrelated device's stalled probe must not interrupt a working
                 // Mac. Quarantine it until disconnect; recycle later if still hung.
                 priority.Reject(link.Mac); Retire(attempt); attempts.Remove(link.Mac.Connection);
@@ -143,11 +173,12 @@ internal sealed class BluetoothWorker : ApplicationContext
             priority.SetAvailable(link.Mac, false);
             if (priority.Active?.Connection != link.Mac.Connection) priority.Reject(link.Mac);
             link.Dispose();
-            Emit(status with { DiscoveryEvent = $"Retrying {link.Mac.Name}: {link.Error ?? "GATT services or companion connection changed"}" });
+            Emit(status with { DiscoveryEvent = $"Retrying {link.Mac.Name}: {link.Error ?? "the link closed"}" });
             return;
         }
         if (link.Unsupported)
         {
+            if (!attempt.Remembered) { attempt.Remembered = true; Emit(status with { DiscoveryEvent = link.Error }); }
             if (priority.Active?.Connection == link.Mac.Connection)
             {
                 attempt.RetryAt = RuntimeCompat.TickCount64 + 5000;
@@ -160,8 +191,8 @@ internal sealed class BluetoothWorker : ApplicationContext
         if (attempt.Attaching) failures.Remove(link.Mac.Connection);
         if (!attempt.Remembered)
         {
-            Remember(link.Mac, false); attempt.Remembered = true;
-            Emit(status with { DiscoveryEvent = $"Verified DeusKVM Mac: {link.Mac.Name}; services={link.ServiceCount}" });
+            Remember(link, false); attempt.Remembered = true;
+            Emit(status with { DiscoveryEvent = $"Connected to {link.Mac.Name} (id {link.PeerId})" });
         }
         if (!attempt.Attaching)
         {
@@ -214,7 +245,7 @@ internal sealed class BluetoothWorker : ApplicationContext
                 priority.SelectRequested(next);
                 winner.Link.SetActive(true);
                 winner.Link.RefreshDesktop();
-                Remember(next, true);
+                Remember(winner.Link, true);
                 Emit(status with { State = "Connected", DeviceName = next.Name, DeviceId = next.Id,
                     Detail = "Active Mac; preparing edge and clipboard session", LastDiscovery = DateTimeOffset.UtcNow,
                     ServiceCount = winner.Link.ServiceCount, HidServiceFound = true,
@@ -239,11 +270,11 @@ internal sealed class BluetoothWorker : ApplicationContext
         var next = JsonFiles.Read<CompanionSettings>(Paths.Settings);
         if (next == pairingHint) return;
         pairingHint = next;
-        if (next is null) return;
+        if (next is null || !Guid.TryParse(next.DeviceId, out _)) return;
         saved = saved.Remember(next); JsonFiles.Write(Paths.AutomaticMacs, saved);
-        // Pairing can finish while a first discovery is still seeing incomplete
-        // services. Recheck that candidate, without replacing the active session.
-        foreach (var mac in priority.Connections.Where(item => item.Id == next.DeviceId))
+        // A newly allowed Mac may already be listed (rejected while untrusted, or a manual
+        // host): recheck those, without replacing the active session.
+        foreach (var mac in priority.Connections)
         {
             if (priority.Active?.Connection == mac.Connection) continue;
             priority.Reconsider(mac);
@@ -251,9 +282,10 @@ internal sealed class BluetoothWorker : ApplicationContext
         }
     }
 
-    private void Remember(ConnectedMac mac, bool active)
+    // Saved under the id the handshake proved, which is what trust is checked against.
+    private void Remember(MacSession link, bool active)
     {
-        saved = saved.Remember(new CompanionSettings(mac.Id, mac.Name), active);
+        saved = saved.Remember(new CompanionSettings(link.PeerId.ToString(), link.Mac.Name), active);
         JsonFiles.Write(Paths.AutomaticMacs, saved);
     }
 
@@ -270,7 +302,8 @@ internal sealed class BluetoothWorker : ApplicationContext
         else if (active is null)
             next = next with { State = priority.Enumerated ? "Waiting" : "Starting",
                 Detail = paused.Length > 0 ? "Enable DeusKVM and allow this PC on a Mac to take control" :
-                    priority.DiscoveryCandidates.Length > 0 ? "Checking connected Macs; enable DeusKVM on an updated Mac app" : "Waiting for a paired Mac to connect",
+                    priority.DiscoveryCandidates.Length > 0 ? "Connecting to Macs; on the Mac, turn on Enable control for this PC" :
+                    saved.Macs.Length == 0 ? "No Mac added yet; choose Add Mac…" : "Looking for allowed Macs on the network",
                 HidServiceFound = false, ServiceCount = 0, LastDiscovery = null };
         else if (attempts.TryGetValue(active.Connection, out var attempt))
             next = next with { State = attempt.RetryAt != 0 ? "Retrying" : !attempt.Work.IsCompleted ? "Opening" : "Connected",
@@ -287,7 +320,7 @@ internal sealed class BluetoothWorker : ApplicationContext
 
     private void Emit(WorkerStatus next)
     {
-        // Cached: these lookups ran on the STA that also dispatches GATT notifications.
+        // Cached: these lookups would otherwise run on every status line.
         next = next with { At = DateTimeOffset.UtcNow, Identity = ProcessIdentity.Name,
             ProcessSession = ProcessIdentity.Session };
         output.WriteLine(JsonSerializer.Serialize(next));
@@ -298,7 +331,7 @@ internal sealed class BluetoothWorker : ApplicationContext
     {
         if (disposing)
         {
-            shutdown.Cancel(); heartbeat.Dispose(); discovery?.Dispose(); recovery?.Dispose();
+            shutdown.Cancel(); heartbeat.Dispose(); discovery?.Dispose(); identity?.Dispose();
             foreach (var attempt in attempts.Values) attempt.Link.Dispose();
             attempts.Clear(); output.Dispose(); shutdown.Dispose();
         }

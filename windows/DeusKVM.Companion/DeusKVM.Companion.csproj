@@ -23,7 +23,6 @@
     <EmbeddedResource Include="AppIcon.ico" />
     <ProjectReference Include="../DeusKVM.Companion.Core/DeusKVM.Companion.Core.csproj" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.19041.1" />
     <PackageReference Include="PolySharp" Version="1.15.0" PrivateAssets="all" />
     <Reference Include="System.ServiceProcess" />
     <Reference Include="Microsoft.CSharp" />

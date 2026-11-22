@@ -2,7 +2,7 @@ namespace DeusKVM.Companion.Core;
 
 public sealed record ConnectedMac(string Id, string Name, string Address, long Connection);
 
-// One instance per BLE worker. All observations and elections are serialized by its STA.
+// One instance per link worker. All observations and elections are serialized by its STA.
 public sealed class MacPriority(string? startupPreference = null, bool requireAvailability = false)
 {
     private readonly Dictionary<string, ConnectedMac> connected = new(StringComparer.Ordinal);
@@ -101,9 +101,16 @@ public sealed class MacPriority(string? startupPreference = null, bool requireAv
     }
 }
 
-// Written only by the service-owned BLE worker, separate from interactive pairing hints.
+// Written only by the service's link worker, separate from interactive pairing hints.
 public sealed record AutomaticMacSettings(string? LastActiveId, CompanionSettings[] Macs)
 {
+    /// <summary>Only Macs saved by their control-link id; Bluetooth-era entries never match one.</summary>
+    public AutomaticMacSettings NetworkOnly()
+    {
+        var macs = Macs.Where(mac => Guid.TryParse(mac.DeviceId, out _)).ToArray();
+        return new(macs.Any(mac => mac.DeviceId == LastActiveId) ? LastActiveId : null, macs);
+    }
+
     public static AutomaticMacSettings Migrate(CompanionSettings? legacy)
     {
         legacy?.Validate();
