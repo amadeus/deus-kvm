@@ -8,12 +8,15 @@ namespace DeusKVM.Companion.Core;
 /// sequence or crypto: this is a local, length-prefixed channel, not the network stream. Motion
 /// is relative; a button is one of 1 left, 2 right, 3 middle. A mark carries the QPC timestamp
 /// (Stopwatch ticks, comparable across processes on one PC) at which the records after it reached
-/// the desktop worker, for latency measurement; release lets go of every button the SYSTEM
-/// worker holds.
+/// the desktop worker, for latency measurement; release lets go of every button and key the
+/// SYSTEM worker holds. A key is a virtual key (0 for by-scan-code), a scan code and flags (bit 0
+/// up, bit 1 extended); a wheel step is the wheel and pan deltas in WHEEL_DELTA units; SAS asks
+/// for the Ctrl+Alt+Delete screen, which only a SYSTEM process can raise.
 /// </summary>
 public static class SecureInputRecord
 {
-    public const byte Motion = 1, Button = 2, Mark = 3, Release = 4;
+    public const byte Motion = 1, Button = 2, Mark = 3, Release = 4, Key = 5, Wheel = 6, Sas = 7;
+    public static readonly byte[] SasRecord = [Sas];
     public static readonly byte[] ReleaseRecord = [Release];
 
     public static byte[] EncodeMark(long ticks)
@@ -39,10 +42,47 @@ public static class SecureInputRecord
 
     public static byte[] EncodeButton(byte button, bool down) => [Button, button, (byte)(down ? 1 : 0)];
 
+    public static byte[] EncodeKey(KeyStroke key, bool up)
+    {
+        var record = new byte[6];
+        record[0] = Key;
+        BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(1), key.Vk);
+        BinaryPrimitives.WriteUInt16LittleEndian(record.AsSpan(3), key.Scan);
+        record[5] = (byte)((up ? 1 : 0) | (key.Extended ? 2 : 0));
+        return record;
+    }
+
+    public static bool TryParseKey(ReadOnlySpan<byte> record, out KeyStroke key, out bool up)
+    {
+        key = default; up = false;
+        if (record.Length != 6 || record[0] != Key || record[5] > 3) return false;
+        key = new KeyStroke(BinaryPrimitives.ReadUInt16LittleEndian(record.Slice(1)), BinaryPrimitives.ReadUInt16LittleEndian(record.Slice(3)), (record[5] & 2) != 0);
+        up = (record[5] & 1) != 0;
+        return true;
+    }
+
+    public static byte[] EncodeWheel(int wheel, int pan)
+    {
+        var record = new byte[5];
+        record[0] = Wheel;
+        BinaryPrimitives.WriteInt16LittleEndian(record.AsSpan(1), Clamp16(wheel));
+        BinaryPrimitives.WriteInt16LittleEndian(record.AsSpan(3), Clamp16(pan));
+        return record;
+    }
+
+    public static bool TryParseWheel(ReadOnlySpan<byte> record, out int wheel, out int pan)
+    {
+        wheel = pan = 0;
+        if (record.Length != 5 || record[0] != Wheel) return false;
+        wheel = BinaryPrimitives.ReadInt16LittleEndian(record.Slice(1));
+        pan = BinaryPrimitives.ReadInt16LittleEndian(record.Slice(3));
+        return true;
+    }
+
     private static short Clamp16(int value) => (short)(value < short.MinValue ? short.MinValue : value > short.MaxValue ? short.MaxValue : value);
 
     /// <summary>The length of a record given its leading type byte, or 0 if the type is unknown.</summary>
-    public static int Length(byte type) => type switch { Motion => 5, Button => 3, Mark => 9, Release => 1, _ => 0 };
+    public static int Length(byte type) => type switch { Motion => 5, Button => 3, Mark => 9, Release => 1, Key => 6, Wheel => 5, Sas => 1, _ => 0 };
 
     public static bool TryParse(ReadOnlySpan<byte> record, out byte type, out int dx, out int dy, out byte button, out bool down)
     {

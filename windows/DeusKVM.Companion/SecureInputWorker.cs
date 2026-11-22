@@ -125,6 +125,9 @@ internal sealed class SecureInputWorker
                 case SecureInputRecord.Release:
                     injector.ReleaseAll();
                     break;
+                case SecureInputRecord.Sas:
+                    SecureAttention.Send(); // not an injection: its outcome is not the relay's status
+                    break;
                 default:
                     if (Deliver(record.ToArray())) injected = true; else ok = false;
                     break;
@@ -171,9 +174,13 @@ internal sealed class SecureInputWorker
         return true;
     }
 
-    private bool InjectOne(byte[] record) =>
-        SecureInputRecord.TryParse(record, out var type, out var dx, out var dy, out var button, out var down) &&
-        (type == SecureInputRecord.Motion ? injector.Move(dx, dy) : injector.Button(button, down));
+    private bool InjectOne(byte[] record)
+    {
+        if (SecureInputRecord.TryParseKey(record, out var key, out var up)) return injector.Key(key, up);
+        if (SecureInputRecord.TryParseWheel(record, out var wheel, out var pan)) return injector.Wheel(wheel, pan);
+        return SecureInputRecord.TryParse(record, out var type, out var dx, out var dy, out var button, out var down) &&
+            (type == SecureInputRecord.Motion ? injector.Move(dx, dy) : injector.Button(button, down));
+    }
 
     // The window's measurements, back to the service (and on to the desktop worker's log).
     private void Report(PipeStream pipe, long now)
@@ -197,23 +204,39 @@ internal sealed class SecureInputWorker
 /// calling thread only when that desktop changes. A SYSTEM process in the console session can
 /// attach to the Winlogon (secure) desktop, which the user's process cannot. Buttons it presses
 /// are released when the desktop changes or on dispose, so none is left held on a desktop the
-/// worker can no longer reach.
+/// worker can no longer reach. Keys are handled the same way.
 /// </summary>
 internal sealed class SecureInjector : IDisposable
 {
     private IntPtr desktop = IntPtr.Zero;
     private string current = "";
     private uint held; // MOUSEEVENTF up flags owed on the attached desktop
+    private readonly HashSet<KeyStroke> heldKeys = []; // keys pressed on the attached desktop
     private int switches;
 
     public int TakeSwitches() { var value = switches; switches = 0; return value; }
 
-    // Lets go of every button this worker pressed (the stream or the desktop worker ended).
+    // Lets go of every button and key this worker pressed (the stream or the desktop worker ended).
     public void ReleaseAll()
     {
-        if (held != 0 && desktop != IntPtr.Zero) DesktopNative.InjectMouse(0, 0, held);
-        held = 0;
+        if (desktop != IntPtr.Zero) ReleaseHeld();
+        held = 0; heldKeys.Clear();
     }
+
+    private void ReleaseHeld()
+    {
+        if (held != 0) DesktopNative.InjectMouse(0, 0, held);
+        foreach (var key in heldKeys) DesktopNative.InjectKey(key, up: true);
+    }
+
+    public bool Key(KeyStroke key, bool up)
+    {
+        if (!Attach()) return false;
+        if (up) heldKeys.Remove(key); else heldKeys.Add(key);
+        return DesktopNative.InjectKey(key, up) || Fail(4);
+    }
+
+    public bool Wheel(int wheel, int pan) => Attach() && (DesktopNative.InjectWheel(wheel, pan) || Fail(4));
 
     // The step that last failed (1 OpenInputDesktop, 2 GetUserObjectInformation, 3 SetThreadDesktop,
     // 4 SendInput) and its Win32 error.
@@ -250,7 +273,7 @@ internal sealed class SecureInjector : IDisposable
             var name = new StringBuilder(256);
             if (!GetUserObjectInformation(input, 2, name, name.Capacity * 2, out _)) return Fail(2);
             if (name.ToString() == current && desktop != IntPtr.Zero) return true;
-            if (held != 0 && desktop != IntPtr.Zero) { DesktopNative.InjectMouse(0, 0, held); held = 0; }
+            if (desktop != IntPtr.Zero) { ReleaseHeld(); held = 0; heldKeys.Clear(); }
             if (!SetThreadDesktop(input)) return Fail(3);
             if (desktop != IntPtr.Zero) { CloseDesktop(desktop); switches++; }
             desktop = input;
@@ -263,9 +286,8 @@ internal sealed class SecureInjector : IDisposable
 
     public void Dispose()
     {
-        if (held != 0 && desktop != IntPtr.Zero) DesktopNative.InjectMouse(0, 0, held);
-        if (desktop != IntPtr.Zero) CloseDesktop(desktop);
-        desktop = IntPtr.Zero; held = 0;
+        if (desktop != IntPtr.Zero) { ReleaseHeld(); CloseDesktop(desktop); }
+        desktop = IntPtr.Zero; held = 0; heldKeys.Clear();
     }
 
     // DESKTOP_WRITEOBJECTS | DESKTOP_READOBJECTS | DESKTOP_JOURNALPLAYBACK | DESKTOP_HOOKCONTROL
@@ -282,4 +304,35 @@ internal sealed class SecureInjector : IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetUserObjectInformationW", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder info, int length, out int needed);
+}
+
+/// <summary>
+/// Ctrl+Alt+Delete from the Mac. Windows ignores the chord through SendInput by design; a SYSTEM
+/// process may raise the secure attention screen with SendSAS once the SoftwareSASGeneration
+/// policy allows services (1, or 3 with Ease of Access apps). The policy is set here the first
+/// time it is needed, keeping an existing Ease of Access permission.
+/// </summary>
+internal static class SecureAttention
+{
+    private const string PolicyKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
+    private const string PolicyValue = "SoftwareSASGeneration";
+
+    public static bool Send()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(PolicyKey, writable: true);
+            var current = key?.GetValue(PolicyValue) is int value ? value : 0;
+            if ((current & 1) == 0) key?.SetValue(PolicyValue, current | 1, Microsoft.Win32.RegistryValueKind.DWord);
+            SendSAS(false);
+            return true;
+        }
+        catch (Exception error) when (error is UnauthorizedAccessException or System.Security.SecurityException or IOException or DllNotFoundException or EntryPointNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    [DllImport("sas.dll")]
+    private static extern void SendSAS([MarshalAs(UnmanagedType.Bool)] bool asUser);
 }

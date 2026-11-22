@@ -30,6 +30,12 @@ internal sealed class DesktopWorker : ApplicationContext
     private string networkStatus = "Network pointer: no offer";
     private readonly object networkGate = new();
     private uint heldNetworkButtons; // MOUSEEVENTF up flags still owed; under networkGate
+    // The Mac's keyboard and media-key state from the stream, and the repeat of its newest key;
+    // under networkGate. Keys go the same way as the pointer: the SYSTEM relay, else this process.
+    private readonly KeyboardState keyboard = new();
+    private readonly ConsumerState media = new();
+    private readonly KeyRepeater repeater;
+    private int repeatSerial;
     private volatile bool defaultDesktop;
     // Every network pointer record goes to the SYSTEM secure-input worker through the pointer
     // pipe: it can inject on every desktop and behind elevated windows, so nothing has to switch
@@ -80,6 +86,7 @@ internal sealed class DesktopWorker : ApplicationContext
 
     public DesktopWorker(string name, int parent, string address)
     {
+        repeater = new KeyRepeater(Repeat);
         this.parent = parent;
         this.address = address;
         pipeName = name;
@@ -203,7 +210,7 @@ internal sealed class DesktopWorker : ApplicationContext
                 if (handoff.Accept(message.SwitchId))
                 {
                     handoff.Exit();
-                    ReleaseNetworkButtons();
+                    ReleaseNetworkInput();
                     if (blind == 0) cursor.Hide();
                     lock (networkGate) { history.Add($"exit: switch={message.SwitchId} network={arrivals.Summary}"); arrivals.Reset(); }
                 }
@@ -351,13 +358,13 @@ internal sealed class DesktopWorker : ApplicationContext
         if (offer is not { Valid: true } || context is not { } post) { SetNetworkStatus("invalid offer"); return; }
         history.Add($"network: offer port={offer.Port} hosts={offer.Hosts.Length}");
         network = new NetworkInputClient(offer, Inject,
-            text => post.Post(_ => { if (text.StartsWith("closed", StringComparison.Ordinal)) ReleaseNetworkButtons(); SetNetworkStatus(text); }, null));
+            text => post.Post(_ => { if (text.StartsWith("closed", StringComparison.Ordinal)) ReleaseNetworkInput(); SetNetworkStatus(text); }, null));
     }
 
     private void StopNetwork(string reason)
     {
         network?.Dispose(); network = null;
-        ReleaseNetworkButtons();
+        ReleaseNetworkInput();
         SetNetworkStatus(reason);
     }
 
@@ -380,6 +387,7 @@ internal sealed class DesktopWorker : ApplicationContext
         var arrived = Stopwatch.GetTimestamp();
         var now = DesktopNative.Milliseconds();
         if (record.Type == InputRecord.Ping) { CheckInputDesktop(now, force: true); Probe(now); return CanHandle(now); }
+        if (record.IsKeyboard || record.IsConsumer || record.IsScroll) return InjectKeys(record, now, arrived);
         if (!record.IsMotion && !record.IsButton) return true;
         bool result;
         lock (networkGate)
@@ -427,6 +435,82 @@ internal sealed class DesktopWorker : ApplicationContext
         if (record.IsButton) return true;
         CheckInputDesktop(now, force: true);
         return !InjectBlocked;
+    }
+
+    // A keyboard state, media key or scroll step from the stream. Keys are state: the difference
+    // from the last record is injected, so a lost moment cannot leave a key held. Ctrl+Alt+Delete
+    // goes to the SYSTEM worker (only it can raise that screen); Win+L locks from here.
+    private bool InjectKeys(InputEvent record, double now, long arrived)
+    {
+        lock (networkGate)
+        {
+            if (handoff.Active is null) { arrivals.Discarded++; return CanHandle(now); }
+            CheckInputDesktop(now, force: InjectBlocked);
+            if (record.IsScroll)
+            {
+                int wheel = record.Wheel * 120, pan = record.Pan * 120;
+                return Deliver(SecureInputRecord.EncodeWheel(wheel, pan), () => DesktopNative.InjectWheel(wheel, pan), now, arrived);
+            }
+            var actions = record.IsKeyboard ? keyboard.Apply(record.Modifiers, record.Keys ?? []) : media.Apply(record.Usage);
+            var ok = true;
+            foreach (var action in actions) ok &= Perform(action, now, arrived);
+            if (record.IsKeyboard) ArmRepeat();
+            return ok;
+        }
+    }
+
+    // One key action (under networkGate).
+    private bool Perform(KeyAction action, double now, long arrived)
+    {
+        switch (action.Kind)
+        {
+            case KeyActionKind.Lock:
+                if (!DesktopNative.LockWorkStation()) Note($"Win+L: LockWorkStation failed ({Marshal.GetLastWin32Error()})");
+                return true;
+            case KeyActionKind.Sas:
+                if (RelayUsable(now) && pointer?.Enqueue(SecureInputRecord.SasRecord, arrived) == true) return true;
+                Note("Ctrl+Alt+Delete: the SYSTEM relay is not available");
+                return true;
+            default:
+                var up = action.Kind == KeyActionKind.Release;
+                var key = action.Key;
+                return Deliver(SecureInputRecord.EncodeKey(key, up), () => DesktopNative.InjectKey(key, up), now, arrived);
+        }
+    }
+
+    // A history line from the stream's thread; the history belongs to the desktop thread.
+    private void Note(string line) => context?.Post(_ => history.Add(line), null);
+
+    // A key or wheel step through the relay, else injected here unless Windows would discard it.
+    private bool Deliver(byte[] relayed, Func<bool> local, double now, long arrived)
+    {
+        if (RelayUsable(now) && pointer?.Enqueue(relayed, arrived) == true) { arrivals.Injected++; return true; }
+        Probe(now);
+        if (InjectBlocked) return Drop();
+        if (local()) { arrivals.Injected++; return true; }
+        CheckInputDesktop(now, force: true);
+        return !InjectBlocked;
+    }
+
+    // Restarts the repeat delay when the newest held key changes (under networkGate).
+    private void ArmRepeat()
+    {
+        if (keyboard.RepeatSerial == repeatSerial) return;
+        repeatSerial = keyboard.RepeatSerial;
+        if (keyboard.Repeating is not { } key) { repeater.Stop(); return; }
+        var (delay, period) = DesktopNative.KeyRepeat();
+        repeater.Start(key, repeatSerial, delay, period);
+    }
+
+    // On the repeat thread: one more key-down for the key still held, if it is.
+    private void Repeat(KeyStroke key, int serial)
+    {
+        lock (networkGate)
+        {
+            if (serial != repeatSerial || keyboard.Repeating != key || handoff.Active is null) return;
+            var now = DesktopNative.Milliseconds();
+            Deliver(SecureInputRecord.EncodeKey(key, false), () => DesktopNative.InjectKey(key, false), now, Stopwatch.GetTimestamp());
+        }
     }
 
     // Whether the pointer can be delivered to the PC at all (via the relay or directly).
@@ -574,15 +658,18 @@ internal sealed class DesktopWorker : ApplicationContext
         ObserveMotion(dx, dy);
     }
 
-    // A button pressed from the stream is released here when the stream, the handoff or the
-    // worker ends, so Windows never keeps one that the Mac can no longer release.
-    private void ReleaseNetworkButtons()
+    // A button or key pressed from the stream is released here when the stream, the handoff or
+    // the worker ends, so Windows never keeps one that the Mac can no longer release.
+    private void ReleaseNetworkInput()
     {
         lock (networkGate)
         {
-            if (heldNetworkButtons == 0) return;
+            var keys = keyboard.ReleaseAll().Concat(media.ReleaseAll()).ToList();
+            ArmRepeat();
+            if (heldNetworkButtons == 0 && keys.Count == 0) return;
             pointer?.Enqueue(SecureInputRecord.ReleaseRecord, Stopwatch.GetTimestamp()); // the relay's presses
-            DesktopNative.InjectMouse(0, 0, heldNetworkButtons);
+            if (heldNetworkButtons != 0) DesktopNative.InjectMouse(0, 0, heldNetworkButtons);
+            foreach (var key in keys) DesktopNative.InjectKey(key.Key, up: true);
             heldNetworkButtons = 0;
         }
     }
@@ -661,7 +748,8 @@ internal sealed class DesktopWorker : ApplicationContext
         {
             Application.Idle -= Start;
             network?.Dispose();
-            ReleaseNetworkButtons();
+            ReleaseNetworkInput();
+            repeater.Dispose();
             clipboard?.Dispose();
             cursor.Dispose();
             shutdown.Cancel(); timer.Dispose(); pipe.Dispose(); window.DestroyHandle(); shutdown.Dispose();

@@ -20,7 +20,8 @@ public static class Protocol
         // stream with the token and UTF-8 diagnostic text. Offered via HELLO `report: 1`.
         ReportRequest = 0x30, Report = 0x31,
         // The Mac's local-network pointer listener (bulk stream, JSON like a file offer's
-        // network part). Offered via HELLO `inputNetwork: 1`.
+        // network part). Offered via HELLO `inputNetwork: 1`; 2 also takes keyboard, media-key and
+        // scroll records on the stream.
         InputOffer = 0x32, Nack = 0x7F
     }
     public sealed record Packet(byte Stream, byte Type, byte[] Payload);

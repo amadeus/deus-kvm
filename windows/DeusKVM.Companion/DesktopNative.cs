@@ -19,7 +19,12 @@ internal static class DesktopNative
     [StructLayout(LayoutKind.Sequential)]
     private struct MouseInput { public int Dx, Dy; public uint Data, Flags, Time; public IntPtr Extra; }
     [StructLayout(LayoutKind.Sequential)]
-    private struct Input { public uint Type; public MouseInput Mouse; }
+    private struct KeyInput { public ushort Vk, Scan; public uint Flags, Time; public IntPtr Extra; }
+    // INPUT's union; MOUSEINPUT is its largest member, so the size matches the native struct.
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion { [FieldOffset(0)] public MouseInput Mouse; [FieldOffset(0)] public KeyInput Key; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Input { public uint Type; public InputUnion Data; }
 
     // Pointer steps from the Mac's network stream are injected as relative mouse input, tagged
     // so the raw-input handler can tell them from the PC's own mouse (RAWMOUSE.ulExtraInformation).
@@ -32,9 +37,52 @@ internal static class DesktopNative
     };
     internal static bool InjectMouse(int dx, int dy, uint flags)
     {
-        var input = new Input { Type = 0, Mouse = new MouseInput { Dx = dx, Dy = dy, Flags = flags, Extra = (IntPtr)InjectTag } };
+        var input = new Input { Type = 0, Data = new InputUnion { Mouse = new MouseInput { Dx = dx, Dy = dy, Flags = flags, Extra = (IntPtr)InjectTag } } };
         return SendInput(1, [input], Marshal.SizeOf<Input>()) == 1;
     }
+
+    // KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE
+    private const uint KeyExtended = 0x0001, KeyUp = 0x0002, KeyScanCode = 0x0008;
+
+    // A key from the Mac's keyboard state: by scan code normally, so the PC's layout applies.
+    internal static bool InjectKey(KeyStroke key, bool up)
+    {
+        var flags = (key.Extended ? KeyExtended : 0) | (up ? KeyUp : 0) | (key.ByScan ? KeyScanCode : 0);
+        var input = new Input { Type = 1, Data = new InputUnion { Key = new KeyInput { Vk = key.Vk, Scan = key.Scan, Flags = flags, Extra = (IntPtr)InjectTag } } };
+        return SendInput(1, [input], Marshal.SizeOf<Input>()) == 1;
+    }
+
+    // MOUSEEVENTF_WHEEL, MOUSEEVENTF_HWHEEL; deltas in WHEEL_DELTA (120) units.
+    internal static bool InjectWheel(int wheel, int pan)
+    {
+        var ok = true;
+        if (wheel != 0) ok &= InjectMouse(0, 0, 0x0800, wheel);
+        if (pan != 0) ok &= InjectMouse(0, 0, 0x1000, pan);
+        return ok;
+    }
+
+    private static bool InjectMouse(int dx, int dy, uint flags, int data)
+    {
+        var input = new Input { Type = 0, Data = new InputUnion { Mouse = new MouseInput { Dx = dx, Dy = dy, Data = unchecked((uint)data), Flags = flags, Extra = (IntPtr)InjectTag } } };
+        return SendInput(1, [input], Marshal.SizeOf<Input>()) == 1;
+    }
+
+    // The user's keyboard repeat delay and rate (Control Panel), for repeating injected keys.
+    internal static (int DelayMs, int PeriodMs) KeyRepeat()
+    {
+        if (!SystemParametersInfo(0x0016, 0, out var delay, 0)) delay = 1; // SPI_GETKEYBOARDDELAY
+        if (!SystemParametersInfo(0x000A, 0, out var speed, 0)) speed = 31; // SPI_GETKEYBOARDSPEED
+        return (Typematic.DelayMs(delay), Typematic.PeriodMs(speed));
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SystemParametersInfo(uint action, uint param, out int value, uint winIni);
+
+    // Win+L: Windows ignores an injected Win+L, so the desktop worker locks the session itself.
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool LockWorkStation();
     internal static double Milliseconds() => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
 
     internal static bool IsMacMouse(IntPtr device, string address)
