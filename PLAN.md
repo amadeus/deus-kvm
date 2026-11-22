@@ -1,5 +1,32 @@
 # DeusKVM: implementation plan
 
+### Keys, media keys and scroll on the network stream — 2026-11-22 (branch `network-only`)
+
+First step toward input that no longer depends on the PC's Bluetooth adapter (on
+2026-11-22 its Intel controller stopped answering HCI commands and the LE link to
+both Macs died). Companions advertising `inputNetwork: 2` take three more stream
+records: the whole keyboard state (modifier bits plus every held usage, no six-key
+limit), the held media key, and scroll steps (already scaled and inverted on the
+Mac). The Mac sends them while the stream is up and falls back to Bluetooth HID
+otherwise, emptying the old carrier when it changes. On Windows the desktop worker
+diffs keyboard states into scan-code presses and releases (Microsoft's HID table;
+Pause and Num Lock by virtual key), repeats the newest held key itself at the
+Control Panel delay and rate (Windows does not repeat injected keys), maps media
+keys to their virtual keys and injects wheel/pan steps, all through the SYSTEM
+relay like the pointer. Ctrl+Alt+Delete is sent to the SYSTEM worker as `SendSAS`
+(it sets `SoftwareSASGeneration` to allow services first); Win+L calls
+`LockWorkStation`. Held keys are released with held buttons: stream drop, handoff
+exit, offer change, relay Release, desktop switch.
+
+- Validation: Mac lint and 168 tests; companion solution builds; 233 companion
+  tests (net10.0).
+- Hardware pending: typing, shortcuts and held-key repeat feel identical to
+  Bluetooth; every row of docs/KEYBOARD_COVERAGE.md; media and volume keys; scroll
+  speed and both inversions; Ctrl+Alt+Delete raises the security screen (SendSAS
+  from the console-session SYSTEM worker is unproven) and typing there, on the
+  login screen, in a UAC prompt and an elevated window; Win+L locks; pulling the
+  network mid-keypress and crossing back with a key held leave nothing held.
+
 ### Mac CPU while moving the pointer — 2026-11-12
 
 Measured with a synthetic 120 Hz pointer and `sample`: on the Mac, DeusKVM's own

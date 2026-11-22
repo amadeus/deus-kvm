@@ -57,8 +57,10 @@ check cannot read Vial EEPROM remappings or evaluate arbitrary firmware macros.
 ## Boundaries and hardware checklist
 
 The keyboard stays connected to the Mac: remote mode forwards to Windows, and
-local mode leaves native Mac input in place. Keys always travel as Bluetooth HID
-reports, also when pointer motion and clicks use the local-network stream. This
+local mode leaves native Mac input in place. Keys travel as Bluetooth HID reports,
+or, with an updated companion, as whole keyboard states on the local-network stream
+while it is up; the companion maps the same usages to the scan codes Windows' own
+HID keyboard driver would produce. This
 does not add Windows-connected keyboard control of a Mac. Shortcuts and characters follow the receiving OS's
 layout; matching US layouts produce the symbols printed in these QMK layouts.
 The configured DeusKVM toggle shortcut is intentionally consumed locally.

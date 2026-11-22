@@ -68,8 +68,10 @@ something still needs setting up.
   Finder Cmd+V with DeusKVM progress/cancel UI. Contents transfer only when pasted.
 - On a shared private network, pointer motion and clicks go to Windows over the
   local network at the trackpad's own rate, and Windows edge return requests come
-  back the same way; Bluetooth carries them whenever the stream is down. Keyboard
-  and scrolling always use Bluetooth. Turn this off with **Setup → Advanced →
+  back the same way; Bluetooth carries them whenever the stream is down. With an
+  updated companion, keys, media keys and scrolling use the stream too (Windows
+  repeats held keys at its own keyboard delay and rate; Ctrl+Alt+Delete and Win+L
+  work through the companion's service). Turn this off with **Setup → Advanced →
   Send pointer motion to Windows over the local network** (on by default);
   with **Developer Mode** on, **Setup → Diagnostics** shows the network pointer's state.
 - **Configuration → Input settings** sets the **Scroll speed** on Windows and

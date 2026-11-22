@@ -50,7 +50,14 @@ acknowledged takeover protocol still require an update.
    on UAC prompts, the lock screen and over elevated (administrator) windows. The desktop
    worker injects directly only while that worker is unavailable; where it cannot inject
    either, the Mac switches to the Bluetooth mouse. The Windows Mouse settings apply.
-   Keyboard and scrolling stay on Bluetooth. Windows edge return requests ride the
+   Keys, media keys and scroll steps arrive on the same stream and go the same way: the
+   desktop worker turns each keyboard state into key presses and releases by scan code (so
+   the PC's layout applies), repeats the newest held key at the Control Panel delay and
+   rate, raises Ctrl+Alt+Delete through the SYSTEM worker (`SendSAS`, after setting the
+   `SoftwareSASGeneration` policy to allow services) and locks for Win+L
+   (`LockWorkStation`); held keys are released whenever the stream or handoff ends. With
+   an older Mac app, or while the stream is down, keys and scrolling use Bluetooth.
+   Windows edge return requests ride the
    stream's acknowledgements; Bluetooth carries them while the stream is down, or if the
    Mac has not taken the pointer back within 150 ms (at most once per 100 ms). The
    settings window's Bluetooth status adds a "Network pointer: up" line while the stream
