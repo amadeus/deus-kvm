@@ -146,6 +146,12 @@ Apple Silicon (arm64) only into the visible `releases/` folder:
 ./scripts/publish-mac.sh
 ```
 
+It signs with the team's Developer ID certificate and, when the `deuskvm`
+notarytool keychain profile exists, notarizes and staples the app so other Macs
+open it without the Gatekeeper prompt. Create the profile once with
+`xcrun notarytool store-credentials deuskvm --apple-id <Apple ID> --team-id <team>`
+and an app-specific password; without it the build is signed but not notarized.
+
 For a direct Apple Silicon Release build:
 
 ```sh
