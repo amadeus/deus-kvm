@@ -282,7 +282,8 @@ out of this work.
   contacts felt juddery and the experiment was no longer wanted. The report map
   is back to keyboard, mouse, system and consumer; the touchpad router became
   `PointerRouter`; the `precisionTouchpad` setting and the Windows "Mac
-  trackpad" group are gone. `scripts/mtprobe.c` remains as a research reference.
+  trackpad" group are gone. `scripts/mtprobe.c` stayed as a research reference until it was
+  removed on 2026-11-22 with the other Bluetooth-era tooling.
 - Scrolling is the Bluetooth mouse wheel. **Configuration → Input settings**
   gained **Scroll speed** (0.25×–3×, default 1×) via a fractional
   `ScrollAccumulator`; no hardware result is recorded for it. Trackpad gestures
@@ -516,8 +517,9 @@ sentence-case imperatives (`Remove the precision touchpad feature from both
 apps`). `./build.sh` lints with the SwiftFormat and SwiftLint versions pinned in
 `ci_scripts/lint-tools.env`, installed by `ci_scripts/install-lint-tools.sh`
 into `.build/tools`, the same tools CI uses; Homebrew copies are not used for
-the gate. Shared protocol fixtures live in `protocol/fixtures.json` and
-`protocol/file-network-fixtures.json`, not `docs/protocol-vectors.json`.
+the gate. Shared protocol fixtures live in `protocol/file-network-fixtures.json`
+and the ControlLink test vectors in both test suites (`protocol/fixtures.json`
+held the Bluetooth chunk framing and was removed with it on 2026-11-22).
 
 **Signing.** Set `DEVELOPMENT_TEAM: UHD99KF9X7` and `CODE_SIGN_STYLE:
 Automatic` in `project.yml` (identity "Apple Development: Amadeus Demarzi" is

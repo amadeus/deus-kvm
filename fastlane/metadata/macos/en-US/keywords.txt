@@ -1,1 +1,1 @@
-kvm,bluetooth,keyboard,mouse,trackpad,windows,clipboard
+kvm,network,keyboard,mouse,trackpad,windows,clipboard

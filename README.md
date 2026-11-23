@@ -104,8 +104,9 @@ Preferences are retained.
 
 **Updating from a Bluetooth build:** the PC and the Mac now know each other by
 network identities, so add the Mac again with **Add Mac…** and turn on
-**Enable control** for the PC again. Old Bluetooth pairings are no longer used;
-remove them from both computers' Bluetooth settings if you like.
+**Enable control** for the PC again. Old Bluetooth pairings are no longer used:
+remove the Mac from the PC's **Settings → Bluetooth & devices** once the network
+build works (the Mac has nothing to remove).
 
 **First installation after the full rename:** use the previous Windows app's
 cleanup command before installing this build. On the Mac, turn off launch at

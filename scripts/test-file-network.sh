@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercises production Swift and C# network code. No pasteboard, Bluetooth or app launch.
+# Exercises production Swift and C# network code. No pasteboard or app launch.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"

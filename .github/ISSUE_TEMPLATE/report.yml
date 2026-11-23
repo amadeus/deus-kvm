@@ -5,9 +5,9 @@ body:
     attributes:
       value: |
         ### Important
-        Before reporting a new issue, please check if it already exists in the [issue tracker](https://github.com/amadeus/darwin-bt-remote/issues).
+        Before reporting a new issue, please check if it already exists in the [issue tracker](https://github.com/amadeus/deus-kvm/issues).
         
-        We aim to keep things fast, lightweight, and responsive for pairing and general use across all platforms. If you notice any performance issues, please attach logs from both the host and target devices if possible.
+        We aim to keep things fast, lightweight, and responsive for connecting and general use across all platforms. If you notice any performance issues, please attach logs from both the host and target devices if possible.
    
   - type: checkboxes
     id: checklist

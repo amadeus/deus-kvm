@@ -2,7 +2,8 @@
 
 > **Superseded — 2026-11-22:** Bluetooth was removed; pairing steps below no longer
 > apply. Current setup (**Add Mac…** over the network) is in the
-> [companion README](../windows/README.md).
+> [companion README](../windows/README.md); the package now ships
+> `windows/START_HERE.md` instead of this file.
 
 This is the complete Windows companion, using the runtime already included with
 Windows 10 2004+ and Windows 11. Keep your current Mac app and Bluetooth pairings.

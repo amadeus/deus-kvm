@@ -1,7 +1,7 @@
-DeusKVM shares your Mac's keyboard, mouse, and trackpad with a Windows PC over Bluetooth.
+DeusKVM shares your Mac's keyboard, mouse, and trackpad with a Windows PC over your local network.
 
-Move through a configured display edge to control Windows, then return through its opposite edge. Use a configurable hotkey to switch back locally. Share plain-text clipboard content in both directions, with independent vertical and horizontal scroll direction settings.
+Move through a configured display edge to control Windows, then return through its opposite edge. Use a configurable hotkey to switch back locally. Share text, images, and files through the clipboard in both directions, with independent vertical and horizontal scroll direction settings.
 
-The Windows companion service manages reconnection, cursor placement, edge return, and clipboard coordination. Input control is available at the Windows login screen; clipboard sharing pauses while locked or signed out. The optional Windows tray app configures the service.
+The Windows companion service finds the Mac with Bonjour and manages reconnection, cursor placement, edge return, and clipboard coordination. Input control is available at the Windows login screen, in UAC prompts, and with Ctrl+Alt+Delete; clipboard sharing pauses while locked or signed out. The optional Windows tray app configures the service.
 
-DeusKVM is available under the AGPL-3.0 license at https://github.com/amadeus/darwin-bt-remote.
+DeusKVM is available under the AGPL-3.0 license at https://github.com/amadeus/deus-kvm.

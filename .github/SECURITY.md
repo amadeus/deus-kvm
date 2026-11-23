@@ -15,14 +15,19 @@ reporting an issue in this repository.
 
 DeusKVM controls your own Windows PC from your Mac. Reports are most useful for:
 
-- The Bluetooth LE link: the HID keyboard/mouse service and the companion
-  control channel (ownership, edge return, text clipboard, and the offers that
-  start local-network streams).
-- Local-network streams. The Mac opens TCP listeners on ephemeral ports for the
-  pointer stream and for file paste, offers only its private IPv4 addresses,
-  and sends a fresh random key with each offer over the Bluetooth link. The
-  PC always connects out to the Mac. Traffic is encrypted and authenticated
-  with AES-GCM under keys derived from that offer.
+- The control link. The Mac listens on TCP port 53400 (or an ephemeral port)
+  and advertises it with Bonjour as `_deuskvm._tcp`; the PC connects out to it.
+  Each side has a P-256 identity key; the handshake is an ECDH agreement over
+  those keys and fresh nonces, and every frame is sealed with AES-GCM under
+  per-direction keys derived from it. Trust is set once on each side: Add Mac
+  on the PC saves the Mac's key id, and Enable control on the Mac approves the
+  PC's. The link carries ownership, edge return, clipboard, and the offers that
+  start the other streams.
+- Input and file streams. The Mac opens TCP listeners on ephemeral ports for
+  keys and pointer and for file paste, offers only its private IPv4 addresses,
+  and sends a fresh random key with each offer over the control link. The PC
+  always connects out to the Mac. Traffic is encrypted and authenticated with
+  AES-GCM under keys derived from that offer.
 - The Windows service, which runs as LocalSystem, and its helper processes: the
   desktop worker in the signed-in console session and the SYSTEM worker that
   injects input on the secure desktop (UAC prompts, lock and login screens) and
