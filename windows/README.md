@@ -78,8 +78,8 @@ while that worker is unavailable. The Windows Mouse settings apply.
 
 Keys arrive as whole keyboard states; the desktop worker turns them into key presses
 and releases by scan code (so the PC's layout applies), repeats the newest held key
-at the Control Panel delay and rate, raises Ctrl+Alt+Delete through the SYSTEM
-worker (`SendSAS`, after setting the `SoftwareSASGeneration` policy to allow
+at the Control Panel delay and rate, raises Ctrl+Alt+Delete through the service
+process (`SendSAS`, which only a service may call, after setting the `SoftwareSASGeneration` policy to allow
 services; Win+Alt+Delete counts too, for a PC with Ctrl and Win swapped). Keys carry
 no extra info, so remappers such as PowerToys Keyboard Manager treat them like a real
 keyboard's (it skips events with bit 0 of the extra info set). Held keys are released whenever

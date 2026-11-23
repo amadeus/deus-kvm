@@ -11,6 +11,7 @@ internal sealed class MacSession : IDisposable
     private readonly ControlIdentity identity;
     private readonly Func<Guid, bool> trusted;
     private readonly Action<string> detail;
+    private readonly Action secureAttention;
     private ControlConnection? connection;
     private ControlSession? control;
     private bool disposed;
@@ -35,9 +36,11 @@ internal sealed class MacSession : IDisposable
     public int ServiceCount => Verified ? 1 : 0;
     public string? Error { get; private set; }
 
-    public MacSession(ConnectedMac mac, IPEndPoint[] endpoints, ControlIdentity identity, Func<Guid, bool> trusted, Action<string> detail)
+    public MacSession(ConnectedMac mac, IPEndPoint[] endpoints, ControlIdentity identity, Func<Guid, bool> trusted,
+        Action<string> detail, Action secureAttention)
     {
         Mac = mac; Endpoints = endpoints; this.identity = identity; this.trusted = trusted; this.detail = detail;
+        this.secureAttention = secureAttention;
     }
 
     public async Task Open()
@@ -77,7 +80,7 @@ internal sealed class MacSession : IDisposable
     public Task Attach()
     {
         if (disposed || !Verified || connection is null) return Task.CompletedTask;
-        control = new ControlSession(detail);
+        control = new ControlSession(detail, secureAttention);
         control.Attach(connection);
         connection = null; // the session owns it now
         return Task.CompletedTask;

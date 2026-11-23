@@ -133,6 +133,8 @@ internal sealed class CompanionService : ServiceBase
                 if (line.Length > 16384) throw new InvalidDataException("Worker response is too large.");
                 var next = JsonSerializer.Deserialize<WorkerStatus>(line)
                     ?? throw new InvalidDataException("Empty worker response.");
+                // Ctrl+Alt+Delete from the active Mac: only the service itself may raise it.
+                if (next.SecureAttention) { next = next with { SecureAttention = false }; Log(SecureAttention.Send()); }
                 worker = next;
                 watchdog.Observe(next.State);
                 if (next.DiscoveryEvent is { } discovery) Log(discovery);

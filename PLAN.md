@@ -40,8 +40,9 @@ diffs keyboard states into scan-code presses and releases (Microsoft's HID table
 Pause and Num Lock by virtual key), repeats the newest held key itself at the
 Control Panel delay and rate (Windows does not repeat injected keys), maps media
 keys to their virtual keys and injects wheel/pan steps, all through the SYSTEM
-relay like the pointer. Ctrl+Alt+Delete is sent to the SYSTEM worker as `SendSAS`
-(it sets `SoftwareSASGeneration` to allow services first); Win+Alt+Delete counts
+relay like the pointer. Ctrl+Alt+Delete goes desktop worker → link worker → the
+service process, which calls `SendSAS` (it sets `SoftwareSASGeneration` to allow
+services first); Win+Alt+Delete counts
 as well, for a PC with Ctrl and Win swapped in PowerToys. Held keys are released with held buttons: stream drop, handoff
 exit, offer change, relay Release, desktop switch.
 
@@ -49,8 +50,7 @@ exit, offer change, relay Release, desktop switch.
   tests (net10.0).
 - Hardware pending: typing, shortcuts and held-key repeat feel identical to
   Bluetooth; every row of docs/KEYBOARD_COVERAGE.md; media and volume keys; scroll
-  speed and both inversions; Ctrl+Alt+Delete raises the security screen (SendSAS
-  from the console-session SYSTEM worker is unproven) and typing there, on the
+  speed and both inversions; Ctrl+Alt+Delete raises the security screen and typing there, on the
   login screen, in a UAC prompt and an elevated window; pulling the
   network mid-keypress and crossing back with a key held leave nothing held.
 - 2026-11-22 hardware: typing, pointer and clipboard work. PowerToys' Ctrl/Win swap
@@ -58,8 +58,11 @@ exit, offer change, relay Release, desktop switch.
   `0x44455553`, whose bit 0 is PowerToys' own "injected by Keyboard Manager" flag.
   Keys are now injected with no extra info. The Win+L intercept is gone: it read
   the chord before PowerToys, so Command+L (Ctrl+L there) would have locked the PC.
-  Pending: PowerToys remaps apply; Ctrl+Alt+Delete (Cmd+Option+Delete) raises the
-  security screen.
+  Then confirmed: PowerToys remaps apply. Ctrl+Alt+Delete still did nothing with
+  SendSAS called from the SYSTEM secure worker in the console session (Microsoft
+  documents the caller must be running as a service; UltraVNC also calls it from its
+  service), so the request now travels to the service process, which logs each
+  attempt in service.log. Pending: the security screen appears.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

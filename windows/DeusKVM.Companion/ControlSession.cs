@@ -7,7 +7,7 @@ namespace DeusKVM.Companion;
 // The companion protocol with one Mac over its control link, on the link worker's STA thread
 // (the connection's threads post here). Desktop observations are requests; the Mac remains the
 // routing authority.
-internal sealed partial class ControlSession(Action<string> status) : IDisposable
+internal sealed partial class ControlSession(Action<string> status, Action secureAttention) : IDisposable
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -316,6 +316,9 @@ internal sealed partial class ControlSession(Action<string> status) : IDisposabl
                 clipboardDesktopAvailable = clipboardDefaultDesktop = false; UpdateClipboardSession(true);
                 SendState([4, 2, 0]);
                 if (message.Kind == "connected") { ForwardInputOffer(); lastSecureReady = false; RefreshSecureInput(); }
+                break;
+            case "sas":
+                secureAttention();
                 break;
             case "screens":
                 if (message.Monitors is not { Length: > 0 and <= 32 } screens ||

@@ -414,7 +414,7 @@ internal sealed class DesktopWorker : ApplicationContext
 
     // A keyboard state, media key or scroll step from the stream. Keys are state: the difference
     // from the last record is injected, so a lost moment cannot leave a key held. Ctrl+Alt+Delete
-    // goes to the SYSTEM worker (only it can raise that screen).
+    // goes to the link worker, which asks the service (only a service can raise that screen).
     private bool InjectKeys(InputEvent record, double now, long arrived)
     {
         lock (networkGate)
@@ -440,8 +440,8 @@ internal sealed class DesktopWorker : ApplicationContext
         switch (action.Kind)
         {
             case KeyActionKind.Sas:
-                if (RelayUsable(now) && pointer?.Enqueue(SecureInputRecord.SasRecord, arrived) == true) return true;
-                Note("Ctrl+Alt+Delete: the SYSTEM relay is not available");
+                Send(new DesktopMessage("sas"));
+                Note("Ctrl+Alt+Delete: asked the service");
                 return true;
             default:
                 var up = action.Kind == KeyActionKind.Release;

@@ -10,13 +10,11 @@ namespace DeusKVM.Companion.Core;
 /// (Stopwatch ticks, comparable across processes on one PC) at which the records after it reached
 /// the desktop worker, for latency measurement; release lets go of every button and key the
 /// SYSTEM worker holds. A key is a virtual key (0 for by-scan-code), a scan code and flags (bit 0
-/// up, bit 1 extended); a wheel step is the wheel and pan deltas in WHEEL_DELTA units; SAS asks
-/// for the Ctrl+Alt+Delete screen, which only a SYSTEM process can raise.
+/// up, bit 1 extended); a wheel step is the wheel and pan deltas in WHEEL_DELTA units.
 /// </summary>
 public static class SecureInputRecord
 {
-    public const byte Motion = 1, Button = 2, Mark = 3, Release = 4, Key = 5, Wheel = 6, Sas = 7;
-    public static readonly byte[] SasRecord = [Sas];
+    public const byte Motion = 1, Button = 2, Mark = 3, Release = 4, Key = 5, Wheel = 6;
     public static readonly byte[] ReleaseRecord = [Release];
 
     public static byte[] EncodeMark(long ticks)
@@ -82,7 +80,7 @@ public static class SecureInputRecord
     private static short Clamp16(int value) => (short)(value < short.MinValue ? short.MinValue : value > short.MaxValue ? short.MaxValue : value);
 
     /// <summary>The length of a record given its leading type byte, or 0 if the type is unknown.</summary>
-    public static int Length(byte type) => type switch { Motion => 5, Button => 3, Mark => 9, Release => 1, Key => 6, Wheel => 5, Sas => 1, _ => 0 };
+    public static int Length(byte type) => type switch { Motion => 5, Button => 3, Mark => 9, Release => 1, Key => 6, Wheel => 5, _ => 0 };
 
     public static bool TryParse(ReadOnlySpan<byte> record, out byte type, out int dx, out int dy, out byte button, out bool down)
     {

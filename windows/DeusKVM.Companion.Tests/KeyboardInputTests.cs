@@ -154,7 +154,7 @@ public sealed class KeyboardInputTests
     }
 
     [Fact]
-    public void KeyWheelAndSasRelayRecordsRoundTrip()
+    public void KeyAndWheelRelayRecordsRoundTrip()
     {
         var delete = Usage(HidKeys.Delete);
         var record = SecureInputRecord.EncodeKey(delete, up: true);
@@ -170,9 +170,8 @@ public sealed class KeyboardInputTests
         Assert.Equal((-360, 120), (vertical, horizontal));
         Assert.Equal(6, SecureInputRecord.Length(SecureInputRecord.Key));
         Assert.Equal(5, SecureInputRecord.Length(SecureInputRecord.Wheel));
-        Assert.Equal(1, SecureInputRecord.Length(SecureInputRecord.Sas));
         // The batcher keeps every new kind (an unknown length would drop the rest of a run).
-        byte[] run = [.. record, .. wheel, .. SecureInputRecord.SasRecord, .. SecureInputRecord.EncodeMotion(1, 1)];
+        byte[] run = [.. record, .. wheel, .. SecureInputRecord.EncodeMotion(1, 1)];
         var frames = SecureFrame.Batch(run, run.Length);
         Assert.Equal(2 + run.Length, frames.Length);
     }

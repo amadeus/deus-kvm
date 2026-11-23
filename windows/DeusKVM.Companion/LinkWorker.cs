@@ -136,7 +136,9 @@ internal sealed class LinkWorker : ApplicationContext
     {
         var endpoints = found.TryGetValue(mac.Id, out var entry) ? entry.Endpoints : [];
         var link = new MacSession(mac, endpoints, identity!, Trusted,
-            detail => { if (priority.Active?.Connection == mac.Connection) Emit(status with { Detail = detail }); });
+            detail => { if (priority.Active?.Connection == mac.Connection) Emit(status with { Detail = detail }); },
+            // Ctrl+Alt+Delete: SendSAS must come from the service process, which reads these lines.
+            () => { if (priority.Active?.Connection == mac.Connection) Emit(status with { SecureAttention = true }); });
         attempts[mac.Connection] = new Attempt(link, link.Open()) { Failures = failures.GetValueOrDefault(mac.Connection) };
     }
 
@@ -324,7 +326,7 @@ internal sealed class LinkWorker : ApplicationContext
         next = next with { At = DateTimeOffset.UtcNow, Identity = ProcessIdentity.Name,
             ProcessSession = ProcessIdentity.Session };
         output.WriteLine(JsonSerializer.Serialize(next));
-        status = next with { DiscoveryEvent = null };
+        status = next with { DiscoveryEvent = null, SecureAttention = false };
     }
 
     protected override void Dispose(bool disposing)

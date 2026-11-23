@@ -125,9 +125,6 @@ internal sealed class SecureInputWorker
                 case SecureInputRecord.Release:
                     injector.ReleaseAll();
                     break;
-                case SecureInputRecord.Sas:
-                    SecureAttention.Send(); // not an injection: its outcome is not the relay's status
-                    break;
                 default:
                     if (Deliver(record.ToArray())) injected = true; else ok = false;
                     break;
@@ -304,35 +301,4 @@ internal sealed class SecureInjector : IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetUserObjectInformationW", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder info, int length, out int needed);
-}
-
-/// <summary>
-/// Ctrl+Alt+Delete from the Mac. Windows ignores the chord through SendInput by design; a SYSTEM
-/// process may raise the secure attention screen with SendSAS once the SoftwareSASGeneration
-/// policy allows services (1, or 3 with Ease of Access apps). The policy is set here the first
-/// time it is needed, keeping an existing Ease of Access permission.
-/// </summary>
-internal static class SecureAttention
-{
-    private const string PolicyKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
-    private const string PolicyValue = "SoftwareSASGeneration";
-
-    public static bool Send()
-    {
-        try
-        {
-            using var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(PolicyKey, writable: true);
-            var current = key?.GetValue(PolicyValue) is int value ? value : 0;
-            if ((current & 1) == 0) key?.SetValue(PolicyValue, current | 1, Microsoft.Win32.RegistryValueKind.DWord);
-            SendSAS(false);
-            return true;
-        }
-        catch (Exception error) when (error is UnauthorizedAccessException or System.Security.SecurityException or IOException or DllNotFoundException or EntryPointNotFoundException)
-        {
-            return false;
-        }
-    }
-
-    [DllImport("sas.dll")]
-    private static extern void SendSAS([MarshalAs(UnmanagedType.Bool)] bool asUser);
 }
