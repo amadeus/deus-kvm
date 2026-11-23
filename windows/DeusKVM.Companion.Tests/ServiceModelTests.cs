@@ -38,7 +38,7 @@ public sealed class ServiceModelTests
         try
         {
             var path = Path.Combine(folder, "settings.json");
-            var value = new CompanionSettings("fa988199-ba3a-c4cb-8620-946dd087f60c", "Amadeus’s Mac");
+            var value = new CompanionSettings("5c8a1f2e-3b4d-4e6f-8a9b-0c1d2e3f4a5b", "Amadeus’s Mac");
             value.Validate();
             JsonFiles.Write(path, value);
             Assert.Equal(value, JsonFiles.Read<CompanionSettings>(path));

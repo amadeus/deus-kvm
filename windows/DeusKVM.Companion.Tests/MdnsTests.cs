@@ -37,7 +37,7 @@ public sealed class MdnsTests
     private static byte[] Srv(uint ttl = 120) => Record(Name(Instance), Mdns.TypeSrv, ttl, [0, 0, 0, 0, 0xD0, 0x78, .. Name(Host)]);
     private static byte[] Txt(string id) =>
         Record(Name(Instance), Mdns.TypeTxt, 4500, [3, .. "v=1"u8.ToArray(), (byte)(3 + id.Length), .. Encoding.UTF8.GetBytes("id=" + id)]);
-    private static byte[] A(byte last, uint ttl = 120) => Record(Name(Host), Mdns.TypeA, ttl, [192, 168, 7, last]);
+    private static byte[] A(byte last, uint ttl = 120) => Record(Name(Host), Mdns.TypeA, ttl, [192, 168, 1, last]);
 
     [Fact]
     public void QueriesAskForUnicastAnswers()
@@ -59,7 +59,7 @@ public sealed class MdnsTests
         var service = Assert.Single(browser.Services(now));
         Assert.Equal("Amadeus’s Mac Studio", service.Instance);
         Assert.Equal(53368, service.Port);
-        Assert.Equal(IPAddress.Parse("192.168.7.50"), Assert.Single(service.Addresses));
+        Assert.Equal(IPAddress.Parse("192.168.1.50"), Assert.Single(service.Addresses));
         Assert.Equal(new Guid(id), service.Id);
         Assert.Empty(browser.FollowUps(now));
     }

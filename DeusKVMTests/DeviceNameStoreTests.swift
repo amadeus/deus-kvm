@@ -10,12 +10,12 @@ final class DeviceNameStoreTests: XCTestCase {
         let pc = UUID(), other = UUID()
         let old = Data(#"{"v":1,"role":"pc","name":"DeusKVM Companion"}"#.utf8)
         XCTAssertNil(try JSONDecoder().decode(CompanionHello.self, from: old).computerName)
-        let current = Data(#"{"v":1,"role":"pc","name":"DeusKVM Companion","computerName":"Maingear"}"#.utf8)
+        let current = Data(#"{"v":1,"role":"pc","name":"DeusKVM Companion","computerName":"Gaming PC"}"#.utf8)
         let hello = try JSONDecoder().decode(CompanionHello.self, from: current)
         try store.rememberName(XCTUnwrap(hello.computerName), for: pc)
-        XCTAssertEqual(store.name(for: pc), "Maingear")
+        XCTAssertEqual(store.name(for: pc), "Gaming PC")
         XCTAssertNil(store.name(for: other))
-        XCTAssertEqual(DeviceNameStore(defaults: defaults).name(for: pc), "Maingear")
+        XCTAssertEqual(DeviceNameStore(defaults: defaults).name(for: pc), "Gaming PC")
         store.clear()
         XCTAssertNil(DeviceNameStore(defaults: defaults).name(for: pc))
     }
@@ -42,7 +42,7 @@ final class DeviceNameStoreTests: XCTestCase {
             store.rememberName(name, for: pc)
             XCTAssertNil(store.name(for: pc))
         }
-        store.rememberName("  Maingear  ", for: pc)
-        XCTAssertEqual(store.name(for: pc), "Maingear")
+        store.rememberName("  Gaming PC  ", for: pc)
+        XCTAssertEqual(store.name(for: pc), "Gaming PC")
     }
 }

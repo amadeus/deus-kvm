@@ -6,7 +6,7 @@ namespace DeusKVM.Companion.Tests;
 
 public sealed class ServiceControlTests
 {
-    private const string MacId = "fa988199-ba3a-c4cb-8620-946dd087f60c";
+    private const string MacId = "5c8a1f2e-3b4d-4e6f-8a9b-0c1d2e3f4a5b";
 
     private sealed class FakeTarget : IServiceControlTarget
     {
