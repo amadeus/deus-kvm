@@ -177,7 +177,23 @@ the screen (Session 0), so it runs two helpers it manages:
   taps. An HID-level tap saw both. The Mac now adds an HID-level media-key tap,
   enabled only while remote, that consumes and forwards them (falls back to the
   session tap if it cannot be created; the log says which at start). Pending:
-  volume up/down/mute and play/pause change the PC, not the Mac.
+  volume up/down/mute and play/pause change the PC, not the Mac. Confirmed on
+  hardware: volume keys now reach the PC.
+
+### Mac builds: Developer ID and notarization — 2026-11-22
+
+Other Macs showed the Gatekeeper prompt: builds were signed with the Apple
+Development certificate and not notarized. `scripts/publish-mac.sh` now signs
+with the team's Developer ID Application certificate (hardened runtime, secure
+timestamp) when present, and notarizes, staples and checks with `spctl` when a
+`notarytool` keychain profile exists (`deuskvm`, or `DEUSKVM_NOTARY_PROFILE`).
+Verified: the build is Developer ID signed; `spctl` says "Unnotarized Developer
+ID" until notarized. Pending: the user creates an app-specific password (or an
+App Store Connect API key) once their Apple Account web sign-in is unlocked,
+stores the profile, and a notarized build opens on another Mac without the
+prompt. The first Developer ID build needs Accessibility and Input Monitoring
+granted again on each Mac (the signing identity changed); notarizing later does
+not change it again.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 
