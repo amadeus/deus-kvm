@@ -27,17 +27,22 @@ internal static class Program
             return worker.ExitCode;
         }
 
-        if (args is ["--desktop-worker", var pipe, var parent] && int.TryParse(parent, out var pid))
+        // SYSTEM in the console session (login screen, signed in, locked): input, edge return,
+        // cursor and displays. Spawned by the service.
+        if (args is ["--session-agent", var agentPipe, var agentParent] && int.TryParse(agentParent, out var agentPid))
         {
-            using var worker = new DesktopWorker(pipe, pid);
-            Application.Run(worker);
+            using var agent = new SessionAgent(agentPipe, agentPid);
+            Application.Run(agent);
             return 0;
         }
 
-        // SYSTEM in the console session: injection only, onto the current (possibly secure)
-        // desktop. Headless, no message loop. Spawned by the service.
-        if (args is ["--secure-worker", var securePipe, var secureParent] && int.TryParse(secureParent, out var securePid))
-            return new SecureInputWorker(securePipe, securePid).Run();
+        // The signed-in console user: clipboard, file and image paste. Spawned by the service.
+        if (args is ["--clipboard-worker", var clipboardPipe, var clipboardParent] && int.TryParse(clipboardParent, out var clipboardPid))
+        {
+            using var clipboard = new ClipboardWorker(clipboardPipe, clipboardPid);
+            Application.Run(clipboard);
+            return 0;
+        }
 
         try
         {

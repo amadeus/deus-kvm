@@ -14,7 +14,7 @@ internal static class Program
         string? staging = null;
         try
         {
-            if (args.Any(arg => arg is "--service" or "--link-worker" or "--desktop-worker" or "--tray"))
+            if (args.Any(arg => arg is "--service" or "--link-worker" or "--session-agent" or "--clipboard-worker" or "--tray"))
                 throw new ArgumentException("Background modes use the installed companion. Open this EXE normally to install or update it.");
             var assembly = Assembly.GetExecutingAssembly();
             using var zip = assembly.GetManifestResourceStream("DeusKVM.Payload.zip")

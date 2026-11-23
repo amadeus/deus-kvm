@@ -10,13 +10,28 @@ using Microsoft.Win32.SafeHandles;
 
 namespace DeusKVM.Companion;
 
-// Service-owned worker in the console user's Default desktop. The tray is not involved. Besides
-// the JSON desktop pipe it owns the pointer pipe, whose records go to `pointer` on its own thread.
-internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>? pointer = null) : IDisposable
+/// <summary>Which helper a <see cref="DesktopHost"/> keeps running in the console session.</summary>
+internal enum DesktopRole
 {
-    private DesktopProcess? process;
+    /// <summary>
+    /// The session agent: SYSTEM in the console session, whenever there is one (login screen,
+    /// signed in, locked). Input, edge return, cursor placement and displays.
+    /// </summary>
+    Agent,
+    /// <summary>The clipboard helper: the signed-in console user, only while someone is signed in.</summary>
+    Clipboard
+}
+
+/// <summary>
+/// Service-side supervisor for one helper process in the console session, talking JSON lines
+/// (<see cref="DesktopPipe"/>) over a private pipe. It starts the helper on demand, and replaces
+/// it when the console session (or, for the clipboard, its user) changes, when it exits, or when
+/// it has been silent for 15 s (both helpers send something at least every few seconds).
+/// </summary>
+internal sealed class DesktopHost(DesktopRole role, Action<DesktopMessage> receive) : IDisposable
+{
+    private SessionProcess? process;
     private NamedPipeServerStream? pipe;
-    private PointerPipeServer? pointerPipe;
     private CancellationTokenSource? lifetime;
     private Channel<DesktopMessage>? outgoing;
     private uint sessionId = uint.MaxValue;
@@ -24,7 +39,8 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
     private long lastMessage;
     private string launchStep = "reading console session";
     public bool Connected { get; private set; }
-    public string Detail { get; private set; } = "Waiting for signed-in console desktop";
+    public string Detail { get; private set; } = role == DesktopRole.Agent ? "Waiting for the console session" : "Waiting for a signed-in user";
+    private string Name => role == DesktopRole.Agent ? "Session agent" : "Clipboard helper";
 
     public void Refresh()
     {
@@ -33,7 +49,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
         {
             Stop();
             var code = error is Win32Exception native ? $"Win32 {native.NativeErrorCode}" : $"HRESULT 0x{error.HResult:X8}";
-            Detail = $"Desktop worker startup failed at {launchStep}: {error.Message} ({code})";
+            Detail = $"{Name} startup failed at {launchStep}: {error.Message} ({code})";
         }
     }
 
@@ -41,10 +57,16 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
     {
         launchStep = "reading console session";
         var console = ConsoleSession.Read();
-        if (console.Id == uint.MaxValue || console.State == "Signed out")
+        if (console.Id == uint.MaxValue || (role == DesktopRole.Clipboard && console.State != "User session present"))
         {
             Stop();
-            Detail = "Waiting for signed-in console desktop";
+            Detail = role == DesktopRole.Agent ? "Waiting for the console session" : "Waiting for a signed-in user";
+            return;
+        }
+        if (role == DesktopRole.Agent)
+        {
+            if (Running(console.Id, null)) return;
+            Launch(console.Id, null, null);
             return;
         }
         launchStep = "getting console user token";
@@ -59,39 +81,47 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
             launchStep = "reading console user identity";
             using var identity = new WindowsIdentity(token.DangerousGetHandle());
             var sid = identity.User ?? throw new InvalidOperationException("Console token has no user SID");
-            if (process is not null && !process.HasExited && sessionId == console.Id && userSid == sid.Value &&
-                RuntimeCompat.TickCount64 - lastMessage < 15000) return;
-            Stop();
-            sessionId = console.Id;
-            userSid = sid.Value;
-            var name = "DeusKVM.Desktop." + Guid.NewGuid().ToString("N");
-            launchStep = "creating desktop pipe";
-            var security = new PipeSecurity();
-            security.SetAccessRuleProtection(true, false);
-            security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null),
-                PipeAccessRights.FullControl, AccessControlType.Deny));
-            security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
-                PipeAccessRights.FullControl, AccessControlType.Allow));
-            security.AddAccessRule(new PipeAccessRule(sid, PipeAccessRights.ReadWrite, AccessControlType.Allow));
-            pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous, 16384, 16384, security);
-            try
-            {
-                launchStep = "creating pointer pipe";
-                pointerPipe = new PointerPipeServer(name + ".Pointer", security, records => pointer?.Invoke(records));
-                launchStep = "creating console process";
-                process = DesktopProcess.Launch(token, name);
-                lifetime = new CancellationTokenSource();
-                outgoing = Channel.CreateBounded<DesktopMessage>(32);
-                lastMessage = RuntimeCompat.TickCount64;
-                Detail = "Connecting console desktop worker";
-                _ = RunAsync(pipe, process.Id, outgoing, lifetime.Token);
-                pointerPipe.Start(process.Id);
-                launchStep = "resuming console process";
-                process.Resume();
-            }
-            catch { Stop(); throw; }
+            if (Running(console.Id, sid.Value)) return;
+            Launch(console.Id, sid, token);
         }
+    }
+
+    private bool Running(uint session, string? sid) =>
+        process is not null && !process.HasExited && sessionId == session && userSid == sid &&
+        RuntimeCompat.TickCount64 - lastMessage < 15000;
+
+    private void Launch(uint session, SecurityIdentifier? user, SafeAccessTokenHandle? token)
+    {
+        Stop();
+        sessionId = session;
+        userSid = user?.Value;
+        var name = (role == DesktopRole.Agent ? "DeusKVM.Agent." : "DeusKVM.Clipboard.") + Guid.NewGuid().ToString("N");
+        launchStep = "creating pipe";
+        // SYSTEM only for the agent (it is SYSTEM); SYSTEM and the console user for the clipboard.
+        var security = new PipeSecurity();
+        security.SetAccessRuleProtection(true, false);
+        security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null),
+            PipeAccessRights.FullControl, AccessControlType.Deny));
+        security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+            PipeAccessRights.FullControl, AccessControlType.Allow));
+        if (user is not null) security.AddAccessRule(new PipeAccessRule(user, PipeAccessRights.ReadWrite, AccessControlType.Allow));
+        pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous, 16384, 16384, security);
+        try
+        {
+            launchStep = "creating console process";
+            process = role == DesktopRole.Agent
+                ? SessionProcess.LaunchAsSystem(session, "--session-agent", name)
+                : SessionProcess.LaunchAsUser(token!, "--clipboard-worker", name);
+            lifetime = new CancellationTokenSource();
+            outgoing = Channel.CreateBounded<DesktopMessage>(32);
+            lastMessage = RuntimeCompat.TickCount64;
+            Detail = $"Connecting {Name.ToLowerInvariant()}";
+            _ = RunAsync(pipe, process.Id, outgoing, lifetime.Token);
+            launchStep = "resuming console process";
+            process.Resume();
+        }
+        catch { Stop(); throw; }
     }
 
     public void Send(DesktopMessage message)
@@ -105,9 +135,9 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
         {
             await connection.WaitForConnectionAsync(stop).WaitAsync(TimeSpan.FromSeconds(10), stop);
             if (!GetNamedPipeClientProcessId(connection.SafePipeHandle, out var peer) || peer != pid)
-                throw new InvalidDataException("Unexpected desktop pipe client");
+                throw new InvalidDataException("Unexpected helper pipe client");
             Connected = true;
-            Detail = "Console desktop connected";
+            Detail = $"{Name} connected";
             receive(new DesktopMessage("connected"));
             var writer = WriteAsync();
             try
@@ -116,6 +146,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
                 {
                     var message = await DesktopPipe.Read(connection, stop);
                     lastMessage = RuntimeCompat.TickCount64;
+                    if (message.Kind == "alive") continue;
                     if (message.Detail is not null) Detail = message.Detail;
                     receive(message);
                 }
@@ -126,7 +157,7 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
         {
             if (!stop.IsCancellationRequested)
             {
-                Detail = "Desktop worker disconnected: " + error.Message;
+                Detail = $"{Name} disconnected: " + error.Message;
                 Stop();
             }
         }
@@ -146,7 +177,6 @@ internal sealed class DesktopHost(Action<DesktopMessage> receive, Action<byte[]>
         outgoing?.Writer.TryComplete(); outgoing = null;
         pipe?.Dispose(); pipe = null;
         process?.Dispose(); process = null;
-        pointerPipe?.Dispose(); pointerPipe = null;
         if (wasConnected) receive(new DesktopMessage("disconnected"));
     }
 

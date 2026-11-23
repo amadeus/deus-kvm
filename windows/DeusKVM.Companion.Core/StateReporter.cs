@@ -1,6 +1,6 @@
 namespace DeusKVM.Companion.Core;
 
-// The desktop worker reports its state every second over the local pipe (which doubles as its
+// The session agent reports its state every second over the local pipe (which doubles as its
 // keep-alive). Only changes cross the control link to the Mac, plus a slow refresh so a Mac that reset
 // its copy converges without a message every second.
 public sealed class StateReporter(long refreshMilliseconds = 30000)

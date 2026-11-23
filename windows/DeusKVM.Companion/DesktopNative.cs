@@ -82,6 +82,9 @@ internal static class DesktopNative
 
     internal static bool IsDefaultDesktop() => DesktopState().Desktop == 0;
 
+    // Desktop: 0 Default, 1 Winlogon (login and lock screens, UAC), 2 another. Blind: 0 when the
+    // input desktop could be opened (the session agent, SYSTEM, can then inject and watch the edge
+    // there), 4 when it could not (no input desktop, or a user process on a secure desktop).
     internal static (byte Blind, byte Desktop) DesktopState()
     {
         var desktop = OpenInputDesktop(0, false, 1); // DESKTOP_READOBJECTS
@@ -91,7 +94,7 @@ internal static class DesktopNative
             var name = new StringBuilder(256);
             if (!GetUserObjectInformation(desktop, 2, name, name.Capacity * 2, out _)) return (4, 2);
             if (name.ToString().Equals("Default", StringComparison.OrdinalIgnoreCase)) return (0, 0);
-            return name.ToString().Equals("Winlogon", StringComparison.OrdinalIgnoreCase) ? ((byte)1, (byte)1) : ((byte)4, (byte)2);
+            return name.ToString().Equals("Winlogon", StringComparison.OrdinalIgnoreCase) ? ((byte)0, (byte)1) : ((byte)0, (byte)2);
         }
         finally { CloseDesktop(desktop); }
     }

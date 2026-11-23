@@ -6,18 +6,20 @@ using Microsoft.Win32.SafeHandles;
 namespace DeusKVM.Companion;
 
 /// <summary>
-/// Launches `--secure-worker` as SYSTEM in the console session, so it can attach to and inject
-/// on the secure desktop. Built from the service's own primary token: duplicate it, move the
-/// copy to the console session (needs SE_TCB, which LocalSystem holds), and CreateProcessAsUser.
-/// Any failure throws and the desktop worker keeps injecting itself.
+/// A helper process the service starts in the console session, suspended until <see cref="Resume"/>:
+/// either as the signed-in user (<see cref="LaunchAsUser"/>, from that user's token) or as SYSTEM
+/// (<see cref="LaunchAsSystem"/>: the service's own token, duplicated and moved to the console
+/// session, which needs SE_TCB, held by LocalSystem). The handles CreateProcessAsUser returns are
+/// kept rather than reopening the process with full access. The helper watches its pipe and
+/// exits when the service goes away, since it cannot share the service's job across sessions.
 /// </summary>
-internal sealed class SecureInputProcess : IDisposable
+internal sealed class SessionProcess : IDisposable
 {
     private readonly SafeProcessHandle process;
     private readonly SafeFileHandle thread;
     public int Id { get; }
 
-    private SecureInputProcess(ProcessInfo info)
+    private SessionProcess(ProcessInfo info)
     {
         process = new SafeProcessHandle(info.Process, ownsHandle: true);
         thread = new SafeFileHandle(info.Thread, ownsHandle: true);
@@ -42,7 +44,12 @@ internal sealed class SecureInputProcess : IDisposable
         thread.Dispose();
     }
 
-    public static SecureInputProcess Launch(uint consoleSession, string pipeName)
+    /// <summary>Starts <c>exe mode pipe pid</c> as the user whose token this is, on their Default desktop.</summary>
+    public static SessionProcess LaunchAsUser(SafeAccessTokenHandle token, string mode, string pipeName) =>
+        Create(token, mode, pipeName);
+
+    /// <summary>Starts <c>exe mode pipe pid</c> as SYSTEM in <paramref name="consoleSession"/>.</summary>
+    public static SessionProcess LaunchAsSystem(uint consoleSession, string mode, string pipeName)
     {
         EnablePrivilege("SeTcbPrivilege");
         if (!OpenProcessToken(GetCurrentProcess(), TokenDuplicate | TokenQuery | TokenAssignPrimary | TokenAdjustDefault | TokenAdjustSessionId, out var own))
@@ -61,25 +68,26 @@ internal sealed class SecureInputProcess : IDisposable
                         throw NativeError("SetTokenInformation(session)");
                 }
                 finally { handle.Free(); }
-                return Create(dup, pipeName);
+                return Create(dup, mode, pipeName);
             }
         }
     }
 
-    private static SecureInputProcess Create(SafeAccessTokenHandle token, string pipeName)
+    private static SessionProcess Create(SafeAccessTokenHandle token, string mode, string pipeName)
     {
         var exe = RuntimeCompat.ProcessPath!;
-        var command = new StringBuilder($"\"{exe}\" --secure-worker {pipeName} {RuntimeCompat.ProcessId}");
+        var command = new StringBuilder($"\"{exe}\" {mode} {pipeName} {RuntimeCompat.ProcessId}");
         var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Desktop = @"winsta0\default" };
         if (!CreateEnvironmentBlock(out var environment, token, false)) throw NativeError("CreateEnvironmentBlock");
         try
         {
             // CREATE_BREAKAWAY_FROM_JOB | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED | CREATE_NO_WINDOW.
+            // Breakaway: a child of the service's job would die with it; the helper exits on pipe EOF.
             const uint flags = 0x01000000 | 0x400 | 4 | 0x08000000;
             if (!CreateProcessAsUser(token, exe, command, IntPtr.Zero, IntPtr.Zero, false, flags,
                 environment, AppContext.BaseDirectory, ref startup, out var result))
                 throw NativeError("CreateProcessAsUser");
-            return new SecureInputProcess(result);
+            return new SessionProcess(result);
         }
         finally { DestroyEnvironmentBlock(environment); }
     }

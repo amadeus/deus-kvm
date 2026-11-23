@@ -152,27 +152,4 @@ public sealed class KeyboardInputTests
         Assert.Equal(1, scroll.Pan);
         Assert.False(InputRecord.TryParse([6, 7, 0, 0, 0, 9, 0, 0, 0, 1], out _));
     }
-
-    [Fact]
-    public void KeyAndWheelRelayRecordsRoundTrip()
-    {
-        var delete = Usage(HidKeys.Delete);
-        var record = SecureInputRecord.EncodeKey(delete, up: true);
-        Assert.Equal(new byte[] { 5, 0, 0, 0x53, 0, 3 }, record);
-        Assert.True(SecureInputRecord.TryParseKey(record, out var key, out var up));
-        Assert.Equal(delete, key);
-        Assert.True(up);
-        Assert.True(SecureInputRecord.TryParseKey(SecureInputRecord.EncodeKey(Usage(0x48), up: false), out var pause, out up));
-        Assert.Equal(new KeyStroke(0x13, 0x45, false), pause);
-        Assert.False(up);
-        var wheel = SecureInputRecord.EncodeWheel(-360, 120);
-        Assert.True(SecureInputRecord.TryParseWheel(wheel, out var vertical, out var horizontal));
-        Assert.Equal((-360, 120), (vertical, horizontal));
-        Assert.Equal(6, SecureInputRecord.Length(SecureInputRecord.Key));
-        Assert.Equal(5, SecureInputRecord.Length(SecureInputRecord.Wheel));
-        // The batcher keeps every new kind (an unknown length would drop the rest of a run).
-        byte[] run = [.. record, .. wheel, .. SecureInputRecord.EncodeMotion(1, 1)];
-        var frames = SecureFrame.Batch(run, run.Length);
-        Assert.Equal(2 + run.Length, frames.Length);
-    }
 }

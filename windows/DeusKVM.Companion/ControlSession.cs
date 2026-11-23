@@ -19,15 +19,12 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
     private readonly StateReporter stateReport = new();
     private (uint Token, string[] Service)? pendingReport;
     private ControlConnection? connection;
+    // The session agent (SYSTEM in the console session: input, edge, cursor, displays) and the
+    // clipboard helper (the signed-in user). Both run only while this Mac is active.
     private DesktopHost? desktop;
+    private DesktopHost? clipboardHost;
     private MonitorInfo[] monitors = [];
     private byte[]? inputOffer;
-    // SYSTEM secure-input worker: injects on the secure desktop (UAC, lock screen) when the
-    // user desktop worker cannot. Spawned while a Mac is active; its connection and each injection
-    // status are pushed to the desktop worker so it relays or injects itself. Volatile:
-    // the desktop pipe's reader thread forwards pointer records to it directly.
-    private volatile SecureInputHost? secureInput;
-    private bool lastSecureReady;
     private EdgeConfiguration? config => handoff.Configuration;
     private long lastSeen, connectedAt;
     private bool ready, disposed;
@@ -67,7 +64,6 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
     {
         if (disposed) return;
         RefreshDesktop();
-        RefreshSecureInput();
         UpdateClipboardSession();
         if (clipboardEnabled) Clipboard.Tick(ClipboardNow);
         if (active && desktop?.Connected == false) SetDetail(desktop.Detail);
@@ -85,46 +81,21 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         }
     }
 
-    // Also called on activation so the console worker (needed for ENTER placement and
-    // edge return) starts immediately rather than at the next three-second tick.
+    // Also called on activation so the session agent (needed for ENTER placement and edge
+    // return) starts immediately rather than at the next tick.
     public void RefreshDesktop()
     {
         if (disposed || !active) return;
         if (desktop is null)
         {
             var epoch = ++desktopGeneration;
-            // Pointer records go straight from the pointer pipe's thread to the SYSTEM worker: never
-            // queued behind this service thread, which is busy exactly when the desktop switches.
-            desktop = new DesktopHost(
-                message => context.Post(_ => { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null),
-                records => secureInput?.Forward(records));
+            desktop = new DesktopHost(DesktopRole.Agent,
+                message => context.Post(_ => { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null));
+            clipboardHost = new DesktopHost(DesktopRole.Clipboard,
+                message => context.Post(_ => { if (!disposed && active && epoch == desktopGeneration) ClipboardHostEvent(message); }, null));
         }
         desktop.Refresh();
-        RefreshSecureInput();
-    }
-
-    // Keeps the SYSTEM secure-input worker running while active, and tells the desktop worker
-    // whether it is ready so the Mac knows whether a secure desktop still has a fast path.
-    private void RefreshSecureInput()
-    {
-        if (disposed) return;
-        if (!active) { secureInput?.Dispose(); secureInput = null; PushSecureReady(false); return; }
-        secureInput ??= new SecureInputHost(
-            text => { EdgeDiagnostics.Write(text); context.Post(_ => { if (!disposed) SetDetail(text); }, null); },
-            _ => context.Post(_ => { if (!disposed && active) PushSecureReady(secureInput?.Connected == true); }, null),
-            (injecting, failure) => context.Post(_ =>
-            { if (!disposed && active) desktop?.Send(new DesktopMessage("secure-status", Ok: injecting, Detail: failure)); }, null),
-            frame => context.Post(_ =>
-            { if (!disposed && active) desktop?.Send(new DesktopMessage("secure-stats", Input: frame)); }, null));
-        secureInput.Refresh();
-        PushSecureReady(secureInput.Connected);
-    }
-
-    private void PushSecureReady(bool ready)
-    {
-        if (ready == lastSecureReady) return;
-        lastSecureReady = ready;
-        desktop?.Send(new DesktopMessage("secure-ready", SecureReady: ready));
+        clipboardHost?.Refresh();
     }
 
     public void SetActive(bool value, bool notify = true)
@@ -136,9 +107,9 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         if (!value)
         {
             desktopGeneration++;
-            secureInput?.Dispose(); secureInput = null; lastSecureReady = false;
             handoff.Reset(); UpdateClipboardSession(true);
             desktop?.Dispose(); desktop = null; monitors = []; blind = 4;
+            clipboardHost?.Dispose(); clipboardHost = null;
             clipboardDesktopAvailable = clipboardDefaultDesktop = false;
         }
         if (notify && availability.Negotiated) Send(Protocol.Message.Selection, availability.Selection(active));
@@ -146,8 +117,8 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         SetDetail(active ? "Active Mac; preparing desktop" : "Waiting for Windows priority");
     }
 
-    // The Mac's pointer stream listener. Kept for the life of the link and handed to the desktop
-    // worker whenever it is connected and this Mac is active, since only the worker may inject.
+    // The Mac's input stream listener. Kept for the life of the link and handed to the session
+    // agent whenever it is connected and this Mac is active, since only the agent injects.
     private void ReceiveInputOffer(byte[] payload)
     {
         if (payload.Length > 4096) throw new InvalidDataException("Oversized input offer");
@@ -304,18 +275,25 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         else Send(Protocol.Message.EnterAck, [payload[0], 0, 0, 0, 0, 0, blind]);
     }
 
-    private void DesktopEvent(DesktopMessage message)
+    // The clipboard helper: its clipboard messages, and whether it is there at all.
+    private void ClipboardHostEvent(DesktopMessage message)
     {
         if (!active) return;
         if (message.Kind.StartsWith("clipboard-", StringComparison.Ordinal)) { ClipboardDesktopEvent(message); return; }
+        if (message.Kind is "connected" or "disconnected") { clipboardDesktopAvailable = false; UpdateClipboardSession(true); }
+    }
+
+    private void DesktopEvent(DesktopMessage message)
+    {
+        if (!active) return;
         switch (message.Kind)
         {
             case "connected":
             case "disconnected":
                 handoff.DesktopChanged(); blind = 4;
-                clipboardDesktopAvailable = clipboardDefaultDesktop = false; UpdateClipboardSession(true);
+                clipboardDefaultDesktop = false; UpdateClipboardSession(true);
                 SendState([4, 2, 0]);
-                if (message.Kind == "connected") { ForwardInputOffer(); lastSecureReady = false; RefreshSecureInput(); }
+                if (message.Kind == "connected") ForwardInputOffer();
                 break;
             case "sas":
                 secureAttention();
@@ -348,7 +326,7 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         }
     }
 
-    // Service state now; the desktop worker adds its edge history if it answers within 3 s.
+    // Service state now; the session agent adds its edge history if it answers within 3 s.
     private void BeginReport(uint token)
     {
         var age = lastSeen == 0 ? -1 : RuntimeCompat.TickCount64 - lastSeen;
@@ -356,10 +334,10 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         {
             $"windows companion: version={typeof(ControlSession).Assembly.GetName().Version} uptimeS={RuntimeCompat.TickCount64 / 1000}",
             $"link: ready={ready} active={active} blind={blind} mac={connection?.Remote} pendingBytes={connection?.PendingBytes ?? 0} lastSeenAgoMs={age} detail=\"{Detail}\"",
-            $"desktop: connected={desktop?.Connected == true} detail=\"{desktop?.Detail}\" monitors={string.Join(",", monitors.Select(item => $"{item.W}x{item.H}@{item.Dpi}"))} edge={config?.Edge}",
+            $"agent: connected={desktop?.Connected == true} detail=\"{desktop?.Detail}\" clipboardHelper={clipboardHost?.Connected == true} monitors={string.Join(",", monitors.Select(item => $"{item.W}x{item.H}@{item.Dpi}"))} edge={config?.Edge}",
             $"clipboard: peer={clipboardPeer} offered={clipboardOffered} enabled={clipboardEnabled} desktop={clipboardDefaultDesktop}/{clipboardDesktopAvailable}"
         };
-        if (desktop?.Connected != true) { pendingReport = null; SendReport(token, service, "desktop worker: not connected"); return; }
+        if (desktop?.Connected != true) { pendingReport = null; SendReport(token, service, "session agent: not connected"); return; }
         pendingReport = (token, service);
         desktop.Send(new DesktopMessage("report-request", Epoch: token));
         _ = Task.Delay(3000).ContinueWith(_ => context.Post(_ => FinishReport(token, null), null), TaskScheduler.Default);
@@ -369,7 +347,7 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
     {
         if (pendingReport is not { } pending || pending.Token != token) return;
         pendingReport = null;
-        SendReport(token, pending.Service, worker ?? "desktop worker: no answer within 3 s");
+        SendReport(token, pending.Service, worker ?? "session agent: no answer within 3 s");
     }
 
     private void SendReport(uint token, string[] service, string worker)
@@ -409,7 +387,11 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         stateReport.Reset();
         SupportsTakeover = false; RequestSerial = 0; requestedEpoch = disabledEpoch = ReleaseAcknowledged = null;
         handoff.Reset(); UpdateClipboardSession(true); clipboardPeer = false; inputOffer = null; desktop?.Send(new DesktopMessage("reset"));
-        secureInput?.Dispose(); secureInput = null; lastSecureReady = false;
     }
-    public void Dispose() { if (disposed) return; disposed = true; ResetLink(); desktop?.Dispose(); desktop = null; }
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true; ResetLink();
+        desktop?.Dispose(); desktop = null; clipboardHost?.Dispose(); clipboardHost = null;
+    }
 }

@@ -17,11 +17,11 @@ internal sealed partial class ControlSession
 
     private void UpdateClipboardSession(bool reset = false)
     {
-        var wanted = active && ready && clipboardPeer && clipboardDefaultDesktop && clipboardDesktopAvailable && desktop?.Connected == true;
+        var wanted = active && ready && clipboardPeer && clipboardDefaultDesktop && clipboardDesktopAvailable && clipboardHost?.Connected == true;
         if (!reset && clipboardOffered == wanted) return;
         clipboardEpoch++; clipboardOffered = wanted; clipboardEnabled = clipboardPrimed = false;
         pendingClipboardOffer = null; pendingFileOffer = null; peerClipboardSequence = peerClipboardRevision = deliveredFileSequence = null; Clipboard.Reset(clipboardEpoch);
-        desktop?.Send(new DesktopMessage("clipboard-start", Epoch: clipboardEpoch, Ok: false));
+        clipboardHost?.Send(new DesktopMessage("clipboard-start", Epoch: clipboardEpoch, Ok: false));
         AdvertiseClipboard();
     }
     private void AdvertiseClipboard()
@@ -45,7 +45,7 @@ internal sealed partial class ControlSession
             clipboardEnabled = true; clipboardPrimed = false;
             Clipboard.Reset(clipboardEpoch);
             Clipboard.SetActive(handoff.Active is not null, ClipboardNow);
-            desktop?.Send(new DesktopMessage("clipboard-start", Epoch: clipboardEpoch, Ok: true));
+            clipboardHost?.Send(new DesktopMessage("clipboard-start", Epoch: clipboardEpoch, Ok: true));
         }
         else if (clipboardEnabled)
         {
@@ -55,7 +55,7 @@ internal sealed partial class ControlSession
                 peerClipboardSequence = ClipboardTransfer.Read(payload, 4);
                 peerClipboardRevision = clipboardPrimed ? clipboardRevision : null;
                 deliveredFileSequence = null;
-                desktop?.Send(new DesktopMessage("clipboard-file-clear", Epoch: clipboardEpoch));
+                clipboardHost?.Send(new DesktopMessage("clipboard-file-clear", Epoch: clipboardEpoch));
             }
             if (!clipboardPrimed)
             {
@@ -104,7 +104,7 @@ internal sealed partial class ControlSession
             if (!fileReceivePeer) return;
             var request = FileClipboardOffer.Parse(payload);
             if (request.Epoch == clipboardEpoch && request.Sequence == clipboardRevision && request.Network?.Valid == true)
-                desktop?.Send(new DesktopMessage("clipboard-file-send", Epoch: clipboardEpoch, Clipboard: payload));
+                clipboardHost?.Send(new DesktopMessage("clipboard-file-send", Epoch: clipboardEpoch, Clipboard: payload));
             return;
         }
         if (type == Protocol.Message.FileOffer)
@@ -117,7 +117,7 @@ internal sealed partial class ControlSession
             if (!clipboardPrimed) { pendingFileOffer = payload; return; }
             if (deliveredFileSequence == offer.Sequence) return;
             deliveredFileSequence = offer.Sequence;
-            desktop?.Send(new DesktopMessage("clipboard-file-offer", Epoch: clipboardEpoch,
+            clipboardHost?.Send(new DesktopMessage("clipboard-file-offer", Epoch: clipboardEpoch,
                 Revision: peerClipboardRevision ?? clipboardRevision, Clipboard: payload));
         }
 
@@ -127,7 +127,7 @@ internal sealed partial class ControlSession
     {
         Clipboard.SetActive(windowsActive, ClipboardNow);
         if (!windowsActive && clipboardEnabled)
-            desktop?.Send(new DesktopMessage("clipboard-yield", Epoch: clipboardEpoch));
+            clipboardHost?.Send(new DesktopMessage("clipboard-yield", Epoch: clipboardEpoch));
     }
     private void SendClipboard(Protocol.Message type, byte[] data)
     {
@@ -138,6 +138,6 @@ internal sealed partial class ControlSession
     private void ApplyClipboard(byte[] data)
     {
         if (clipboardEnabled && clipboardPrimed)
-            desktop?.Send(new DesktopMessage("clipboard-apply", Epoch: clipboardEpoch, Revision: clipboardRevision, Clipboard: data));
+            clipboardHost?.Send(new DesktopMessage("clipboard-apply", Epoch: clipboardEpoch, Revision: clipboardRevision, Clipboard: data));
     }
 }
