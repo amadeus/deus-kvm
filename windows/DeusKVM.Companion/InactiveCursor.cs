@@ -15,9 +15,10 @@ internal sealed class CursorHider : IDisposable
     private readonly WinlogonCursor secure = new();
     public bool Hidden => user.Hidden || secure.Hidden;
 
-    public void Hide()
+    /// <param name="park">Where the hidden cursor waits (the screen's center), or null to leave it in place.</param>
+    public void Hide((int X, int Y)? park = null)
     {
-        if (DesktopNative.DesktopState().Desktop == 1) secure.Hide(); else user.Hide();
+        if (DesktopNative.DesktopState().Desktop == 1) secure.Hide(park); else user.Hide(park);
     }
 
     public void Reveal() { user.Reveal(); secure.Reveal(); }
@@ -40,7 +41,7 @@ internal sealed class CursorHider : IDisposable
 internal sealed class WinlogonCursor : IDisposable
 {
     private const uint WakeMessage = 0x8001, QuitMessage = 0x0012; // WM_APP + 1, WM_QUIT
-    private readonly ConcurrentQueue<bool> requests = new(); // true: hide
+    private readonly ConcurrentQueue<(bool Hide, (int X, int Y)? Park)> requests = new();
     private readonly ManualResetEventSlim ready = new();
     private readonly Thread thread;
     private volatile uint threadId;
@@ -54,12 +55,12 @@ internal sealed class WinlogonCursor : IDisposable
         ready.Wait(2000);
     }
 
-    public void Hide() => Post(true);
-    public void Reveal() { if (hidden) Post(false); }
+    public void Hide((int X, int Y)? park) => Post(true, park);
+    public void Reveal() { if (hidden) Post(false, null); }
 
-    private void Post(bool hide)
+    private void Post(bool hide, (int X, int Y)? park)
     {
-        requests.Enqueue(hide);
+        requests.Enqueue((hide, park));
         if (threadId != 0) PostThreadMessage(threadId, WakeMessage, IntPtr.Zero, IntPtr.Zero);
     }
 
@@ -80,7 +81,7 @@ internal sealed class WinlogonCursor : IDisposable
         {
             if (message.Window == IntPtr.Zero && message.Message == WakeMessage)
             {
-                while (requests.TryDequeue(out var hide)) { if (hide) cursor.Hide(); else cursor.Reveal(); }
+                while (requests.TryDequeue(out var request)) { if (request.Hide) cursor.Hide(request.Park); else cursor.Reveal(); }
             }
             else { TranslateMessage(ref message); DispatchMessage(ref message); }
             hidden = cursor.Hidden; // a click (its hook) reveals it too
@@ -141,9 +142,10 @@ internal sealed class InactiveCursor : NativeWindow, IDisposable
         SetLayeredWindowAttributes(Handle, 0, 1, 2);
     }
 
-    public void Hide()
+    public void Hide((int X, int Y)? park = null)
     {
         if (Hidden || DesktopNative.DesktopState().Desktop != desktop || !DesktopNative.GetCursorPos(out var point)) return;
+        if (park is { } at) point = new DesktopNative.Point { X = at.X, Y = at.Y };
         // Reveal before a click is routed so the hider cannot eat the first click.
         // Raw Input supplies device-specific movement; this hook never consumes input.
         hook = SetWindowsHookEx(14, mouseHook, GetModuleHandle(null), 0); // WH_MOUSE_LL
@@ -151,6 +153,9 @@ internal sealed class InactiveCursor : NativeWindow, IDisposable
         Hidden = true;
         if (!SetWindowPos(Handle, new IntPtr(-1), point.X, point.Y, 1, 1, 0x50)) // NOACTIVATE | SHOWWINDOW
         { Reveal(); return; }
+        // Parked away from where the Mac left it (often the taskbar, at the edge), the cursor ends
+        // any hover or tooltip there; it lands on this surface, so nothing beneath sees it arrive.
+        if (park is not null) DesktopNative.SetCursorPos(point.X, point.Y);
         SetCursor(IntPtr.Zero);
     }
 

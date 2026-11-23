@@ -114,6 +114,14 @@ the screen (Session 0), so it runs two helpers it manages:
   second surface on Winlogon. Also: LinkWorker was disposed twice on stop.
   Pending: reboot keeps the Mac enabled; cursor hides on the login and lock
   screens and UAC prompts; still hides on the normal desktop.
+- Returning near the clock left the taskbar's "Show desktop" tooltip up: the
+  hidden cursor stayed on the button. Probe on the PC: the 1 px hider was
+  topmost and under the cursor and the cursor was hidden, but the XAML tooltip
+  popup was already open and nothing moved the cursor to dismiss it. On return
+  the hider now moves to the center of the configured monitor and the hidden
+  cursor is parked there (SetCursorPos onto the hider). Pending: no tooltip
+  after returning at the clock; the cursor reappears at the center when the
+  PC's own mouse moves.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

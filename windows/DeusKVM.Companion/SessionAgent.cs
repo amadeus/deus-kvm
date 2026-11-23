@@ -160,7 +160,8 @@ internal sealed class SessionAgent : ApplicationContext
                 {
                     handoff.Exit();
                     ReleaseNetworkInput();
-                    if (blind == 0) cursor.Hide();
+                    // Hidden in the middle of the screen: left at the edge, it would hover there.
+                    if (blind == 0) cursor.Hide(monitors.FirstOrDefault(item => item.Id == config?.Monitor)?.Center);
                     lock (networkGate) { history.Add($"exit: switch={message.SwitchId} network={arrivals.Summary}"); arrivals.Reset(); }
                 }
                 break;
