@@ -119,9 +119,15 @@ the screen (Session 0), so it runs two helpers it manages:
   topmost and under the cursor and the cursor was hidden, but the XAML tooltip
   popup was already open and nothing moved the cursor to dismiss it. On return
   the hider now moves to the center of the configured monitor and the hidden
-  cursor is parked there (SetCursorPos onto the hider). Pending: no tooltip
-  after returning at the clock; the cursor reappears at the center when the
-  PC's own mouse moves.
+  cursor is parked there (SetCursorPos onto the hider). That alone did not help
+  on hardware. Screenshots on the PC showed the tooltip closes when the cursor
+  moves onto an ordinary window (by SendInput or SetCursorPos), so the SYSTEM
+  hider itself keeps the taskbar from hearing that the mouse left (the earlier
+  hider was the user's and had no such problem). The Default-desktop hider is
+  now the clipboard helper's (the user), which also reveals on the PC's own
+  mouse; the agent keeps the Winlogon one and the Default one only as the
+  fallback with no helper. Pending: no tooltip after returning at the clock; the
+  cursor reappears at the center when the PC's own mouse moves.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

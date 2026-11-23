@@ -106,6 +106,7 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         stateReport.Reset();
         if (!value)
         {
+            RevealUserCursor();
             desktopGeneration++;
             handoff.Reset(); UpdateClipboardSession(true);
             desktop?.Dispose(); desktop = null; monitors = []; blind = 4;
@@ -254,19 +255,34 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
                 EnterDesktop(payload, true);
                 break;
             case Protocol.Message.Resume when payload.Length == 2 && payload[1] < 4:
+                RevealUserCursor();
                 handoff.Enter(payload[0], payload[1]);
                 ClipboardSwitch(true);
                 ResumeDesktop();
                 break;
             case Protocol.Message.Exit when payload.Length == 1:
-                if (handoff.Accept(payload[0])) { handoff.Exit(); ClipboardSwitch(false); desktop?.Send(new DesktopMessage("exit", SwitchId: payload[0])); }
+                if (handoff.Accept(payload[0]))
+                {
+                    handoff.Exit(); ClipboardSwitch(false);
+                    // On the user's desktop the user's own helper hides the cursor: the taskbar never
+                    // hears that the mouse left when the cursor moves onto a SYSTEM-owned window, so a
+                    // SYSTEM hider leaves its tooltips open. Ok tells the agent it need not hide there.
+                    var userHides = clipboardHost?.Connected == true && clipboardDefaultDesktop;
+                    if (userHides && monitors.FirstOrDefault(item => item.Id == config?.Monitor) is { } monitor)
+                        clipboardHost!.Send(new DesktopMessage("cursor-hide", X: monitor.Center.X, Y: monitor.Center.Y));
+                    else userHides = false;
+                    desktop?.Send(new DesktopMessage("exit", SwitchId: payload[0], Ok: userHides));
+                }
                 break;
             default: throw new InvalidDataException("Unsupported companion message");
         }
     }
 
+    private void RevealUserCursor() => clipboardHost?.Send(new DesktopMessage("cursor-reveal"));
+
     private void EnterDesktop(byte[] payload, bool center)
     {
+        RevealUserCursor();
         handoff.Enter(payload[0], payload[1]);
         ClipboardSwitch(true);
         if (desktop?.Connected == true && config is not null && config.Edge == payload[1])

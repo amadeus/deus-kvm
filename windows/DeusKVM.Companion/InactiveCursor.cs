@@ -4,10 +4,10 @@ using System.Runtime.InteropServices;
 namespace DeusKVM.Companion;
 
 /// <summary>
-/// Hides the cursor while the Mac is in control, on whichever desktop has input: the user's
-/// Default desktop (a surface on the agent's window thread) or Winlogon, which holds the login
-/// and lock screens and UAC prompts (a surface on <see cref="WinlogonCursor"/>'s thread). Leaving
-/// a desktop reveals its cursor, so it is visible again when that desktop returns.
+/// The session agent's cursor hiding while the Mac is in control: on Winlogon, which holds the
+/// login and lock screens and UAC prompts (a surface on <see cref="WinlogonCursor"/>'s thread),
+/// and on the user's Default desktop only while no user helper does it (the clipboard helper
+/// hides it there, as the user: see ClipboardWorker). Leaving a desktop reveals its cursor.
 /// </summary>
 internal sealed class CursorHider : IDisposable
 {
@@ -16,9 +16,11 @@ internal sealed class CursorHider : IDisposable
     public bool Hidden => user.Hidden || secure.Hidden;
 
     /// <param name="park">Where the hidden cursor waits (the screen's center), or null to leave it in place.</param>
-    public void Hide((int X, int Y)? park = null)
+    /// <param name="userHides">The user's own helper hides it on the Default desktop.</param>
+    public void Hide((int X, int Y)? park = null, bool userHides = false)
     {
-        if (DesktopNative.DesktopState().Desktop == 1) secure.Hide(park); else user.Hide(park);
+        if (DesktopNative.DesktopState().Desktop == 1) secure.Hide(park);
+        else if (!userHides) user.Hide(park);
     }
 
     public void Reveal() { user.Reveal(); secure.Reveal(); }
