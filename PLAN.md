@@ -162,6 +162,15 @@ the screen (Session 0), so it runs two helpers it manages:
   2026-11 Preview Update KB5132057 (build 26300.10075) on 2026-11-22, with
   explorer.exe dated 2026-11-21, the day the tooltip was first noticed.
   Uninstalling that update would confirm it.
+- 2026-11-22 22:31: the Mac could not switch to the PC. The Mac's log: "network
+  input: stalled" (no acknowledgement of its once-a-second stream ping), then it
+  closed the stream and kept listening. The PC still showed its original stream
+  connection (from the 22:05 start) as established and never reconnected; the
+  agent's other thread kept reporting. A service restart recovered it. Cause not
+  proven (the stream thread stuck, or a half-open connection). Now: the PC's
+  stream socket times out after 5 s of silence (the Mac pings every second) and
+  reconnects; the agent exits (and is restarted) if one delivery runs over 5 s,
+  logging that to edge-return.log; stream drops are logged there too.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

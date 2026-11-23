@@ -64,6 +64,10 @@ internal sealed class SessionAgent : ApplicationContext
     private volatile EdgeConfiguration? config;
     private byte blind = 4;
     private bool started;
+    // When the stream's thread entered Inject (0 while it is not delivering). A delivery that never
+    // returns stops the stream's acknowledgements and the Mac gives up on it; nothing would recover.
+    private long deliveringSince;
+    private const long StuckDeliveryMs = 5000;
 
     public SessionAgent(string name, int parent)
     {
@@ -114,6 +118,14 @@ internal sealed class SessionAgent : ApplicationContext
 
     private void Refresh()
     {
+        // The stream's thread stuck in one delivery: log it and exit, and the service starts a fresh
+        // agent (and stream) within seconds. The log line says this was the cause.
+        var since = Interlocked.Read(ref deliveringSince);
+        if (since != 0 && RuntimeCompat.TickCount64 - since > StuckDeliveryMs)
+        {
+            EdgeDiagnostics.Write($"session agent: input delivery stuck for {(RuntimeCompat.TickCount64 - since) / 1000} s ({networkStatus}); restarting");
+            Environment.Exit(3);
+        }
         var state = DesktopNative.DesktopState();
         var next = DesktopNative.Monitors();
         if (next.Length > 0 && !next.SequenceEqual(monitors))
@@ -333,6 +345,8 @@ internal sealed class SessionAgent : ApplicationContext
         if (next == networkStatus) return;
         networkStatus = next;
         history.Add(next);
+        // Stream drops go to the durable log too, so a stall can be explained afterwards.
+        if (text.StartsWith("closed", StringComparison.Ordinal)) ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(next));
         UpdateDesktopState(DesktopNative.DesktopState());
     }
 
@@ -340,6 +354,13 @@ internal sealed class SessionAgent : ApplicationContext
     // at once on the input desktop. Returns whether the PC can take input right now; false rides on
     // the next acknowledgement so the Mac stops sending within a round trip.
     private bool Inject(InputEvent record)
+    {
+        Interlocked.Exchange(ref deliveringSince, RuntimeCompat.TickCount64);
+        try { return Deliver(record); }
+        finally { Interlocked.Exchange(ref deliveringSince, 0); }
+    }
+
+    private bool Deliver(InputEvent record)
     {
         var arrived = Stopwatch.GetTimestamp();
         if (record.Type == InputRecord.Ping) return InputDesktop.Attach();

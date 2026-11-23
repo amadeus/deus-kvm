@@ -19,6 +19,7 @@ namespace DeusKVM.Companion;
 internal sealed class NetworkInputClient : IDisposable
 {
     private static readonly int[] Backoff = [500, 1000, 2000, 5000];
+    private const int SilenceMs = 5000;
     private readonly FileNetworkOffer offer;
     // Returns whether the PC could inject; a false answer flags the next acknowledgement.
     private readonly Func<InputEvent, bool> deliver;
@@ -99,6 +100,10 @@ internal sealed class NetworkInputClient : IDisposable
             catch (SocketException) { next.Close(); }
         }
         if (connected is null) throw new SocketException((int)SocketError.ConnectionRefused);
+        // The Mac pings a resting stream every second, so 5 s with nothing to read means the link is
+        // gone without the PC being told (a half-open connection): give it up and reconnect, rather
+        // than wait forever while the Mac, which has closed it, refuses to switch to the PC.
+        connected.ReceiveTimeout = SilenceMs;
         socket = connected;
         try { Stream(connected); }
         finally { up = false; try { connected.Close(); } catch (ObjectDisposedException) { } socket = null; }
