@@ -197,8 +197,8 @@ not change it again.
 
 - Notarized: profile stored by the user; Apple accepted the submission, the
   ticket is stapled, and a copy of the zip extracted with a quarantine flag passes
-  `spctl` as "Notarized Developer ID" (arm64 only). Pending: opening it on another
-  Mac without the prompt; re-granting the two permissions on each Mac.
+  `spctl` as "Notarized Developer ID" (arm64 only). Confirmed 2026-11-22: it
+  opens on another Mac without the Gatekeeper prompt.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 
