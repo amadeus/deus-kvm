@@ -137,6 +137,15 @@ the screen (Session 0), so it runs two helpers it manages:
   matches the earlier design). Pending: no tooltip after returning at the clock;
   the cursor reappears at the center when the PC's own mouse moves; an elevated
   foreground window may block the helper's injected move (then it stays put).
+- That still left it on the real handoff. More runs on the PC (screenshots of
+  the clock corner, 4 each): it is a taskbar race whenever the pointer jumps off
+  a button it just crossed: the original no-move hider 4/4 stuck, a jump to the
+  center 3/4, a single step 3/4, a delayed back-and-out pass 1/4; parking along
+  12 injected steps 4 ms apart (or 24 at 2 ms) 0/8. `InactiveCursor.Park` now
+  moves that way (the mouse hook is installed after parking: its thread does not
+  pump while parking). The earlier SYSTEM-ownership theory was wrong; the user
+  helper keeps the Default hider anyway, as before the rework. Pending: real
+  handoff at the clock, several times.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

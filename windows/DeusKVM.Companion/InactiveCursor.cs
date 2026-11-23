@@ -147,19 +147,36 @@ internal sealed class InactiveCursor : NativeWindow, IDisposable
     public void Hide((int X, int Y)? park = null)
     {
         if (Hidden || DesktopNative.DesktopState().Desktop != desktop || !DesktopNative.GetCursorPos(out var point)) return;
+        var start = point;
         if (park is { } at) point = new DesktopNative.Point { X = at.X, Y = at.Y };
-        // Reveal before a click is routed so the hider cannot eat the first click.
-        // Raw Input supplies device-specific movement; this hook never consumes input.
-        hook = SetWindowsHookEx(14, mouseHook, GetModuleHandle(null), 0); // WH_MOUSE_LL
-        if (hook == IntPtr.Zero) return;
         Hidden = true;
         if (!SetWindowPos(Handle, new IntPtr(-1), point.X, point.Y, 1, 1, 0x50)) // NOACTIVATE | SHOWWINDOW
         { Reveal(); return; }
-        // Parked away from where the Mac left it (often the taskbar, at the edge), the cursor ends
-        // any hover or tooltip there; it lands on this surface, so nothing beneath sees it arrive.
-        // A real (injected) move, not SetCursorPos, so a tooltip still pending is cancelled too.
-        if (park is not null && !DesktopNative.MoveCursorTo(point.X, point.Y)) DesktopNative.SetCursorPos(point.X, point.Y);
+        // Parked first: the hook below runs on this thread, which does not pump while parking.
+        if (park is not null) Park(start, point);
+        // Reveal before a click is routed so the hider cannot eat the first click.
+        // Raw Input supplies device-specific movement; this hook never consumes input.
+        hook = SetWindowsHookEx(14, mouseHook, GetModuleHandle(null), 0); // WH_MOUSE_LL
+        if (hook == IntPtr.Zero) { Reveal(); return; }
         SetCursor(IntPtr.Zero);
+    }
+
+    // Moves the cursor from where the Mac left it to the parking point (on this surface) the way a
+    // real mouse would, in short injected steps, never in one jump. Measured on hardware: after
+    // the pointer crosses a taskbar button on its way out (any edge crossing near the clock), a
+    // jump away, by SetCursorPos or a single injected move, let the button's tooltip open about a
+    // second later and stay (3 of 4 runs); 12 steps 4 ms apart never did (8 of 8). Tagged like the
+    // Mac's steps, so nothing treats them as the PC's own mouse.
+    private static void Park(DesktopNative.Point from, DesktopNative.Point to)
+    {
+        const int Steps = 12;
+        for (var step = 1; step <= Steps; step++)
+        {
+            var x = from.X + (to.X - from.X) * step / Steps;
+            var y = from.Y + (to.Y - from.Y) * step / Steps;
+            if (!DesktopNative.MoveCursorTo(x, y)) { DesktopNative.SetCursorPos(to.X, to.Y); return; }
+            if (step < Steps) Thread.Sleep(4);
+        }
     }
 
     public void Reveal()

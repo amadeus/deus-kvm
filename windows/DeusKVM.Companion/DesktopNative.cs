@@ -38,9 +38,8 @@ internal static class DesktopNative
     }
 
     // Moves the cursor to (x, y) through the input stack (MOVE | ABSOLUTE | VIRTUALDESK), tagged
-    // like the Mac's steps. Unlike SetCursorPos, this is a real pointer move: the taskbar sees the
-    // pointer leave and cancels a tooltip still waiting to open (SetCursorPos leaves it to open
-    // later and stay, measured on hardware). Pixel coordinates of a per-monitor-aware process.
+    // like the Mac's steps: a real pointer move, as InactiveCursor.Park needs. Pixel coordinates
+    // of a per-monitor-aware process.
     internal static bool MoveCursorTo(int x, int y)
     {
         int left = GetSystemMetrics(76), top = GetSystemMetrics(77), width = GetSystemMetrics(78), height = GetSystemMetrics(79);
