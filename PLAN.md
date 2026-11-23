@@ -144,8 +144,12 @@ the screen (Session 0), so it runs two helpers it manages:
   12 injected steps 4 ms apart (or 24 at 2 ms) 0/8. `InactiveCursor.Park` now
   moves that way (the mouse hook is installed after parking: its thread does not
   pump while parking). The earlier SYSTEM-ownership theory was wrong; the user
-  helper keeps the Default hider anyway, as before the rework. Pending: real
-  handoff at the clock, several times.
+  helper keeps the Default hider anyway, as before the rework. Asked to keep the
+  cursor hidden on the way: carrying the hider with every step brought the
+  tooltip back (6/6), since the taskbar must see the pointer land on an ordinary
+  window; carrying it from the second step on stayed clean (0/5), so only the
+  first 4 ms step is uncovered. Pending: real handoff at the clock, several
+  times; the cursor not visibly streaking to the center.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

@@ -161,20 +161,31 @@ internal sealed class InactiveCursor : NativeWindow, IDisposable
         SetCursor(IntPtr.Zero);
     }
 
-    // Moves the cursor from where the Mac left it to the parking point (on this surface) the way a
-    // real mouse would, in short injected steps, never in one jump. Measured on hardware: after
-    // the pointer crosses a taskbar button on its way out (any edge crossing near the clock), a
-    // jump away, by SetCursorPos or a single injected move, let the button's tooltip open about a
-    // second later and stay (3 of 4 runs); 12 steps 4 ms apart never did (8 of 8). Tagged like the
-    // Mac's steps, so nothing treats them as the PC's own mouse.
-    private static void Park(DesktopNative.Point from, DesktopNative.Point to)
+    // Moves the cursor from where the Mac left it to the parking point the way a real mouse would,
+    // in short injected steps, never in one jump. Measured on hardware: after the pointer crosses a
+    // taskbar button on its way out (any edge crossing near the clock), a jump away (SetCursorPos or
+    // one injected move) let the button's tooltip open about a second later and stay (3 of 4 runs);
+    // 12 steps 4 ms apart never did (8 of 8). Every step after the first carries this surface with
+    // it, so the cursor stays hidden on the way (still 0 of 5); covering the first step as well
+    // brings the tooltip back (6 of 6), since the taskbar must see the pointer land on an ordinary
+    // window. Steps are tagged like the Mac's, so nothing treats them as the PC's own mouse.
+    private void Park(DesktopNative.Point from, DesktopNative.Point to)
     {
         const int Steps = 12;
+        // This thread does not pump while parking: the cursor it shows over this surface must
+        // already be none, without waiting for WM_SETCURSOR.
+        SetCursor(IntPtr.Zero);
         for (var step = 1; step <= Steps; step++)
         {
             var x = from.X + (to.X - from.X) * step / Steps;
             var y = from.Y + (to.Y - from.Y) * step / Steps;
-            if (!DesktopNative.MoveCursorTo(x, y)) { DesktopNative.SetCursorPos(to.X, to.Y); return; }
+            if (step > 1) SetWindowPos(Handle, new IntPtr(-1), x, y, 1, 1, 0x50); // NOACTIVATE | SHOWWINDOW
+            if (!DesktopNative.MoveCursorTo(x, y))
+            {
+                SetWindowPos(Handle, new IntPtr(-1), to.X, to.Y, 1, 1, 0x50);
+                DesktopNative.SetCursorPos(to.X, to.Y);
+                return;
+            }
             if (step < Steps) Thread.Sleep(4);
         }
     }
