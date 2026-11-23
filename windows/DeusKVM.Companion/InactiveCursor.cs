@@ -157,7 +157,8 @@ internal sealed class InactiveCursor : NativeWindow, IDisposable
         { Reveal(); return; }
         // Parked away from where the Mac left it (often the taskbar, at the edge), the cursor ends
         // any hover or tooltip there; it lands on this surface, so nothing beneath sees it arrive.
-        if (park is not null) DesktopNative.SetCursorPos(point.X, point.Y);
+        // A real (injected) move, not SetCursorPos, so a tooltip still pending is cancelled too.
+        if (park is not null && !DesktopNative.MoveCursorTo(point.X, point.Y)) DesktopNative.SetCursorPos(point.X, point.Y);
         SetCursor(IntPtr.Zero);
     }
 

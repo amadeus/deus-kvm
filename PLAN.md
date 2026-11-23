@@ -126,8 +126,17 @@ the screen (Session 0), so it runs two helpers it manages:
   hider was the user's and had no such problem). The Default-desktop hider is
   now the clipboard helper's (the user), which also reveals on the PC's own
   mouse; the agent keeps the Winlogon one and the Default one only as the
-  fallback with no helper. Pending: no tooltip after returning at the clock; the
-  cursor reappears at the center when the PC's own mouse moves.
+  fallback with no helper. Still the tooltip stayed, so the ownership theory was
+  wrong. Measured on the PC with a test window like the hider: a tooltip that is
+  already open closes whenever the cursor moves away, onto any window; but after
+  a short hover (30-100 ms, as at an edge crossing) moving the cursor away with
+  SetCursorPos lets the tooltip open ~1 s later and stay, onto the hider or an
+  app alike. Moving it with SendInput (absolute, virtual desk) cancels it in
+  every case. The park move is now an injected absolute move tagged InjectTag
+  (SetCursorPos only as a fallback). The user-owned Default hider stays (it
+  matches the earlier design). Pending: no tooltip after returning at the clock;
+  the cursor reappears at the center when the PC's own mouse moves; an elevated
+  foreground window may block the helper's injected move (then it stays put).
 
 ### Mac CPU while moving the pointer — 2026-11-12
 
