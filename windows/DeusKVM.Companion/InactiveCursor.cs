@@ -1,17 +1,133 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 
 namespace DeusKVM.Companion;
 
-// A temporary, nonactivating surface under the pointer owns the invisible cursor.
-// No system cursor scheme changes or shared ShowCursor counters survive this worker.
+/// <summary>
+/// Hides the cursor while the Mac is in control, on whichever desktop has input: the user's
+/// Default desktop (a surface on the agent's window thread) or Winlogon, which holds the login
+/// and lock screens and UAC prompts (a surface on <see cref="WinlogonCursor"/>'s thread). Leaving
+/// a desktop reveals its cursor, so it is visible again when that desktop returns.
+/// </summary>
+internal sealed class CursorHider : IDisposable
+{
+    private readonly InactiveCursor user = new(0);
+    private readonly WinlogonCursor secure = new();
+    public bool Hidden => user.Hidden || secure.Hidden;
+
+    public void Hide()
+    {
+        if (DesktopNative.DesktopState().Desktop == 1) secure.Hide(); else user.Hide();
+    }
+
+    public void Reveal() { user.Reveal(); secure.Reveal(); }
+
+    /// <summary>The input desktop is now <paramref name="desktop"/>: the other one's cursor is revealed.</summary>
+    public void Follow(byte desktop)
+    {
+        if (desktop != 0) user.Reveal();
+        if (desktop != 1) secure.Reveal();
+    }
+
+    public void Dispose() { user.Dispose(); secure.Dispose(); }
+}
+
+/// <summary>
+/// An <see cref="InactiveCursor"/> on the Winlogon desktop. A window belongs to its thread's
+/// desktop, so this thread attaches to Winlogon before creating it (SYSTEM may) and runs its own
+/// message loop; requests are posted to it.
+/// </summary>
+internal sealed class WinlogonCursor : IDisposable
+{
+    private const uint WakeMessage = 0x8001, QuitMessage = 0x0012; // WM_APP + 1, WM_QUIT
+    private readonly ConcurrentQueue<bool> requests = new(); // true: hide
+    private readonly ManualResetEventSlim ready = new();
+    private readonly Thread thread;
+    private volatile uint threadId;
+    private volatile bool hidden;
+    public bool Hidden => hidden;
+
+    public WinlogonCursor()
+    {
+        thread = new Thread(Run) { IsBackground = true, Name = "DeusKVM Winlogon cursor" };
+        thread.Start();
+        ready.Wait(2000);
+    }
+
+    public void Hide() => Post(true);
+    public void Reveal() { if (hidden) Post(false); }
+
+    private void Post(bool hide)
+    {
+        requests.Enqueue(hide);
+        if (threadId != 0) PostThreadMessage(threadId, WakeMessage, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    private void Run()
+    {
+        InactiveCursor? cursor = null;
+        try
+        {
+            // Attach before any window exists on this thread (SetThreadDesktop fails afterward).
+            var desktop = OpenDesktop("Winlogon", 0, false, 0x02000000); // MAXIMUM_ALLOWED
+            if (desktop == IntPtr.Zero || !SetThreadDesktop(desktop)) return;
+            cursor = new InactiveCursor(1);
+            threadId = GetCurrentThreadId();
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { return; }
+        finally { ready.Set(); }
+        while (GetMessage(out var message, IntPtr.Zero, 0, 0) > 0)
+        {
+            if (message.Window == IntPtr.Zero && message.Message == WakeMessage)
+            {
+                while (requests.TryDequeue(out var hide)) { if (hide) cursor.Hide(); else cursor.Reveal(); }
+            }
+            else { TranslateMessage(ref message); DispatchMessage(ref message); }
+            hidden = cursor.Hidden; // a click (its hook) reveals it too
+        }
+        cursor.Dispose();
+    }
+
+    public void Dispose()
+    {
+        if (threadId != 0) PostThreadMessage(threadId, QuitMessage, IntPtr.Zero, IntPtr.Zero);
+        thread.Join(1000);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Msg { public IntPtr Window; public uint Message; public IntPtr WParam, LParam; public uint Time; public DesktopNative.Point Point; }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr OpenDesktop(string name, uint flags, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint access);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetThreadDesktop(IntPtr desktop);
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")]
+    private static extern int GetMessage(out Msg message, IntPtr window, uint min, uint max);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TranslateMessage(ref Msg message);
+    [DllImport("user32.dll")]
+    private static extern IntPtr DispatchMessage(ref Msg message);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostThreadMessage(uint thread, uint message, IntPtr wParam, IntPtr lParam);
+}
+
+// A temporary, nonactivating surface under the pointer owns the invisible cursor, on one desktop
+// (0 Default, 1 Winlogon: the thread that creates it must be on that desktop). No system cursor
+// scheme changes or shared ShowCursor counters survive it.
 internal sealed class InactiveCursor : NativeWindow, IDisposable
 {
     private readonly MouseHook mouseHook;
+    private readonly byte desktop;
     private IntPtr hook;
     public bool Hidden { get; private set; }
 
-    public InactiveCursor()
+    public InactiveCursor(byte desktop)
     {
+        this.desktop = desktop;
         mouseHook = OnMouse;
         CreateHandle(new CreateParams
         {
@@ -27,7 +143,7 @@ internal sealed class InactiveCursor : NativeWindow, IDisposable
 
     public void Hide()
     {
-        if (Hidden || !DesktopNative.IsDefaultDesktop() || !DesktopNative.GetCursorPos(out var point)) return;
+        if (Hidden || DesktopNative.DesktopState().Desktop != desktop || !DesktopNative.GetCursorPos(out var point)) return;
         // Reveal before a click is routed so the hider cannot eat the first click.
         // Raw Input supplies device-specific movement; this hook never consumes input.
         hook = SetWindowsHookEx(14, mouseHook, GetModuleHandle(null), 0); // WH_MOUSE_LL

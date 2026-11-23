@@ -31,7 +31,7 @@ internal sealed class SessionAgent : ApplicationContext
     private readonly Channel<DesktopMessage> output = Channel.CreateBounded<DesktopMessage>(128);
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     private readonly RawWindow window;
-    private readonly InactiveCursor cursor = new();
+    private readonly CursorHider cursor = new();
     private readonly InputDesktopThread desktopOps = new();
     private readonly int parent;
     private readonly HandoffSession handoff = new();
@@ -138,7 +138,7 @@ internal sealed class SessionAgent : ApplicationContext
         if (next != blind) history.Add($"desktop: blind={next} desktop={state.Desktop}");
         blind = next;
         handoff.SetAvailable(blind == 0);
-        if (blind != 0 || state.Desktop != 0) cursor.Reveal();
+        if (blind != 0) cursor.Reveal(); else cursor.Follow(state.Desktop);
         var detail = blind != 0 ? "Input desktop unavailable; use the Mac hotkey"
             : state.Desktop == 0 ? "Windows edge return ready" : "Windows edge return ready (secure desktop)";
         Send(new DesktopMessage("state", Blind: blind, Desktop: state.Desktop, MousePresent: true, Detail: detail, Network: networkStatus));

@@ -104,6 +104,16 @@ the screen (Session 0), so it runs two helpers it manages:
   prompt, Start/Stop from the tray; key repeat rate as SYSTEM matches the user's
   setting; cursor hiding on the user desktop after returning to the Mac; service
   and PC restart recovery; both Macs and takeover.
+- 2026-11-22 hardware, first pass: mostly working, edge return works on every
+  desktop (edge log `leave=` counts). Two issues, fixed: (1) after a reboot the
+  Mac had disabled itself: the link now runs in the service, so a restart tore it
+  down cleanly and `ResetLink` sent Selection(not active), which the Mac reads as
+  Windows choosing another Mac; a failing or torn-down link now deactivates
+  silently. (2) The cursor stayed visible after returning on the login/lock
+  screen: hiding existed only on the Default desktop; `WinlogonCursor` keeps a
+  second surface on Winlogon. Also: LinkWorker was disposed twice on stop.
+  Pending: reboot keeps the Mac enabled; cursor hides on the login and lock
+  screens and UAC prompts; still hides on the normal desktop.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

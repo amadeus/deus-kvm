@@ -337,10 +337,15 @@ internal sealed class LinkWorker : ApplicationContext
         status = next with { DiscoveryEvent = null };
     }
 
+    // Application.Run disposes the context when its loop ends, and the service's `using` does
+    // again; the second must be a no-op.
+    private bool disposed;
+
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
+        if (disposing && !disposed)
         {
+            disposed = true;
             shutdown.Cancel(); heartbeat.Dispose(); discovery?.Dispose(); identity?.Dispose();
             foreach (var attempt in attempts.Values) attempt.Link.Dispose();
             attempts.Clear(); shutdown.Dispose();

@@ -376,10 +376,13 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
     }
 
     private void SetDetail(string value) { if (Detail != value) { Detail = value; status(value); } }
-    private void Fail(string reason) { SetActive(false); NeedsReconnect = true; ready = false; UpdateClipboardSession(true); SetDetail(reason); }
+    // A link that fails or is torn down (reconnect, service stop or restart) deactivates silently:
+    // telling the Mac it is deselected would read as Windows choosing another Mac, and the Mac
+    // disables itself for that. It sees the link close instead and takes its input back.
+    private void Fail(string reason) { SetActive(false, notify: false); NeedsReconnect = true; ready = false; UpdateClipboardSession(true); SetDetail(reason); }
     public void ResetLink()
     {
-        SetActive(false);
+        SetActive(false, notify: false);
         generation++;
         connection?.Dispose(); connection = null;
         ready = NeedsReconnect = false;
