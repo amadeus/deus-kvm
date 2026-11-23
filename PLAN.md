@@ -68,6 +68,12 @@ exit, offer change, relay Release, desktop switch.
   sides), Bluetooth-era settings fields and the probe/test scripts are removed.
   Pending hardware: a quick regression pass of typing, pointer, buttons, scroll,
   media keys and leaving the PC with a key or button held.
+- 2026-11-22 reboot check (cleanup builds): Ctrl+Alt+Delete works; after a restart
+  the Mac connects at the login screen and input works there; after sign-in
+  everything works. Edge return is unavailable before sign-in (no desktop worker
+  without a signed-in session; same as the Bluetooth builds on 2026-09-14), so the
+  hotkey is needed there. On the "Restarting" screen the Mac's pointer does not
+  work: Windows ends the session's helpers before that screen.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

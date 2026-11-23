@@ -115,8 +115,10 @@ link worker (`--link-worker`) inherits that identity in Session 0, runs discover
 and the control links on a dedicated STA message loop, and is isolated so the
 service can terminate it if it stalls. A Mac restart, sleep or
 network change can end the link; the worker reconnects when the Mac is found again.
-(Bluetooth builds confirmed control at the login screen after a Windows reboot on
-2026-09-14; the network-only link has not yet been checked there.)
+The network-only link was confirmed at the login screen after a Windows reboot on
+2026-11-22: the Mac connects before sign-in and the pointer, keys and Ctrl+Alt+Delete
+work there. Edge return is not available until someone signs in (it comes from the
+desktop worker, which runs in the signed-in session); use the Mac's hotkey.
 
 Windows may display its normal unsigned-app reputation prompt for this personal
 build. The EXE is built from this repository; no installer downloads or
