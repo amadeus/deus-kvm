@@ -34,6 +34,15 @@ DeusKVM controls your own Windows PC from your Mac. Reports are most useful for:
   behind elevated windows. Their named pipes are restricted to SYSTEM and, for
   the desktop worker, the console user; network access is denied, and the
   service checks each pipe client's process ID.
+- The service's control pipe (`\\.\pipe\DeusKVM.Control`), the tray's remote
+  control. SYSTEM and Administrators have full access and interactive (console)
+  users read/write; network clients are denied. It accepts one bounded JSON
+  request per connection: status or a status watch, saving a Mac chosen in Add
+  Mac, the service and tray startup preferences, and stopping the service, each
+  validated as the elevated command line validates it. Installing, updating and
+  removing still require elevation. The service's DACL also lets interactive
+  users start and stop it. The tray does not verify the pipe's server process, so
+  a local process that claimed the name before the service could answer it.
 - Clipboard sharing, including private clipboard markers and paste of files and
   screenshot images.
 

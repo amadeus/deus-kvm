@@ -15,6 +15,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly ToolStripMenuItem trayStartupItem = new("Show tray icon at sign-in");
     private readonly ToolStripMenuItem removeItem = new("Remove DeusKVM from this PC…");
     private readonly System.Windows.Forms.Timer refresh = new() { Interval = 2000 };
+    private readonly ServiceStatusWatch watch = new(); // live status from the service's control pipe
     private SettingsForm? settings;
     private bool busy;
     private int hiddenTicks;
@@ -42,11 +43,12 @@ internal sealed class TrayContext : ApplicationContext
         icon = new NotifyIcon { Icon = AppIcon.Image, Text = "DeusKVM Companion", ContextMenuStrip = menu, Visible = true };
         icon.DoubleClick += (_, _) => ShowSettings();
         menu.Opening += (_, _) => RefreshStatus();
+        watch.Changed += RefreshStatus;
         refresh.Tick += (_, _) =>
         {
             if (showSettings.WaitOne(0)) ShowSettings();
-            // SCM, registry and status.json reads: live while Settings is open, otherwise
-            // every 10 s for the tooltip (the menu refreshes as it opens).
+            // SCM and registry reads (the service pushes its own status): every 2 s while
+            // Settings is open, otherwise every 10 s for the tooltip (the menu refreshes as it opens).
             else if (settings is { IsDisposed: false, Visible: true } || ++hiddenTicks % 5 == 0) RefreshStatus();
         };
         refresh.Start();
@@ -59,7 +61,7 @@ internal sealed class TrayContext : ApplicationContext
         if (busy) return;
         busy = true;
         RefreshStatus();
-        try { await ServiceCommands.ElevateAsync(args); }
+        try { await ServiceRemote.RunAsync(args); }
         catch (Win32Exception error) when (error.NativeErrorCode == 1223) { }
         catch (Exception error) { ShowError(error); }
         finally { busy = false; RefreshStatus(); }
@@ -80,23 +82,23 @@ internal sealed class TrayContext : ApplicationContext
             automaticItem.Enabled = !busy;
             automaticItem.Checked = service.StartType == ServiceStartMode.Automatic;
             icon.Text = $"DeusKVM: {state}";
-            if (state == ServiceControllerStatus.Running)
-            {
-                var snapshot = JsonFiles.Read<ServiceSnapshot>(Paths.Status);
-                if (snapshot is not null && ServicePolicy.IsFresh(snapshot.UpdatedAt, DateTimeOffset.UtcNow))
-                    statusItem.Text = snapshot.Worker.DeviceName is { } name ? $"Active: {name}" : "Waiting for a Mac";
-            }
+            var snapshot = state == ServiceControllerStatus.Running ? CurrentStatus() : null;
+            if (snapshot is not null && ServicePolicy.IsFresh(snapshot.UpdatedAt, DateTimeOffset.UtcNow))
+                statusItem.Text = snapshot.Worker.DeviceName is { } name ? $"Active: {name}" : "Waiting for a Mac";
             settings?.RefreshControls(state, automaticItem.Checked, trayStartupItem.Checked, busy);
-            settings?.RefreshStatus(state.ToString());
+            settings?.RefreshStatus(state.ToString(), snapshot);
         }
         catch (Exception error) when (error is InvalidOperationException or Win32Exception or UnauthorizedAccessException or System.Security.SecurityException or IOException or System.Text.Json.JsonException)
         {
             statusItem.Text = "Service unavailable — reopen DeusKVM Companion to repair";
             startItem.Enabled = stopItem.Enabled = automaticItem.Enabled = false;
             settings?.RefreshControls(null, false, trayStartupItem.Checked, busy);
-            settings?.RefreshStatus("Not installed or inaccessible");
+            settings?.RefreshStatus("Not installed or inaccessible", null);
         }
     }
+
+    // The service's pushed status; status.json while it cannot answer (an older service).
+    private ServiceSnapshot? CurrentStatus() => watch.Live ? watch.Latest : JsonFiles.Read<ServiceSnapshot>(Paths.Status);
 
     private void ShowSettings()
     {
@@ -139,6 +141,7 @@ internal sealed class TrayContext : ApplicationContext
         if (disposing)
         {
             refresh.Dispose();
+            watch.Dispose();
             icon.Visible = false;
             icon.Dispose();
             settings?.Dispose();

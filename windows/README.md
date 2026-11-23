@@ -25,7 +25,8 @@ companion: Bluetooth builds of the Mac app cannot connect to it.
    scripts or .NET installation are needed. Existing service startup/running
    preferences are preserved.
 3. Choose **Add Mac…**. It lists the DeusKVM Macs it finds on the network; pick
-   your Mac's computer name and approve the administrator prompt. Repeat for each
+   your Mac's computer name; the running service saves it, with no administrator
+   prompt. Repeat for each
    Mac. Adding another Mac does not replace a connected active Mac. The service
    connects only to Macs added this way. The window shows **Active: …** and
    **Disabled or not allowed: …** after service verification.
@@ -142,8 +143,7 @@ measurements are recorded in [the size plan](../docs/WINDOWS_SIZE_PLAN.md).
 
 ## Window and tray controls
 
-- **Add Mac…:** choose a Mac found on the network and save it (administrator
-  prompt).
+- **Add Mac…:** choose a Mac found on the network and save it.
 - **Start Service:** start now.
 - **Stop Service:** stop the service now. Its connections to the Macs close, and
   a Mac that was controlling the PC takes its input back. Mac hotkey return
@@ -160,8 +160,13 @@ measurements are recorded in [the size plan](../docs/WINDOWS_SIZE_PLAN.md).
   If it fails, reopen the downloaded EXE to retry. Windows execution history remains.
 - **Quit Tray:** close the optional UI, leaving the service running.
 
-Service/configuration changes request administrator permission. Opening settings
-and viewing status do not. The tray's automatic-start checkbox reads actual
+The tray is a remote control for the service: it shows the service's status as
+it changes and sends Add Mac, the two startup checkboxes and Stop to the service
+over its local control pipe (`\\.\pipe\DeusKVM.Control`), and starts the service
+through Windows (the installer lets signed-in users start and stop it), so none of
+these ask for administrator permission. Only installing, updating, removing, and a
+change made while the service is stopped or still an older build (which falls back
+to one administrator prompt) do. The tray's automatic-start checkbox reads actual
 Windows service configuration, not a separate app preference.
 
 ## Signed-in edge checkpoint
@@ -250,8 +255,9 @@ automatically closes the previous companion, then opens the new window.
 Existing startup settings, added Macs and running/stopped state are
 preserved (Macs saved by Bluetooth builds must be added again).
 First installation starts the service with automatic startup enabled.
-The UI runs with the permissions of the user who opened it; only installation
-and service changes request administrator permission.
+The UI runs with the permissions of the user who opened it; only installation,
+updates and removal request administrator permission (settings go through the
+service's control pipe).
 
 Use the **Remove DeusKVM from this PC…** button/menu for removal. No separate
 uninstall script is needed. The Macs' lists of allowed PCs and the downloaded

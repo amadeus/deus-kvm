@@ -3,7 +3,7 @@ using DeusKVM.Companion.Core;
 namespace DeusKVM.Companion;
 
 // "Add Mac": lists the DeusKVM Macs Bonjour finds on the local network and saves the chosen
-// one (by its control-link id) through the elevated --configure command. The service then
+// one (by its control-link id) through the service's control pipe. The service then
 // connects to it; the Mac lists this PC once it connects, where Enable control finishes setup.
 internal sealed class ConnectMacForm : Form
 {
@@ -83,8 +83,9 @@ internal sealed class ConnectMacForm : Form
         {
             var settings = new CompanionSettings(choice.Id.ToString(), choice.Mac.Name);
             settings.Validate();
-            status.Text = "Saving your Mac… Approve the administrator prompt if requested.";
-            await ServiceCommands.ElevateAsync("--configure", ServiceCommands.EncodeSettings(settings));
+            status.Text = "Saving your Mac…";
+            // Through the running service; an administrator prompt only if it cannot answer.
+            await ServiceRemote.ConfigureAsync(settings);
             DialogResult = DialogResult.OK;
         }
         catch (Exception error) { status.Text = error.Message; }

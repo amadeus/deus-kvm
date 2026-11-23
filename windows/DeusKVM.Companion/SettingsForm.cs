@@ -67,7 +67,7 @@ internal sealed class SettingsForm : Form
         trayStartup.Enabled = connect.Enabled = remove.Enabled = !busy;
         trayStartup.Checked = trayAtLogin;
     }
-    public void RefreshStatus(string serviceState)
+    public void RefreshStatus(string serviceState, ServiceSnapshot? snapshot)
     {
         // Apply the final status before the content-sized form lays out again.
         SuspendLayout(); layout.SuspendLayout();
@@ -75,7 +75,6 @@ internal sealed class SettingsForm : Form
         {
             selected.Text = "Waiting for a Mac";
             state.Text = $"Service: {serviceState}";
-            var snapshot = JsonFiles.Read<ServiceSnapshot>(Paths.Status);
             if (serviceState != "Running" || snapshot is null) { detail.Text = "The DeusKVM service is not running."; return; }
             if (!ServicePolicy.IsFresh(snapshot.UpdatedAt, DateTimeOffset.UtcNow)) { detail.Text = "Waiting for a fresh service status…"; return; }
             selected.Text = snapshot.Worker.DeviceName is { } active ? $"Active: {active}" : "Waiting for a Mac";
@@ -85,8 +84,6 @@ internal sealed class SettingsForm : Form
                 selected.Text += $"\nDisabled or not allowed: {string.Join(", ", paused)}";
             detail.Text = $"Mac link: {snapshot.Worker.State}\n{snapshot.Worker.Detail}";
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-        { detail.Text = "Service status is temporarily unavailable."; }
         finally { layout.ResumeLayout(true); ResumeLayout(true); }
     }
 }
