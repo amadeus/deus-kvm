@@ -68,7 +68,9 @@ something still needs setting up.
 - Pointer motion and clicks go to Windows at the trackpad's own rate, keys as
   whole keyboard states (no six-key limit), plus media keys and scroll steps.
   Windows repeats held keys at its own keyboard delay and rate; Ctrl+Alt+Delete
-  and Win+L work through the companion's service. Windows edge return requests
+  (or Cmd+Option+Delete, for a PC with Ctrl and Win swapped) works through the
+  companion's service. Keys are injected untagged, so remappers such as PowerToys
+  Keyboard Manager apply to them as to a real keyboard. Windows edge return requests
   come back on the same stream. Switching to the PC waits until its input
   connection is up; if the link drops while you are on the PC, the Mac takes
   input back. With **Developer Mode** on, **Setup → Diagnostics** shows the link

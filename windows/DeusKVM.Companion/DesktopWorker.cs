@@ -414,7 +414,7 @@ internal sealed class DesktopWorker : ApplicationContext
 
     // A keyboard state, media key or scroll step from the stream. Keys are state: the difference
     // from the last record is injected, so a lost moment cannot leave a key held. Ctrl+Alt+Delete
-    // goes to the SYSTEM worker (only it can raise that screen); Win+L locks from here.
+    // goes to the SYSTEM worker (only it can raise that screen).
     private bool InjectKeys(InputEvent record, double now, long arrived)
     {
         lock (networkGate)
@@ -439,9 +439,6 @@ internal sealed class DesktopWorker : ApplicationContext
     {
         switch (action.Kind)
         {
-            case KeyActionKind.Lock:
-                if (!DesktopNative.LockWorkStation()) Note($"Win+L: LockWorkStation failed ({Marshal.GetLastWin32Error()})");
-                return true;
             case KeyActionKind.Sas:
                 if (RelayUsable(now) && pointer?.Enqueue(SecureInputRecord.SasRecord, arrived) == true) return true;
                 Note("Ctrl+Alt+Delete: the SYSTEM relay is not available");

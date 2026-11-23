@@ -80,7 +80,9 @@ Keys arrive as whole keyboard states; the desktop worker turns them into key pre
 and releases by scan code (so the PC's layout applies), repeats the newest held key
 at the Control Panel delay and rate, raises Ctrl+Alt+Delete through the SYSTEM
 worker (`SendSAS`, after setting the `SoftwareSASGeneration` policy to allow
-services) and locks for Win+L (`LockWorkStation`). Held keys are released whenever
+services; Win+Alt+Delete counts too, for a PC with Ctrl and Win swapped). Keys carry
+no extra info, so remappers such as PowerToys Keyboard Manager treat them like a real
+keyboard's (it skips events with bit 0 of the extra info set). Held keys are released whenever
 the stream or handoff ends.
 
 The Mac switches to the PC only once this stream is up. There is no other input

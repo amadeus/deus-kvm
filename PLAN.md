@@ -41,8 +41,8 @@ Pause and Num Lock by virtual key), repeats the newest held key itself at the
 Control Panel delay and rate (Windows does not repeat injected keys), maps media
 keys to their virtual keys and injects wheel/pan steps, all through the SYSTEM
 relay like the pointer. Ctrl+Alt+Delete is sent to the SYSTEM worker as `SendSAS`
-(it sets `SoftwareSASGeneration` to allow services first); Win+L calls
-`LockWorkStation`. Held keys are released with held buttons: stream drop, handoff
+(it sets `SoftwareSASGeneration` to allow services first); Win+Alt+Delete counts
+as well, for a PC with Ctrl and Win swapped in PowerToys. Held keys are released with held buttons: stream drop, handoff
 exit, offer change, relay Release, desktop switch.
 
 - Validation: Mac lint and 168 tests; companion solution builds; 233 companion
@@ -51,8 +51,15 @@ exit, offer change, relay Release, desktop switch.
   Bluetooth; every row of docs/KEYBOARD_COVERAGE.md; media and volume keys; scroll
   speed and both inversions; Ctrl+Alt+Delete raises the security screen (SendSAS
   from the console-session SYSTEM worker is unproven) and typing there, on the
-  login screen, in a UAC prompt and an elevated window; Win+L locks; pulling the
+  login screen, in a UAC prompt and an elevated window; pulling the
   network mid-keypress and crossing back with a key held leave nothing held.
+- 2026-11-22 hardware: typing, pointer and clipboard work. PowerToys' Ctrl/Win swap
+  and Alt shortcuts did not apply, because injected keys carried the mouse tag
+  `0x44455553`, whose bit 0 is PowerToys' own "injected by Keyboard Manager" flag.
+  Keys are now injected with no extra info. The Win+L intercept is gone: it read
+  the chord before PowerToys, so Command+L (Ctrl+L there) would have locked the PC.
+  Pending: PowerToys remaps apply; Ctrl+Alt+Delete (Cmd+Option+Delete) raises the
+  security screen.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

@@ -61,7 +61,7 @@ public sealed class KeyboardInputTests
     }
 
     [Fact]
-    public void CtrlAltDeleteAndWinLBecomeActionsWithoutTheirKey()
+    public void CtrlAltDeleteBecomesSasWithoutItsKey()
     {
         var state = new KeyboardState();
         state.Apply(LeftCtrl | LeftAlt, []);
@@ -76,9 +76,13 @@ public sealed class KeyboardInputTests
         state.ReleaseAll();
         Assert.Equal([Press(Usage(HidKeys.Delete))], state.Apply(0, [HidKeys.Delete]));
         state.ReleaseAll();
+        // Command+Option+Delete too: with Ctrl and Win swapped on the PC, Command is Ctrl there.
+        state.Apply(LeftGui | LeftAlt, []);
+        Assert.Equal([new KeyAction(KeyActionKind.Sas)], state.Apply(LeftGui | LeftAlt, [HidKeys.Delete]));
+        state.ReleaseAll();
+        // Win+L is typed like any chord, so a remapper on the PC sees it (Command+L as Ctrl+L).
         state.Apply(LeftGui, []);
-        Assert.Equal([new KeyAction(KeyActionKind.Lock)], state.Apply(LeftGui, [HidKeys.L]));
-        Assert.Equal([Release(HidKeys.Modifier(3))], state.Apply(0, []));
+        Assert.Equal([Press(Usage(0x0F))], state.Apply(LeftGui, [0x0F]));
     }
 
     [Fact]

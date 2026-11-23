@@ -41,10 +41,12 @@ internal static class DesktopNative
     private const uint KeyExtended = 0x0001, KeyUp = 0x0002, KeyScanCode = 0x0008;
 
     // A key from the Mac's keyboard state: by scan code normally, so the PC's layout applies.
+    // Untagged, like a real keyboard: remappers read dwExtraInfo (PowerToys skips any event with
+    // bit 0 set as its own, and the mouse tag has it), and nothing here needs to tell keys apart.
     internal static bool InjectKey(KeyStroke key, bool up)
     {
         var flags = (key.Extended ? KeyExtended : 0) | (up ? KeyUp : 0) | (key.ByScan ? KeyScanCode : 0);
-        var input = new Input { Type = 1, Data = new InputUnion { Key = new KeyInput { Vk = key.Vk, Scan = key.Scan, Flags = flags, Extra = (IntPtr)InjectTag } } };
+        var input = new Input { Type = 1, Data = new InputUnion { Key = new KeyInput { Vk = key.Vk, Scan = key.Scan, Flags = flags } } };
         return SendInput(1, [input], Marshal.SizeOf<Input>()) == 1;
     }
 
@@ -75,10 +77,6 @@ internal static class DesktopNative
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SystemParametersInfo(uint action, uint param, out int value, uint winIni);
 
-    // Win+L: Windows ignores an injected Win+L, so the desktop worker locks the session itself.
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool LockWorkStation();
     internal static double Milliseconds() => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
 
 

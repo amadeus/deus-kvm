@@ -12,9 +12,9 @@ public readonly record struct KeyStroke(ushort Vk, ushort Scan, bool Extended)
     public static KeyStroke Code(ushort scan, bool extended = false) => new(0, scan, extended);
 }
 
-public enum KeyActionKind : byte { Press, Release, Sas, Lock }
+public enum KeyActionKind : byte { Press, Release, Sas }
 
-/// <summary>What the keyboard state asks the injector to do; Sas and Lock carry no key.</summary>
+/// <summary>What the keyboard state asks the injector to do; Sas carries no key.</summary>
 public readonly record struct KeyAction(KeyActionKind Kind, KeyStroke Key = default);
 
 /// <summary>
@@ -23,7 +23,7 @@ public readonly record struct KeyAction(KeyActionKind Kind, KeyStroke Key = defa
 /// </summary>
 public static class HidKeys
 {
-    public const byte Delete = 0x4C, L = 0x0F;
+    public const byte Delete = 0x4C;
     // Modifier bits 0-7: left Ctrl, Shift, Alt, GUI, then right Ctrl, Shift, Alt, GUI.
     public const byte Ctrl = 0x11, Alt = 0x44, Gui = 0x88;
 
@@ -97,9 +97,11 @@ public static class HidKeys
 /// <summary>
 /// The PC's view of the Mac's keyboard: each record is the whole state, and this turns the
 /// difference from the last one into key actions in a safe order (releases, modifier changes,
-/// presses). Ctrl+Alt+Delete becomes <see cref="KeyActionKind.Sas"/> and Win+L
-/// <see cref="KeyActionKind.Lock"/>, because Windows ignores both when typed through SendInput;
-/// the Delete or L of those chords is never injected. Not thread-safe; the caller serializes.
+/// presses). Ctrl+Alt+Delete becomes <see cref="KeyActionKind.Sas"/>, because Windows ignores it
+/// when typed through SendInput, and its Delete is never injected. Win+Alt+Delete counts too: the
+/// chord is read before any remapper on the PC, so with Ctrl and Win swapped (PowerToys) the
+/// Command key the user presses as Ctrl arrives as Win. Win+L is left alone for the same reason
+/// (Command+L there means Ctrl+L). Not thread-safe; the caller serializes.
 /// </summary>
 public sealed class KeyboardState
 {
@@ -139,10 +141,8 @@ public sealed class KeyboardState
         foreach (var usage in keys)
         {
             if (usage <= 3 || held.Contains(usage) || swallowed.Contains(usage)) continue;
-            if (usage == HidKeys.Delete && (modifiers & HidKeys.Ctrl) != 0 && (modifiers & HidKeys.Alt) != 0)
+            if (usage == HidKeys.Delete && (modifiers & (HidKeys.Ctrl | HidKeys.Gui)) != 0 && (modifiers & HidKeys.Alt) != 0)
             { actions.Add(new KeyAction(KeyActionKind.Sas)); swallowed.Add(usage); continue; }
-            if (usage == HidKeys.L && (modifiers & HidKeys.Gui) != 0)
-            { actions.Add(new KeyAction(KeyActionKind.Lock)); swallowed.Add(usage); continue; }
             if (HidKeys.Key(usage) is not { } key) { swallowed.Add(usage); continue; }
             actions.Add(new KeyAction(KeyActionKind.Press, key));
             held.Add(usage);
