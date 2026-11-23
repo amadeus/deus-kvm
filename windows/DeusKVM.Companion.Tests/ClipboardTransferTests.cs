@@ -147,8 +147,6 @@ public sealed class ClipboardTransferTests
             LargestQueue = Math.Max(LargestQueue, Queue.Count);
             var packet = Queue.Dequeue();
             Assert.InRange(packet.Data.Length, 0, packet.Type == Protocol.Message.ClipData ? 1036 : 13);
-            var frames = new Protocol.Encoder().Encode(new(packet.Type == Protocol.Message.ClipData ? (byte)1 : (byte)0, (byte)packet.Type, packet.Data));
-            Assert.True(frames.Count < 64);
             (packet.ToB ? B : A).Receive(packet.Type, packet.Data, 0);
         }
         public void Pump()

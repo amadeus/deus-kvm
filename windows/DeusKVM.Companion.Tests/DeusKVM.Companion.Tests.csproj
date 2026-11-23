@@ -15,7 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../DeusKVM.Bootstrap/BundlePayload.cs" Link="BundlePayload.cs" />
-    <None Include="../../protocol/fixtures.json" Link="fixtures.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../protocol/file-network-fixtures.json" Link="file-network-fixtures.json" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../DeusKVM.Companion.Core/DeusKVM.Companion.Core.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

@@ -11,7 +11,7 @@ final class PolishTests: XCTestCase {
             XCTAssertEqual(entry.type, CompanionProtocol.Message.enter.rawValue)
             XCTAssertEqual(entry.payload, Data([7, 1, 57, 48]))
         }
-        let legacy = Data(#"{"v":1,"role":"pc","name":"Companion","chunk":20}"#.utf8)
+        let legacy = Data(#"{"v":1,"role":"pc","name":"Companion"}"#.utf8)
         XCTAssertNil(try JSONDecoder().decode(CompanionHello.self, from: legacy).center)
     }
 

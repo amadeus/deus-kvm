@@ -180,8 +180,6 @@ final class ClipboardTransferTests: XCTestCase {
             let type = message.type
             let bytes = message.bytes
             XCTAssertLessThanOrEqual(bytes.count, type == .clipData ? 1036 : 13)
-            var encoder = CompanionProtocol.Encoder()
-            XCTAssertLessThan(encoder.encode(.init(stream: type == .clipData ? 1 : 0, type: type.rawValue, payload: bytes)).count, 64)
             try (message.toPC ? pc : mac).receive(type, payload: bytes, now: 0)
         }
 

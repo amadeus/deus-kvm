@@ -81,7 +81,7 @@ final class CompanionService: ObservableObject {
         clients[id] = Client(token: token)
         subscribedHosts.insert(id)
         sendJSON(CompanionHello(
-            v: 1, role: "mac", name: Host.current().localizedName ?? "Mac", chunk: CompanionProtocol.maximumChunkSize,
+            v: 1, role: "mac", name: Host.current().localizedName ?? "Mac",
             clipboard: 1, files: 1, fileReceive: 1, fileNetwork: 1, images: 1,
             selection: 1, available: selection.available(to: id), availabilityEpoch: selection.epoch,
             takeover: true, requestControl: wantsControl

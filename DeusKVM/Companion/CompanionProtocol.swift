@@ -2,17 +2,8 @@ import Foundation
 
 enum CompanionProtocol {
     static let version = 1
-    /// Bootstrap and control frame size; HELLO negotiates larger bulk frames.
-    static let chunkSize = 20
-    /// One LE Data Length Extension packet: 251 bytes less L2CAP (4) and ATT (3) headers.
-    static let maximumChunkSize = 244
+    /// The largest message; each travels whole in one ControlLink frame.
     static let maximumPayload = 65536
-
-    /// HELLO `chunk` is what a side can receive. Bulk frames use the smaller of both
-    /// sides' limits only after both HELLOs, so older peers that send 20 keep 20.
-    static func frameLimit(_ attributeLength: Int) -> Int {
-        max(chunkSize, min(attributeLength, maximumChunkSize))
-    }
 
     enum Message: UInt8, Sendable {
         case hello = 0x01, ping = 0x02, pong = 0x03, screens = 0x04, config = 0x05
@@ -37,18 +28,7 @@ enum CompanionProtocol {
         let payload: Data
     }
 
-    enum Failure: Error { case malformed, sequence, checksum }
-
-    static func crc(_ data: Data) -> UInt32 {
-        var result = UInt32.max
-        for byte in data {
-            result ^= UInt32(byte)
-            for _ in 0 ..< 8 {
-                result = (result >> 1) ^ (result & 1 == 1 ? 0x82F6_3B78 : 0)
-            }
-        }
-        return ~result
-    }
+    enum Failure: Error { case malformed, sequence }
 
     static func u32(_ value: UInt32) -> Data {
         Data((0 ..< 4).map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) })
@@ -57,89 +37,12 @@ enum CompanionProtocol {
     static func read32(_ data: Data, _ offset: Int) -> UInt32 {
         (0 ..< 4).reduce(0) { $0 | UInt32(data[data.startIndex + offset + $1]) << ($1 * 8) }
     }
-
-    struct Encoder {
-        var sequence: UInt8 = 0
-        /// Grows only for the bulk stream; control packets always fit the 20-byte floor.
-        var chunkSize = CompanionProtocol.chunkSize
-        mutating func encode(_ packet: Packet) -> [Data] {
-            precondition(packet.payload.count <= maximumPayload && packet.stream <= 1 && (packet.stream != 0 || packet.payload.count <= 13))
-            precondition((CompanionProtocol.chunkSize ... maximumChunkSize).contains(chunkSize))
-            let firstCapacity = chunkSize - 7
-            let multi = packet.payload.count > firstCapacity
-            var offset = 0
-            var result: [Data] = []
-            var first = true
-            repeat {
-                let capacity = chunkSize - (first ? 7 : 2)
-                let remaining = packet.payload.count - offset
-                let last = multi ? !first && remaining <= capacity - 4 : true
-                let count = last ? remaining : min(capacity, first ? remaining : max(0, remaining - (chunkSize - 6)))
-                var frame = Data([sequence, packet.stream << 4 | (first ? 1 : 0) | (last ? 2 : 0)])
-                sequence &+= 1
-                if first { frame.append(packet.type); frame.append(u32(UInt32(packet.payload.count))) }
-                frame.append(packet.payload.subdata(in: offset ..< offset + count))
-                if last, multi { frame.append(u32(crc(packet.payload))) }
-                result.append(frame)
-                offset += count
-                first = false
-                if last { break }
-            } while true
-            return result
-        }
-    }
-
-    struct Decoder {
-        private var expected: UInt8?
-        private var partial: (stream: UInt8, type: UInt8)?
-        /// Appended in place; a copy held alongside it would copy the whole message per frame.
-        private var payload = Data()
-        private var length = 0
-        mutating func receive(_ frame: Data) throws -> Packet? {
-            let frame = Data(frame)
-            guard frame.count >= 2, frame.count <= maximumChunkSize, frame[1] & 0xCC == 0 else { throw Failure.malformed }
-            let first = frame[1] & 1 != 0
-            let last = frame[1] & 2 != 0
-            let stream = frame[1] >> 4
-            guard stream <= 1 else { throw Failure.malformed }
-            defer { expected = frame[0] &+ 1 }
-            if let expected, expected != frame[0] {
-                partial = nil
-                throw Failure.sequence
-            }
-            if first {
-                guard frame.count >= 7, partial == nil else { partial = nil; throw Failure.malformed }
-                length = Int(read32(frame, 3))
-                guard length <= maximumPayload else { throw Failure.malformed }
-                let body = frame.dropFirst(7)
-                if last {
-                    guard body.count == length else { throw Failure.malformed }
-                    return Packet(stream: stream, type: frame[2], payload: Data(body))
-                }
-                guard stream != 0, body.count <= length else { throw Failure.malformed }
-                partial = (stream, frame[2])
-                payload = Data(capacity: length)
-                payload.append(body)
-                return nil
-            }
-            guard let current = partial, current.stream == stream else { throw Failure.malformed }
-            guard !last || frame.count >= 6 else { partial = nil; throw Failure.malformed }
-            payload.append(frame[2 ..< frame.count - (last ? 4 : 0)])
-            guard payload.count <= length else { partial = nil; throw Failure.malformed }
-            guard last else { return nil }
-            partial = nil
-            guard payload.count == length else { throw Failure.malformed }
-            guard crc(payload) == read32(frame, frame.count - 4) else { throw Failure.checksum }
-            return Packet(stream: stream, type: current.type, payload: payload)
-        }
-    }
 }
 
 struct CompanionHello: Codable {
     let v: Int
     let role: String
     let name: String
-    let chunk: Int
     var resume: Bool?
     var center: Bool?
     var clipboard: Int?

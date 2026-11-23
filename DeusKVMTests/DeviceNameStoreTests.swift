@@ -8,9 +8,9 @@ final class DeviceNameStoreTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = DeviceNameStore(defaults: defaults)
         let pc = UUID(), other = UUID()
-        let old = Data(#"{"v":1,"role":"pc","name":"DeusKVM Companion","chunk":20}"#.utf8)
+        let old = Data(#"{"v":1,"role":"pc","name":"DeusKVM Companion"}"#.utf8)
         XCTAssertNil(try JSONDecoder().decode(CompanionHello.self, from: old).computerName)
-        let current = Data(#"{"v":1,"role":"pc","name":"DeusKVM Companion","chunk":20,"computerName":"Maingear"}"#.utf8)
+        let current = Data(#"{"v":1,"role":"pc","name":"DeusKVM Companion","computerName":"Maingear"}"#.utf8)
         let hello = try JSONDecoder().decode(CompanionHello.self, from: current)
         try store.rememberName(XCTUnwrap(hello.computerName), for: pc)
         XCTAssertEqual(store.name(for: pc), "Maingear")
