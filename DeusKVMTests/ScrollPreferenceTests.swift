@@ -6,19 +6,15 @@ final class ScrollPreferenceTests: XCTestCase {
         let suite = "DeusKVMTests.Scroll.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        var reports: [MouseReport] = []
+        let recorder = InputRecorder()
         let controller = DirectInputController(defaults: defaults)
-        controller.start(HIDInput(
-            sendMouse: { reports.append($0) }, sendKeyboard: { _ in }, sendConsumer: { _ in },
-            isActive: true, isConnected: true, activeError: nil
-        ))
+        controller.start(recorder.sink)
         defer { controller.stop() }
-        controller.handle(DirectInputEvent(kind: .mouseButton(.left, true), modifiers: []))
 
         func scroll(expectedWheel: Int8, expectedPan: Int8) {
-            reports.removeAll()
+            recorder.events.removeAll()
             controller.handle(DirectInputEvent(kind: .scroll(wheel: 127, pan: -127), modifiers: []))
-            XCTAssertEqual(reports, [MouseReport(buttons: .left, wheel: expectedWheel, pan: expectedPan)])
+            XCTAssertEqual(recorder.events, [.scroll(wheel: expectedWheel, pan: expectedPan)])
         }
 
         scroll(expectedWheel: 127, expectedPan: -127)

@@ -20,8 +20,8 @@ struct MediaKeyEvent {
         isDown = state == 0x0A
     }
 
-    /// NX_KEYTYPE_* -> USB HID Consumer usages. Holding a key remains a held report;
-    /// Windows handles repeat, as it does for an ordinary Bluetooth keyboard.
+    /// NX_KEYTYPE_* -> USB HID Consumer usages. A held key stays held on the PC until its
+    /// release; macOS's own repeats are not forwarded.
     private static let keys: [Int: ConsumerKey] = [
         0: .volumeUp, 1: .volumeDown, 2: .brightnessUp, 3: .brightnessDown,
         6: .power, 7: .mute, 14: .eject, 16: .playPause,

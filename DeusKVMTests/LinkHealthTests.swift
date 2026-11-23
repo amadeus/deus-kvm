@@ -58,42 +58,21 @@ final class LinkHealthTests: XCTestCase {
         XCTAssertEqual(pings.take().lost, 0, "cancel is not a loss")
     }
 
-    func testTransportStatsSplitsAnOngoingStallAcrossIntervals() {
-        let stats = TransportStats()
-        stats.sent(); stats.sent()
-        stats.transmitBlocked(at: 100)
-        stats.transmitBlocked(at: 100.2) // already stalled
-        stats.notification(rejected: true, merged: false, pending: 3)
-        stats.notification(merged: true, pending: 2)
-        stats.companionSent(bytes: 20)
-        stats.companionReceived(frames: 2, bytes: 40)
-        var interval = stats.takeInterval(now: 100.5)
-        XCTAssertEqual(interval.hidSent, 2)
-        XCTAssertEqual(interval.hidRejected, 1)
-        XCTAssertEqual(interval.hidMerged, 1)
-        XCTAssertEqual(interval.hidPending, 2)
-        XCTAssertEqual(interval.hidPendingMax, 3)
-        XCTAssertEqual(interval.stallMs, 500, accuracy: 0.01)
-        XCTAssertEqual(interval.stallMaxMs, 500, accuracy: 0.01)
-        XCTAssertEqual(interval.framesOut, 1)
-        XCTAssertEqual(interval.bytesOut, 20)
-        XCTAssertEqual(interval.framesIn, 2)
-        XCTAssertEqual(interval.bytesIn, 40)
-        XCTAssertEqual(stats.stallAge(now: 101) ?? 0, 1, accuracy: 0.001)
-        stats.transmitReady(at: 101.25)
-        interval = stats.takeInterval(now: 102)
-        XCTAssertEqual(interval.stallMs, 750, accuracy: 0.01, "only the time after the previous sample")
-        XCTAssertEqual(interval.stallMaxMs, 1250, accuracy: 0.01, "the whole stall")
-        XCTAssertEqual(interval.hidSent, 0)
-        XCTAssertNil(stats.stallAge(now: 102))
-        XCTAssertEqual(stats.takeInterval(now: 103).stallMs, 0)
+    func testInputQueueStatsCountEventsAndTheLongestWaitPerInterval() {
+        let stats = InputQueueStats()
+        stats.input(delay: 0.002)
+        stats.input(delay: 0.0075)
+        let interval = stats.takeInterval()
+        XCTAssertEqual(interval.events, 2)
+        XCTAssertEqual(interval.maxDispatchMs, 7.5, accuracy: 0.001)
+        XCTAssertEqual(stats.takeInterval(), InputQueueInterval(), "each interval starts empty")
     }
 
     func testSummaryAggregatesSamplesAndHistoryKeepsTheNewestInOrder() {
         func sample(_ second: Int, events: Int, lag: Double, rtt: Double) -> HealthSample {
             HealthSample(
                 date: Date(timeIntervalSinceReferenceDate: TimeInterval(second)), visible: 0, parked: second != 2, blind: [0],
-                transport: TransportInterval(events: events, hidSent: events, hidRejected: 1, stallMs: 10, stallMaxMs: 10),
+                queue: InputQueueInterval(events: events, maxDispatchMs: Double(events) / 10),
                 tap: TapStats.Interval(events: events, measured: events, lagSumMs: lag * Double(events), lagMaxMs: lag, warps: 0),
                 ping: PingTracker.Interval(replies: 1, rttSumMs: rtt, rttMaxMs: rtt, lost: 0)
             )
@@ -103,18 +82,18 @@ final class LinkHealthTests: XCTestCase {
         summary.add(sample(2, events: 30, lag: 6, rtt: 60))
         let line = summary.line
         for field in [
-            "samples=2", "notParked=1", "events=40", "hidSent=40", "hidRejected=2", "stallMs=20", "stallMaxMs=10",
+            "samples=2", "notParked=1", "events=40", "maxDispatchMs=3",
             "tapLagMaxMs=6.0", "tapLagAvgMs=5.0", "pings=2", "rttAvgMs=40.0", "rttMaxMs=60.0"
         ] {
             XCTAssertTrue(line.contains(field), "\(field) missing from \(line)")
         }
-        XCTAssertTrue(sample(1, events: 1, lag: 1, rtt: 1).line.hasPrefix("visible=0 parked=true events=1 maxDispatchMs=0"))
+        XCTAssertTrue(sample(1, events: 1, lag: 1, rtt: 1).line.hasPrefix("visible=0 parked=true events=1 maxDispatchMs=0 blind=[0]"))
 
         var history = HealthHistory(capacity: 3)
         for second in 1 ... 5 {
             history.append(sample(second, events: second, lag: 1, rtt: 1))
         }
-        XCTAssertEqual(history.samples.map(\.transport.events), [3, 4, 5])
+        XCTAssertEqual(history.samples.map(\.queue.events), [3, 4, 5])
     }
 
     func testWindowsReportMatchesOnlyTheAwaitedTokenOnce() {

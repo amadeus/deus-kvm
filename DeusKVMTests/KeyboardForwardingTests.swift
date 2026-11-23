@@ -3,15 +3,21 @@ import XCTest
 
 @MainActor
 final class KeyboardForwardingTests: XCTestCase {
-    private var reports: [KeyboardReport] = []
-    private var consumerReports: [ConsumerReport] = []
+    private var recorder = InputRecorder()
+    private var reports: [KeyboardReport] {
+        recorder.keyboard
+    }
+
+    private var consumerReports: [ConsumerKey] {
+        recorder.consumer
+    }
 
     func testControlAltDeleteFullPressAndReleaseSequence() throws {
         let controller = makeController()
         try send(controller, .flagsChanged, key: 0x3B, flags: [.maskControl])
         try send(controller, .flagsChanged, key: 0x3A, flags: [.maskControl, .maskAlternate])
         try send(controller, .keyDown, key: 0x75, flags: [.maskControl, .maskAlternate])
-        XCTAssertEqual(try Array(XCTUnwrap(reports.last).data), [5, 0, 0x4C, 0, 0, 0, 0, 0])
+        XCTAssertEqual(reports.last, KeyboardReport(modifiers: [.leftCtrl, .leftAlt], keys: [.deleteForward]))
         try send(controller, .keyUp, key: 0x75, flags: [.maskControl, .maskAlternate])
         try send(controller, .flagsChanged, key: 0x3A, flags: [.maskControl])
         try send(controller, .flagsChanged, key: 0x3B, flags: [])
@@ -72,13 +78,13 @@ final class KeyboardForwardingTests: XCTestCase {
         let controller = makeController()
         try media(controller, code: 0, down: true)
         try media(controller, code: 0, down: true, repeatEvent: true)
-        XCTAssertEqual(consumerReports, [ConsumerReport(key: .volumeUp)])
+        XCTAssertEqual(consumerReports, [.volumeUp])
         try media(controller, code: 0, down: false)
-        XCTAssertEqual(consumerReports.last, .zero)
+        XCTAssertEqual(consumerReports.last, ConsumerKey.none)
         try media(controller, code: 16, down: true)
         try send(controller, .keyDown, key: 0x75, flags: [.maskControl])
         controller.stop()
-        XCTAssertEqual(consumerReports.last, .zero)
+        XCTAssertEqual(consumerReports.last, ConsumerKey.none)
         XCTAssertEqual(reports.last, .zero)
     }
 
@@ -87,9 +93,9 @@ final class KeyboardForwardingTests: XCTestCase {
         try media(controller, code: 0, down: true)
         try media(controller, code: 1, down: true)
         try media(controller, code: 0, down: false)
-        XCTAssertEqual(consumerReports.last?.key, .volumeDown)
+        XCTAssertEqual(consumerReports.last, .volumeDown)
         try media(controller, code: 1, down: false)
-        XCTAssertEqual(consumerReports.last, .zero)
+        XCTAssertEqual(consumerReports.last, ConsumerKey.none)
     }
 
     func testMediaHoldDefersHandoffUntilRelease() {
@@ -101,27 +107,22 @@ final class KeyboardForwardingTests: XCTestCase {
         XCTAssertTrue(state.takeToggle())
     }
 
-    func testSixKeyRolloverRecoversWithoutLosingHeldKeys() throws {
+    func testEveryHeldKeyIsSentWithoutASixKeyLimit() throws {
         let controller = makeController()
         for key: UInt16 in [0, 1, 2, 3, 4, 5, 6] {
             try send(controller, .keyDown, key: key)
         }
-        XCTAssertEqual(try Array(XCTUnwrap(reports.last).data.suffix(6)), [1, 1, 1, 1, 1, 1])
+        XCTAssertEqual(reports.last?.keys.count, 7)
         try send(controller, .keyUp, key: 6)
         XCTAssertEqual(reports.last?.keys.count, 6)
-        XCTAssertFalse(try XCTUnwrap(reports.last).data.suffix(6).contains(1))
         controller.stop()
         XCTAssertEqual(reports.last, .zero)
     }
 
     private func makeController() -> DirectInputController {
-        reports = []
-        consumerReports = []
+        recorder = InputRecorder()
         let controller = DirectInputController()
-        controller.start(HIDInput(
-            sendMouse: { _ in }, sendKeyboard: { self.reports.append($0) }, sendConsumer: { self.consumerReports.append($0) },
-            isActive: true, isConnected: true, activeError: nil
-        ))
+        controller.start(recorder.sink)
         return controller
     }
 

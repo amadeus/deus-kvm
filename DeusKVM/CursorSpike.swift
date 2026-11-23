@@ -1,7 +1,7 @@
 import AppKit
 import ApplicationServices
 
-/// bounded in-process diagnostic; never starts Bluetooth or forwards input
+/// bounded in-process diagnostic; never connects to the PC or forwards input
 @MainActor
 final class CursorSpike {
     private static var active: CursorSpike?
@@ -20,7 +20,7 @@ final class CursorSpike {
         _log("AX=\(AXIsProcessTrusted()) post=\(CGPreflightPostEventAccess())")
         _log("frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "unknown")")
         tap = InputTap(output: { [weak self] event in self?._receive(event) }, forward: { [weak self] _, input, _ in
-            guard case .mouseMove = input.kind else { return }
+            guard case .motion = input.kind else { return }
             Task { @MainActor in self?.motions += 1 }
         })
         tap?.configure(TapConfiguration(

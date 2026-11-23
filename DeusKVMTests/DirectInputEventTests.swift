@@ -9,7 +9,7 @@ final class DirectInputEventTests: XCTestCase {
         let input = try XCTUnwrap(DirectInputEvent(type: .keyDown, event: event))
         guard case let .keyDown(key) = input.kind else { return XCTFail("Expected key down") }
         XCTAssertEqual(key, .deleteForward)
-        XCTAssertEqual(Array(KeyboardReport(modifiers: input.modifiers, keys: [key]).data), [5, 0, 0x4C, 0, 0, 0, 0, 0])
+        XCTAssertEqual(input.modifiers, [.leftCtrl, .leftAlt], "Fn is not a modifier Windows sees")
     }
 
     func testForwardDeleteReleaseStillMapsAfterModifiersAreReleased() throws {
@@ -27,7 +27,7 @@ final class DirectInputEventTests: XCTestCase {
         let input = try XCTUnwrap(DirectInputEvent(type: .keyDown, event: event))
         guard case let .keyDown(key) = input.kind else { return XCTFail("Expected key down") }
         XCTAssertEqual(key, .backspace)
-        XCTAssertEqual(Array(KeyboardReport(modifiers: input.modifiers, keys: [key]).data), [5, 0, 0x2A, 0, 0, 0, 0, 0])
+        XCTAssertEqual(input.modifiers, [.leftCtrl, .leftAlt])
     }
 
     func testHorizontalOnlyScrollSurvivesAndUsesHIDDirection() throws {

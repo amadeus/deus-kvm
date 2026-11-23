@@ -19,7 +19,7 @@ struct InputNetworkOffer: Codable, Sendable, Equatable {
     let key: String
 }
 
-/// What the stream can do for the tap right now.
+/// What the stream can do right now.
 enum NetworkCarrier: Sendable, Equatable {
     /// No connection: input cannot reach the PC (capture waits for the stream).
     case down

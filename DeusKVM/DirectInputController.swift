@@ -2,74 +2,51 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-/// Translates captured input into HID reports; during capture it runs on the Bluetooth queue.
+/// Turns captured input into input-stream events; during capture it runs on the input queue.
+/// Input the stream cannot carry right now is dropped: each keyboard and media-key event is the
+/// whole state, so the next one after the stream recovers brings the PC up to date.
 final class DirectInputController {
     private(set) var isCapturing = false
 
     private let defaults: UserDefaults
+    private var sink: InputSink?
     private var pressedKeys: Set<Keycode> = []
-    private var pressedMouseButtons: MouseButtons = []
     private var modifiers: KeyboardModifiers = []
-
-    private var sendKeyboard: ((KeyboardReport) -> Void)?
     private var capsLock = false
     private var pressedConsumerKeys: [ConsumerKey] = []
-    private var sendConsumer: ((ConsumerReport) -> Void)?
-    private var sendMouse: ((MouseReport) -> Void)?
     private var scroll = ScrollAccumulator()
-    private var sendNetwork: ((NetworkInputEvent) -> Void)?
-    private var networkReady: (() -> Bool)?
-    private var networkKeysReady: (() -> Bool)?
-    /// Buttons pressed over the network stream, released there when capture stops.
-    private var networkButtons: MouseButtons = []
-    /// Where the last keyboard and media-key reports went (nil: none yet this session). Each
-    /// report is the whole state, so a carrier change sends the old carrier an empty report and
-    /// the new one everything held.
-    private var keyboardOnNetwork: Bool?
-    private var consumerOnNetwork: Bool?
+    /// Buttons pressed over the stream, released there when capture stops.
+    private var sentButtons: MouseButtons = []
+    /// Whether a keyboard or media-key state went out this session, so stopping clears it.
+    private var keyboardSent = false
+    private var consumerSent = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
-    /// retains the upstream report translation; tap and cursor lifetime belong to the coordinator
-    func start(_ hid: HIDInput) {
+    /// Retains the stream for this session; tap and cursor lifetime belong to the coordinator.
+    func start(_ sink: InputSink) {
         stop()
-        sendKeyboard = hid.sendKeyboard
-        sendMouse = hid.sendMouse
-        sendConsumer = hid.sendConsumer
-        sendNetwork = hid.sendNetwork
-        networkReady = hid.networkReady
-        networkKeysReady = hid.networkKeysReady
-        keyboardOnNetwork = nil
-        consumerOnNetwork = nil
+        self.sink = sink
         capsLock = CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift)
         scroll.reset()
         isCapturing = true
     }
 
     func stop() {
+        for button: MouseButtons in [.left, .right, .middle] where sentButtons.contains(button) {
+            sink?.send(.button(button, false))
+        }
+        if keyboardSent { sink?.send(.keyboard(.zero)) }
+        if consumerSent { sink?.send(.consumer(.none)) }
         pressedKeys.removeAll()
         pressedConsumerKeys.removeAll()
-        pressedMouseButtons = []
         modifiers = []
-        sendKeyboard?(.zero)
-        sendMouse?(.zero)
-        sendConsumer?(.zero)
-        for button: MouseButtons in [.left, .right, .middle] where networkButtons.contains(button) {
-            sendNetwork?(.button(button, false))
-        }
-        if keyboardOnNetwork == true { sendNetwork?(.keyboard(.zero)) }
-        if consumerOnNetwork == true { sendNetwork?(.consumer(.none)) }
-        keyboardOnNetwork = nil
-        consumerOnNetwork = nil
-        networkButtons = []
-        sendNetwork = nil
-        networkReady = nil
-        networkKeysReady = nil
-        sendKeyboard = nil
-        sendMouse = nil
-        sendConsumer = nil
+        sentButtons = []
+        keyboardSent = false
+        consumerSent = false
+        sink = nil
         isCapturing = false
     }
 
@@ -81,34 +58,30 @@ final class DirectInputController {
         switch event.kind {
         case let .keyDown(key):
             pressedKeys.insert(key)
-            sendKeyboardReport()
+            sendKeyboard()
         case let .keyUp(key):
             pressedKeys.remove(key)
-            sendKeyboardReport()
+            sendKeyboard()
         case let .flagsChanged(currentCapsLock):
             if capsLock != currentCapsLock {
                 capsLock = currentCapsLock
                 // Caps Lock arrives as a latched flag, not an ordinary down/up pair.
                 // Forward each latch transition as one physical press and release.
                 pressedKeys.insert(.capsLock)
-                sendKeyboardReport()
+                sendKeyboard()
                 pressedKeys.remove(.capsLock)
             }
-            sendKeyboardReport()
+            sendKeyboard()
         case let .consumer(key, down):
             let previous = pressedConsumerKeys.last
             pressedConsumerKeys.removeAll { $0 == key }
             if down { pressedConsumerKeys.append(key) }
             let current = pressedConsumerKeys.last
-            if previous != current { sendConsumerKey(current ?? .none) }
-        case let .mouseMove(dx, dy):
-            mouseMove(dx, dy)
-        case let .mouseButton(button, isDown):
-            mouseButton(button, isDown)
-        case let .networkMove(dx, dy):
-            networkMove(dx, dy)
-        case let .networkButton(button, isDown):
-            networkButton(button, isDown)
+            if previous != current { sendConsumer(current ?? .none) }
+        case let .motion(dx, dy):
+            if sink?.pointerReady() == true { sink?.send(.motion(dx, dy)) }
+        case let .button(button, isDown):
+            self.button(button, isDown)
         case let .scroll(wheel, pan):
             // Read on each scroll so settings changes apply during capture too.
             let speed = defaults.object(forKey: AppSettings.scrollSpeedKey) as? Double ?? ScrollAccumulator.defaultSpeed
@@ -116,72 +89,36 @@ final class DirectInputController {
             // Source deltas are clamped to -127...127, so negation is safe.
             let vertical = defaults.bool(forKey: AppSettings.invertVerticalScrollKey) ? -scaled.wheel : scaled.wheel
             let horizontal = defaults.bool(forKey: AppSettings.invertHorizontalScrollKey) ? -scaled.pan : scaled.pan
-            guard vertical != 0 || horizontal != 0 else { return }
-            if networkKeysReady?() == true {
-                sendNetwork?(.scroll(wheel: vertical, pan: horizontal))
-                return
-            }
-            // Wheel and pan are relative: one report per step. A trailing zero report doubled
-            // scroll traffic and filled CoreBluetooth's queue; reads never replay relative fields.
-            sendMouse?(MouseReport(buttons: pressedMouseButtons, wheel: vertical, pan: horizontal))
+            guard vertical != 0 || horizontal != 0, sink?.keysReady() == true else { return }
+            sink?.send(.scroll(wheel: vertical, pan: horizontal))
         }
     }
 
-    /// The report carries 8-bit deltas; larger steps lose the excess, as they always did.
-    private func mouseMove(_ dx: Int32, _ dy: Int32) {
-        sendMouse?(MouseReport(buttons: pressedMouseButtons, dX: Self.clamp(dx), dY: Self.clamp(dy)))
-    }
-
-    /// The stream may have dropped since the tap decided: Bluetooth carries the event then.
-    private func networkMove(_ dx: Int32, _ dy: Int32) {
-        if networkReady?() == true { sendNetwork?(.motion(dx, dy)) } else { mouseMove(dx, dy) }
-    }
-
-    private func networkButton(_ button: MouseButtons, _ isDown: Bool) {
-        if isDown, networkReady?() == true {
-            networkButtons.insert(button)
-            sendNetwork?(.button(button, true))
-        } else if !isDown, networkButtons.contains(button) {
-            networkButtons.remove(button)
-            sendNetwork?(.button(button, false))
-        } else {
-            mouseButton(button, isDown)
+    /// A release follows its press even if the stream has since stalled (the stream drops it
+    /// while down, and the PC releases everything when the stream ends).
+    private func button(_ button: MouseButtons, _ isDown: Bool) {
+        if isDown, sink?.pointerReady() == true {
+            sentButtons.insert(button)
+            sink?.send(.button(button, true))
+        } else if !isDown, sentButtons.contains(button) {
+            sentButtons.remove(button)
+            sink?.send(.button(button, false))
         }
     }
 
-    private static func clamp(_ value: Int32) -> Int8 {
-        Int8(max(-127, min(127, value)))
-    }
-
-    private func mouseButton(_ button: MouseButtons, _ isDown: Bool) {
-        if isDown {
-            pressedMouseButtons.insert(button)
-        } else {
-            pressedMouseButtons.remove(button)
-        }
-        sendMouse?(MouseReport(buttons: pressedMouseButtons))
-    }
-
-    private func sendKeyboardReport() {
+    private func sendKeyboard() {
+        guard sink?.keysReady() == true else { return }
         // QMK KC_MENU is Keyboard Menu (0x76), not KC_APP (0x65). Windows
         // supports the latter as its context-menu key. Keep physical identities
         // in pressedKeys so releasing either source cannot release the other.
         let keys = Set(pressedKeys.map { $0 == .menu ? .application : $0 })
-        let report = KeyboardReport(modifiers: modifiers, keys: keys.sorted { $0.rawValue < $1.rawValue })
-        let network = networkKeysReady?() == true
-        if let previous = keyboardOnNetwork, previous != network {
-            if previous { sendNetwork?(.keyboard(.zero)) } else { sendKeyboard?(.zero) }
-        }
-        keyboardOnNetwork = network
-        if network { sendNetwork?(.keyboard(report)) } else { sendKeyboard?(report) }
+        sink?.send(.keyboard(KeyboardReport(modifiers: modifiers, keys: keys.sorted { $0.rawValue < $1.rawValue })))
+        keyboardSent = true
     }
 
-    private func sendConsumerKey(_ key: ConsumerKey) {
-        let network = networkKeysReady?() == true
-        if let previous = consumerOnNetwork, previous != network {
-            if previous { sendNetwork?(.consumer(.none)) } else { sendConsumer?(.zero) }
-        }
-        consumerOnNetwork = network
-        if network { sendNetwork?(.consumer(key)) } else { sendConsumer?(ConsumerReport(key: key)) }
+    private func sendConsumer(_ key: ConsumerKey) {
+        guard sink?.keysReady() == true else { return }
+        sink?.send(.consumer(key))
+        consumerSent = true
     }
 }

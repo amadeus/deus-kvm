@@ -7,14 +7,10 @@ struct DirectInputEvent: Sendable {
         case keyUp(Keycode)
         case flagsChanged(capsLock: Bool)
         case consumer(ConsumerKey, down: Bool)
-        /// Pointer deltas as macOS reported them; the Bluetooth mouse report clamps them to 8 bits.
-        case mouseMove(Int32, Int32)
-        case mouseButton(MouseButtons, Bool)
+        /// Pointer deltas as macOS reported them (the stream carries them unclamped).
+        case motion(Int32, Int32)
+        case button(MouseButtons, Bool)
         case scroll(wheel: Int8, pan: Int8)
-        /// Pointer motion and buttons the tap routed to the local-network stream; the
-        /// controller sends them over Bluetooth instead if the stream is not up.
-        case networkMove(Int32, Int32)
-        case networkButton(MouseButtons, Bool)
     }
 
     let kind: Kind
@@ -28,15 +24,15 @@ struct DirectInputEvent: Sendable {
     /// Motion and scroll hold no state on the host, so losing one cannot leave anything pressed.
     var isRelative: Bool {
         switch kind {
-        case .mouseMove, .scroll, .networkMove: true
+        case .motion, .scroll: true
         default: false
         }
     }
 
-    /// Pointer input the tap routed to the local-network stream.
-    var isNetworkPointer: Bool {
+    /// Pointer motion and buttons, the bulk of captured input.
+    var isPointer: Bool {
         switch kind {
-        case .networkMove, .networkButton: true
+        case .motion, .button: true
         default: false
         }
     }
@@ -69,10 +65,10 @@ struct DirectInputEvent: Sendable {
             let dx = Int32(clamping: event.getIntegerValueField(.mouseEventDeltaX))
             let dy = Int32(clamping: event.getIntegerValueField(.mouseEventDeltaY))
             guard dx != 0 || dy != 0 else { return nil }
-            kind = .mouseMove(dx, dy)
+            kind = .motion(dx, dy)
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
             guard let button = Self.mouseButton(for: type) else { return nil }
-            kind = .mouseButton(button.0, button.1)
+            kind = .button(button.0, button.1)
         case .scrollWheel:
             let wheel = Self.clampInt8(event.getIntegerValueField(.scrollWheelEventDeltaAxis1))
             // Quartz's horizontal direction is opposite HID AC Pan / Windows.

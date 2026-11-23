@@ -2,12 +2,12 @@ import XCTest
 
 final class CaptureReadinessTests: XCTestCase {
     func testControlsOpenAtLaunchOnlyWhileSomethingNeedsSettingUp() {
-        XCTAssertFalse(LaunchWindowPolicy.shouldOpen(accessibility: true, inputMonitoring: true, pairedPC: true))
-        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(accessibility: false, inputMonitoring: true, pairedPC: true))
-        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(accessibility: true, inputMonitoring: false, pairedPC: true))
+        XCTAssertFalse(LaunchWindowPolicy.shouldOpen(accessibility: true, inputMonitoring: true, allowedPC: true))
+        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(accessibility: false, inputMonitoring: true, allowedPC: true))
+        XCTAssertTrue(LaunchWindowPolicy.shouldOpen(accessibility: true, inputMonitoring: false, allowedPC: true))
         XCTAssertTrue(
-            LaunchWindowPolicy.shouldOpen(accessibility: true, inputMonitoring: true, pairedPC: false),
-            "no PC paired yet"
+            LaunchWindowPolicy.shouldOpen(accessibility: true, inputMonitoring: true, allowedPC: false),
+            "no PC allowed yet"
         )
     }
 

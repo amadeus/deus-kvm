@@ -64,7 +64,7 @@ enum LaunchWindow {
         LaunchWindowPolicy.shouldOpen(
             accessibility: AccessibilityPermission.isTrusted,
             inputMonitoring: KeyboardMonitoringPermission.isGranted,
-            pairedPC: !(UserDefaults.standard.stringArray(forKey: AppSettings.allowedHostsKey) ?? []).isEmpty
+            allowedPC: !(UserDefaults.standard.stringArray(forKey: AppSettings.allowedHostsKey) ?? []).isEmpty
         )
     }
 

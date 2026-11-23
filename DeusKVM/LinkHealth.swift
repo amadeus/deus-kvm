@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 /// Time from an input event's creation to the tap forwarding it. A slow tap callback makes
-/// the window server queue events behind it; the Bluetooth-queue delay cannot see that.
+/// the window server queue events behind it; the input queue's delay cannot see that.
 enum EventLag {
     private static let timebase: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
@@ -146,23 +146,32 @@ struct PingTracker {
     }
 }
 
-/// One Bluetooth-queue interval from `TransportStats`.
-struct TransportInterval: Equatable {
+/// Events the input queue forwarded and the longest wait from capture to forwarding (the tap
+/// thread to `InputPipeline`), counted on the input queue and sampled on the main thread.
+final class InputQueueStats: @unchecked Sendable {
+    private let lock = NSLock()
+    private var interval = InputQueueInterval()
+
+    func input(delay: TimeInterval) {
+        lock.withLock {
+            interval.events += 1
+            interval.maxDispatchMs = max(interval.maxDispatchMs, delay * 1000)
+        }
+    }
+
+    /// Counters since the previous call.
+    func takeInterval() -> InputQueueInterval {
+        lock.withLock {
+            defer { interval = InputQueueInterval() }
+            return interval
+        }
+    }
+}
+
+/// One interval from `InputQueueStats`.
+struct InputQueueInterval: Equatable {
     var events = 0
     var maxDispatchMs = 0.0
-    var hidSent = 0
-    var hidRejected = 0
-    var hidMerged = 0
-    var hidPending = 0
-    var hidPendingMax = 0
-    var stallMs = 0.0
-    var stallMaxMs = 0.0
-    var framesOut = 0
-    var bytesOut = 0
-    var framesIn = 0
-    var bytesIn = 0
-    var companionQueued = 0
-    var companionBlocked = false
 }
 
 /// One per-second capture health sample while controlling Windows.
@@ -171,21 +180,17 @@ struct HealthSample {
     var visible: Int32
     var parked: Bool
     var blind: [UInt8]
-    var transport: TransportInterval
+    var queue: InputQueueInterval
     var tap: TapStats.Interval
     var ping: PingTracker.Interval
 
     /// Keeps the original capture health fields first so older log readings still apply.
     var line: String {
-        let link = transport
         let lagAverage = Self.average(tap.lagSumMs, tap.measured)
         let fields: [String] = [
-            "visible=\(visible)", "parked=\(parked)", "events=\(link.events)", "maxDispatchMs=\(Int(link.maxDispatchMs))",
-            "queued=\(link.companionQueued)", "blocked=\(link.companionBlocked)", "blind=\(blind)",
-            "hidPending=\(link.hidPending)", "hidRejected=\(link.hidRejected)", "hidMerged=\(link.hidMerged)",
-            "hidSent=\(link.hidSent)", "stallMs=\(Int(link.stallMs))", "stallMaxMs=\(Int(link.stallMaxMs))",
+            "visible=\(visible)", "parked=\(parked)", "events=\(queue.events)", "maxDispatchMs=\(Int(queue.maxDispatchMs))",
+            "blind=\(blind)",
             "tapLagMaxMs=\(Self.ms(tap.lagMaxMs))", "tapLagAvgMs=\(Self.ms(lagAverage))", "warps=\(tap.warps)",
-            "compOut=\(link.framesOut)/\(link.bytesOut)", "compIn=\(link.framesIn)/\(link.bytesIn)",
             "rttMaxMs=\(Self.ms(ping.rttMaxMs))", "pingLost=\(ping.lost)",
             "motion=\(tap.motion)", "motionGapAvgMs=\(Self.ms(Self.average(tap.motionGapSumMs, tap.motionGaps)))",
             "motionGapMaxMs=\(Self.ms(tap.motionGapMaxMs))"
@@ -205,7 +210,7 @@ struct HealthSample {
 /// Per-minute aggregate written to the diagnostics file while controlling Windows.
 struct HealthSummary {
     private(set) var samples = 0
-    private var transport = TransportInterval()
+    private var queue = InputQueueInterval()
     private var parkedMisses = 0
     private var tap = TapStats.Interval()
     private var ping = PingTracker.Interval()
@@ -213,20 +218,8 @@ struct HealthSummary {
     mutating func add(_ sample: HealthSample) {
         samples += 1
         if !sample.parked { parkedMisses += 1 }
-        let link = sample.transport
-        transport.events += link.events
-        transport.maxDispatchMs = max(transport.maxDispatchMs, link.maxDispatchMs)
-        transport.hidSent += link.hidSent
-        transport.hidRejected += link.hidRejected
-        transport.hidMerged += link.hidMerged
-        transport.hidPendingMax = max(transport.hidPendingMax, link.hidPendingMax, link.hidPending)
-        transport.stallMs += link.stallMs
-        transport.stallMaxMs = max(transport.stallMaxMs, link.stallMaxMs)
-        transport.framesOut += link.framesOut
-        transport.bytesOut += link.bytesOut
-        transport.framesIn += link.framesIn
-        transport.bytesIn += link.bytesIn
-        transport.companionQueued = max(transport.companionQueued, link.companionQueued)
+        queue.events += sample.queue.events
+        queue.maxDispatchMs = max(queue.maxDispatchMs, sample.queue.maxDispatchMs)
         tap.events += sample.tap.events
         tap.measured += sample.tap.measured
         tap.lagSumMs += sample.tap.lagSumMs
@@ -243,17 +236,13 @@ struct HealthSummary {
     }
 
     var line: String {
-        let link = transport
         let lagAverage = HealthSample.average(tap.lagSumMs, tap.measured)
         let rttAverage = HealthSample.average(ping.rttSumMs, ping.replies)
         let fields: [String] = [
-            "samples=\(samples)", "notParked=\(parkedMisses)", "events=\(link.events)",
-            "maxDispatchMs=\(Int(link.maxDispatchMs))", "tapEvents=\(tap.events)",
+            "samples=\(samples)", "notParked=\(parkedMisses)", "events=\(queue.events)",
+            "maxDispatchMs=\(Int(queue.maxDispatchMs))", "tapEvents=\(tap.events)",
             "tapLagMaxMs=\(HealthSample.ms(tap.lagMaxMs))", "tapLagAvgMs=\(HealthSample.ms(lagAverage))", "warps=\(tap.warps)",
-            "hidSent=\(link.hidSent)", "hidRejected=\(link.hidRejected)", "hidMerged=\(link.hidMerged)",
-            "hidPendingMax=\(link.hidPendingMax)", "stallMs=\(Int(link.stallMs))", "stallMaxMs=\(Int(link.stallMaxMs))",
-            "compOut=\(link.framesOut)/\(link.bytesOut)", "compIn=\(link.framesIn)/\(link.bytesIn)",
-            "companionQueuedMax=\(link.companionQueued)", "pings=\(ping.replies)",
+            "pings=\(ping.replies)",
             "rttAvgMs=\(HealthSample.ms(rttAverage))", "rttMaxMs=\(HealthSample.ms(ping.rttMaxMs))", "pingLost=\(ping.lost)",
             "motion=\(tap.motion)", "motionGapAvgMs=\(HealthSample.ms(HealthSample.average(tap.motionGapSumMs, tap.motionGaps)))",
             "motionGapMaxMs=\(HealthSample.ms(tap.motionGapMaxMs))"

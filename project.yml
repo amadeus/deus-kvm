@@ -52,7 +52,7 @@ targets:
     platform: macOS
     sources:
       - DeusKVMTests
-      - DeusKVM/LowEnergy/HIDReports.swift
+      - DeusKVM/HIDUsages.swift
       - DeusKVM/DirectInputEvent.swift
       - DeusKVM/MacKeyboardMapping.swift
       - DeusKVM/RawKeyboardState.swift
@@ -61,7 +61,7 @@ targets:
       - DeusKVM/InputGate.swift
       - DeusKVM/AppSettings.swift
       - DeusKVM/DeviceNameStore.swift
-      - DeusKVM/HIDInputValue.swift
+      - DeusKVM/InputSink.swift
       - DeusKVM/EdgeGeometry.swift
       - DeusKVM/ReturnMotionProbe.swift
       - DeusKVM/HandoffState.swift
@@ -88,9 +88,7 @@ targets:
       - DeusKVM/DiagnosticsLog.swift
       - DeusKVM/LinkHealth.swift
       - DeusKVM/DeviceEntry.swift
-      - DeusKVM/LowEnergy/TransportStats.swift
       - DeusKVM/TrackpadGesture.swift
-      - DeusKVM/PointerRouting.swift
       - DeusKVM/ScrollAccumulator.swift
       - DeusKVM/NetworkInput.swift
     settings:

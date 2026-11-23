@@ -54,7 +54,7 @@ struct CaptureReadiness {
 /// Whether the controls window should open when DeusKVM launches: only while a permission is
 /// missing or no Windows PC has been allowed yet.
 enum LaunchWindowPolicy {
-    static func shouldOpen(accessibility: Bool, inputMonitoring: Bool, pairedPC: Bool) -> Bool {
-        !(accessibility && inputMonitoring && pairedPC)
+    static func shouldOpen(accessibility: Bool, inputMonitoring: Bool, allowedPC: Bool) -> Bool {
+        !(accessibility && inputMonitoring && allowedPC)
     }
 }

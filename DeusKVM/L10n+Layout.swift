@@ -2,20 +2,12 @@ import SwiftUI
 
 extension L10n {
     enum Layout {
-        static var title: LocalizedStringKey {
-            "layout.title"
-        }
-
         static var local: LocalizedStringKey {
             "layout.local"
         }
 
         static var remote: LocalizedStringKey {
             "layout.remote"
-        }
-
-        static var targetHint: LocalizedStringKey {
-            "layout.target_hint"
         }
 
         static var noTarget: LocalizedStringKey {

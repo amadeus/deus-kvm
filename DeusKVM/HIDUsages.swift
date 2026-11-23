@@ -1,36 +1,9 @@
 import Foundation
 
-struct MouseReport: Sendable, Equatable {
-    var buttons: MouseButtons = []
-    var dX: Int8 = 0
-    var dY: Int8 = 0
-    var wheel: Int8 = 0
-    var pan: Int8 = 0
+// The HID usages the input stream carries: keys (page 0x07), modifier bits and media keys
+// (page 0x0C), the same codes a USB keyboard reports and Windows maps to scan codes.
 
-    static let zero = MouseReport()
-
-    var data: Data {
-        Data([
-            buttons.rawValue,
-            UInt8(bitPattern: dX),
-            UInt8(bitPattern: dY),
-            UInt8(bitPattern: wheel),
-            UInt8(bitPattern: pan)
-        ])
-    }
-
-    /// Boot protocol carries only buttons and X/Y, without either scroll axis.
-    var bootData: Data {
-        Data([buttons.rawValue, UInt8(bitPattern: dX), UInt8(bitPattern: dY)])
-    }
-
-    /// What a read or new subscription may see: X/Y, wheel and pan are relative and
-    /// must not be applied twice, so only the held buttons persist.
-    var held: MouseReport {
-        MouseReport(buttons: buttons)
-    }
-}
-
+/// Pointer buttons, as the input stream's button records name them.
 struct MouseButtons: OptionSet, Sendable, Equatable {
     let rawValue: UInt8
     static let left = MouseButtons(rawValue: 1 << 0)
@@ -38,28 +11,12 @@ struct MouseButtons: OptionSet, Sendable, Equatable {
     static let middle = MouseButtons(rawValue: 1 << 2)
 }
 
+/// The whole keyboard state the Mac sends: modifier bits and every held key (no rollover limit).
 struct KeyboardReport: Sendable, Equatable {
     var modifiers: KeyboardModifiers = []
     var keys: [Keycode] = []
 
     static let zero = KeyboardReport()
-
-    var data: Data {
-        var bytes = [UInt8](repeating: 0, count: 8)
-        bytes[0] = modifiers.rawValue
-        // bytes[1] reserved
-        if keys.count > 6 {
-            // Standard six-key rollover report: never pretend an arbitrary subset is held.
-            for i in 2 ..< 8 {
-                bytes[i] = 0x01
-            }
-        } else {
-            for (i, key) in keys.enumerated() {
-                bytes[2 + i] = key.rawValue
-            }
-        }
-        return Data(bytes)
-    }
 }
 
 struct KeyboardModifiers: OptionSet, Sendable, Equatable {
@@ -72,23 +29,6 @@ struct KeyboardModifiers: OptionSet, Sendable, Equatable {
     static let rightShift = KeyboardModifiers(rawValue: 1 << 5)
     static let rightAlt = KeyboardModifiers(rawValue: 1 << 6)
     static let rightGUI = KeyboardModifiers(rawValue: 1 << 7)
-}
-
-struct KeyboardLEDs: OptionSet, Sendable, Equatable {
-    let rawValue: UInt8
-    static let numLock = KeyboardLEDs(rawValue: 1 << 0)
-    static let capsLock = KeyboardLEDs(rawValue: 1 << 1)
-    static let scrollLock = KeyboardLEDs(rawValue: 1 << 2)
-    static let compose = KeyboardLEDs(rawValue: 1 << 3)
-    static let kana = KeyboardLEDs(rawValue: 1 << 4)
-
-    init(rawValue: UInt8) {
-        self.rawValue = rawValue
-    }
-
-    init(byte: UInt8) {
-        rawValue = byte & 0x1F
-    }
 }
 
 /// USB HID usage page 0x07
@@ -219,49 +159,6 @@ struct Keycode: RawRepresentable, Sendable, Equatable, Hashable {
     static let lang2 = Keycode(rawValue: 0x91)
 }
 
-struct SystemControlReport: Sendable, Equatable {
-    var actions: SystemActions = []
-
-    static let zero = SystemControlReport()
-
-    var data: Data {
-        Data([actions.rawValue])
-    }
-}
-
-struct SystemActions: OptionSet, Sendable, Equatable {
-    let rawValue: UInt8
-    static let powerDown = SystemActions(rawValue: 1 << 0)
-    static let sleep = SystemActions(rawValue: 1 << 1)
-    static let coldRestart = SystemActions(rawValue: 1 << 2)
-    static let displayToggle = SystemActions(rawValue: 1 << 3)
-    static let displayLCDAutoscale = SystemActions(rawValue: 1 << 4)
-    static let mainMenu = SystemActions(rawValue: 1 << 5)
-    static let appMenu = SystemActions(rawValue: 1 << 6)
-    static let displayBrightnessDecrement = SystemActions(rawValue: 1 << 7)
-}
-
-/// consumer report (5 bytes)
-struct ConsumerReport: Sendable, Equatable {
-    var key: ConsumerKey = .none
-    var acUsageA: UInt8 = 0
-    var acUsageB: UInt8 = 0
-    var sub: UInt8 = 0
-
-    static let zero = ConsumerReport()
-
-    var data: Data {
-        let raw = key.rawValue
-        return Data([
-            UInt8(raw & 0xFF),
-            UInt8(raw >> 8),
-            acUsageA,
-            acUsageB,
-            sub
-        ])
-    }
-}
-
 /// USB HID usage page 0x0C
 enum ConsumerKey: UInt16, Sendable, Equatable {
     case none = 0x0000
@@ -287,9 +184,4 @@ enum ConsumerKey: UInt16, Sendable, Equatable {
     case brightnessUp = 0x006F, brightnessDown = 0x0070
     case illuminationUp = 0x0079, illuminationDown = 0x007A, illuminationToggle = 0x007C
     case eject = 0x00B8
-}
-
-extension ConsumerReport {
-    static let acHome = ConsumerReport(acUsageB: 0x23)
-    static let acBack = ConsumerReport(acUsageB: 0x24)
 }

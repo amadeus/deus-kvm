@@ -12,8 +12,14 @@ final class QMKKeymapCoverageTests: XCTestCase {
         let modifiers: UInt8
     }
 
-    private var reports: [KeyboardReport] = []
-    private var consumers: [ConsumerReport] = []
+    private var recorder = InputRecorder()
+    private var reports: [KeyboardReport] {
+        recorder.keyboard
+    }
+
+    private var consumers: [ConsumerKey] {
+        recorder.consumer
+    }
 
     func testEveryHostKeyInPinnedQMKLayoutsPressesAndReleases() throws {
         let entries = try fixture()
@@ -28,7 +34,11 @@ final class QMKKeymapCoverageTests: XCTestCase {
                 XCTAssertFalse(RawKeyboardState.quartzAliases.contains(entry.mac), entry.name)
                 XCTAssertNil(RawKeyboardState.key(usagePage: 7, usage: UInt32(entry.input)), entry.name)
                 try send(controller, .keyDown, key: entry.mac, flags: flags)
-                XCTAssertEqual(reports.last?.data, Data([entry.modifiers, 0, UInt8(entry.output), 0, 0, 0, 0, 0]), entry.name)
+                XCTAssertEqual(
+                    reports.last,
+                    KeyboardReport(modifiers: KeyboardModifiers(rawValue: entry.modifiers), keys: [Keycode(rawValue: UInt8(entry.output))]),
+                    entry.name
+                )
                 try send(controller, .keyUp, key: entry.mac)
             case "raw":
                 let key = try XCTUnwrap(RawKeyboardState.key(usagePage: 7, usage: UInt32(entry.input)), entry.name)
@@ -45,9 +55,9 @@ final class QMKKeymapCoverageTests: XCTestCase {
                 XCTAssertEqual(reports.filter { $0.keys.contains(.capsLock) }.count, 1)
             case "consumer":
                 try media(controller, code: entry.mac, down: true)
-                XCTAssertEqual(consumers.last?.key.rawValue, entry.output, entry.name)
+                XCTAssertEqual(consumers.last?.rawValue, entry.output, entry.name)
                 try media(controller, code: entry.mac, down: false)
-                XCTAssertEqual(consumers.last, .zero, entry.name)
+                XCTAssertEqual(consumers.last, ConsumerKey.none, entry.name)
             default:
                 XCTFail("Unvalidated route for \(entry.name): \(entry.route)")
             }
@@ -61,7 +71,7 @@ final class QMKKeymapCoverageTests: XCTestCase {
         // QMK can send the modifier and key in one report. No preceding flagsChanged
         // or current global Shift state is required for this keyDown to be correct.
         try send(controller, .keyDown, key: 0x2A, flags: [.maskShift])
-        XCTAssertEqual(reports.last?.data, Data([2, 0, 0x31, 0, 0, 0, 0, 0]))
+        XCTAssertEqual(reports.last, KeyboardReport(modifiers: [.leftShift], keys: [.backslash]))
         let repeated = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0x2A, keyDown: true))
         repeated.flags = .maskShift
         repeated.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
@@ -69,7 +79,7 @@ final class QMKKeymapCoverageTests: XCTestCase {
         try send(controller, .keyUp, key: 0x2A)
         XCTAssertEqual(reports.last, .zero)
         try send(controller, .keyDown, key: 0x2A)
-        XCTAssertEqual(reports.last?.data, Data([0, 0, 0x31, 0, 0, 0, 0, 0]))
+        XCTAssertEqual(reports.last, KeyboardReport(keys: [.backslash]))
         controller.stop()
         XCTAssertEqual(reports.last, .zero)
     }
@@ -101,12 +111,9 @@ final class QMKKeymapCoverageTests: XCTestCase {
     }
 
     private func makeController() -> DirectInputController {
-        reports = []; consumers = []
+        recorder = InputRecorder()
         let controller = DirectInputController()
-        controller.start(HIDInput(
-            sendMouse: { _ in }, sendKeyboard: { self.reports.append($0) }, sendConsumer: { self.consumers.append($0) },
-            isActive: true, isConnected: true, activeError: nil
-        ))
+        controller.start(recorder.sink)
         return controller
     }
 

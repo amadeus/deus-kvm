@@ -13,7 +13,7 @@ import os
 final class CaptureDiagnostics {
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "Capture")
     /// Input timing is recorded on the input queue, where forwarding now happens.
-    private let stats: TransportStats
+    private let stats: InputQueueStats
     let tapStats = TapStats()
     private let file: DiagnosticsLog
     private typealias CursorVisible = @convention(c) () -> Int32
@@ -42,7 +42,7 @@ final class CaptureDiagnostics {
         return formatter
     }()
 
-    init(stats: TransportStats, file: DiagnosticsLog = .shared) {
+    init(stats: InputQueueStats, file: DiagnosticsLog = .shared) {
         self.stats = stats
         self.file = file
     }
@@ -108,7 +108,7 @@ final class CaptureDiagnostics {
     /// Remote capture began: counters restart so the first sample covers only this session.
     func began(_ message: String) {
         let now = ProcessInfo.processInfo.systemUptime
-        _ = stats.takeInterval(now: now)
+        _ = stats.takeInterval()
         _ = tapStats.take()
         lastSample = now
         summary = HealthSummary()
@@ -145,7 +145,7 @@ final class CaptureDiagnostics {
         let parked = point.flatMap { point in parkingPoint.map { abs(point.x - $0.x) < 2 && abs(point.y - $0.y) < 2 } } ?? false
         let sample = HealthSample(
             date: Date(), visible: cursorVisible?() ?? -1, parked: parked, blind: blind,
-            transport: stats.takeInterval(now: now), tap: tapStats.take(), ping: pings()
+            queue: stats.takeInterval(), tap: tapStats.take(), ping: pings()
         )
         let line = sample.line
         log.notice("capture health: \(line, privacy: .public)")
@@ -162,7 +162,7 @@ final class CaptureDiagnostics {
     /// Writes the context and the recent per-second samples at once, then the Windows
     /// companion's report (when it supports one), and calls `completion` with the file it wrote.
     func writeProblemReport(
-        context: [String], stats: TransportStats, companion: CompanionService, target: UUID?,
+        context: [String], companion: CompanionService, target: UUID?,
         completion: @escaping @MainActor @Sendable (URL) -> Void
     ) {
         var lines = context + ["partial \(summary.line)"]

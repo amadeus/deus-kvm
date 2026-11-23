@@ -26,8 +26,6 @@ final class InputTap: @unchecked Sendable {
     /// Tap thread only, while the tap runs.
     private var keyboard: RawKeyboardMonitor?
     private var resyncGate = ResyncGate()
-    /// Routes pointer events between the local-network stream and the Bluetooth mouse.
-    private var router = PointerRouter()
     /// Gesture types already noted in the diagnostics log this launch.
     private var notedGestureTypes: Set<UInt32> = []
     /// Keys, modifiers, buttons and media keys: always on, and rare.
@@ -47,19 +45,15 @@ final class InputTap: @unchecked Sendable {
     private let output: @MainActor @Sendable (TapOutput) -> Void
     /// Remote input skips the main thread; the receiver orders it by generation.
     private let forward: @Sendable (Int, DirectInputEvent, TimeInterval) -> Void
-    /// What the local-network pointer stream can do, asked per pointer event.
-    private let network: @Sendable () -> NetworkCarrier
     private let stats: TapStats
 
     init(
         output: @escaping @MainActor @Sendable (TapOutput) -> Void,
         forward: @escaping @Sendable (Int, DirectInputEvent, TimeInterval) -> Void,
-        network: @escaping @Sendable () -> NetworkCarrier = { .down },
         stats: TapStats = TapStats()
     ) {
         self.output = output
         self.forward = forward
-        self.network = network
         self.stats = stats
     }
 
@@ -322,7 +316,6 @@ final class InputTap: @unchecked Sendable {
         generation += 1
         edgeArmed = false
         dropNextMotion = true
-        router.reset()
         // placement and panel ownership stay on the main actor; input is already suppressed here
         _emit(.begin(generation, fromEdge ? geometry.inset(location) : location, fromEdge: fromEdge))
     }
@@ -487,16 +480,12 @@ extension InputTap {
         }
     }
 
-    /// Called with the lock held. Pointer motion and clicks take the local-network stream while
-    /// it is up and the Bluetooth mouse otherwise; everything else is forwarded as it is.
+    /// Called with the lock held. Everything goes to the input queue, which sends what the
+    /// stream can carry right now (DirectInputController).
     private func _forwardRemote(type: CGEventType, event: CGEvent) {
         guard let input = DirectInputEvent(type: type, event: event) else { return }
         stats.event(lagNanoseconds: EventLag.nanoseconds(timestamp: event.timestamp))
-        let routerEvent = PointerRouter.Event(input.kind)
-        // Only a stream that is up (not down, not blocked by a secure desktop) takes pointer input.
-        let useNetwork = routerEvent != .other && network() == .up
-        let routed = router.route(routerEvent, network: useNetwork) == .network ? input.networked : input
-        forward(generation, routed, ProcessInfo.processInfo.systemUptime)
+        forward(generation, input, ProcessInfo.processInfo.systemUptime)
     }
 
     private static func makeTap(

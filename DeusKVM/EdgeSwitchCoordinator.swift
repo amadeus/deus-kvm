@@ -21,7 +21,6 @@ final class EdgeSwitchCoordinator: ObservableObject {
         forward: { [input = link.input] in
             input.input($1, generation: $0, capturedAt: $2)
         },
-        network: { [server = networkPointer.server] in server.carrier },
         stats: diagnostics.tapStats
     )
     private lazy var networkPointer = NetworkPointer()
@@ -574,7 +573,7 @@ extension EdgeSwitchCoordinator {
             listener
         ]
         diagnostics.writeProblemReport(
-            context: context, stats: link.input.stats, companion: companion, target: currentTarget
+            context: context, companion: companion, target: currentTarget
         ) { [weak self] url in
             self?.reportingProblem = false
             completion(url)

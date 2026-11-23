@@ -114,14 +114,14 @@ struct Unchecked<Value>: @unchecked Sendable {
 
 /// The serial queue captured input runs on, between the tap thread and the network stream:
 /// InputGate holds input captured during a crossing until ENTER is queued, and
-/// DirectInputController turns events into stream records (there is no Bluetooth fallback).
+/// DirectInputController turns events into stream records.
 final class InputPipeline: @unchecked Sendable {
-    let stats = TransportStats()
+    let stats = InputQueueStats()
     private let queue = DispatchQueue(label: "io.github.amadeus.deuskvm.input", qos: .userInteractive)
     private let controller = DirectInputController()
     private var gate = InputGate<(DirectInputEvent, TimeInterval)>()
 
-    /// Event-tap thread: remote input goes straight to this queue. Network pointer steps, the
+    /// Event-tap thread: remote input goes straight to this queue. Pointer steps, the
     /// bulk of it, run synchronously: on an idle queue the block runs on the tap thread, so no
     /// worker thread wakes per step, and FIFO order with everything already queued is kept. The
     /// block only seals and writes without blocking, and nothing on this queue waits for the tap.
@@ -131,18 +131,16 @@ final class InputPipeline: @unchecked Sendable {
                 forward(event, captured)
             }
         }
-        if event.isNetworkPointer { queue.sync(execute: work) } else { queue.async(execute: work) }
+        if event.isPointer { queue.sync(execute: work) } else { queue.async(execute: work) }
     }
 
     /// The coordinator approved the crossing and queued ENTER: forward this session, oldest first.
     func startInput(generation: Int, network: InputNetworkServer) {
         queue.async { [self] in
-            controller.start(HIDInput(
-                sendMouse: { _ in }, sendKeyboard: { _ in }, sendConsumer: { _ in },
-                isActive: true, isConnected: true, activeError: nil,
-                sendNetwork: { [weak network] in network?.send($0) },
-                networkReady: { [weak network] in network?.isUp ?? false },
-                networkKeysReady: { [weak network] in network?.keysUp ?? false }
+            controller.start(InputSink(
+                send: { [weak network] in network?.send($0) },
+                pointerReady: { [weak network] in network?.isUp ?? false },
+                keysReady: { [weak network] in network?.keysUp ?? false }
             ))
             network.resetSession()
             for (event, captured) in gate.start(generation) {

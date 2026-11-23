@@ -3,11 +3,10 @@ import Foundation
 enum AppSettings {
     static let enabledKey = "DeusKVM.enabled"
     static let clipboardEnabledKey = "DeusKVM.clipboardEnabled"
-    /// PC ids (control-link identities) allowed to take input; the Bluetooth-era key was DeusKVM.allowedHosts.
+    /// PC ids (control-link identities) allowed to take input. The old DeusKVM.allowedHosts list
+    /// (Bluetooth addresses) is ignored.
     static let allowedHostsKey = "DeusKVM.allowedPCs"
     static let developerModeKey = "DeusKVM.developerMode"
-    /// Pointer motion and buttons over the local network when the companion offers it (default on).
-    static let networkPointerKey = "DeusKVM.networkPointer"
     static let deviceNamesKey = "DeusKVM.deviceNames"
     static let hasSeenWelcomeKey = "DeusKVM.hasSeenWelcome"
 
@@ -26,5 +25,5 @@ enum AppSettings {
     static let defaultEdgeSwitchEnabled = true
     static let defaultCornerSize = 0.0
 
-    static let repoURL = URL(string: "https://github.com/amadeus/darwin-bt-remote")!
+    static let repoURL = URL(string: "https://github.com/amadeus/deus-kvm")!
 }
