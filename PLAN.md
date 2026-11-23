@@ -150,6 +150,11 @@ the screen (Session 0), so it runs two helpers it manages:
   window; carrying it from the second step on stayed clean (0/5), so only the
   first 4 ms step is uncovered. Pending: real handoff at the clock, several
   times; the cursor not visibly streaking to the center.
+- On hardware the cursor visibly travelled to the center. All parking is
+  removed (70b639d, cf435c7, 1fb6eeb, 47e848d undone by hand): the cursor is
+  hidden where it is, by the user's helper on the Default desktop, as before the
+  rework. The taskbar tooltip race at the clock remains (it reproduced with that
+  arrangement too, 4/4 in the scripted runs); no fix is shipped for it.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 

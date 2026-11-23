@@ -37,22 +37,6 @@ internal static class DesktopNative
         return SendInput(1, [input], Marshal.SizeOf<Input>()) == 1;
     }
 
-    // Moves the cursor to (x, y) through the input stack (MOVE | ABSOLUTE | VIRTUALDESK), tagged
-    // like the Mac's steps: a real pointer move, as InactiveCursor.Park needs. Pixel coordinates
-    // of a per-monitor-aware process.
-    internal static bool MoveCursorTo(int x, int y)
-    {
-        int left = GetSystemMetrics(76), top = GetSystemMetrics(77), width = GetSystemMetrics(78), height = GetSystemMetrics(79);
-        if (width <= 1 || height <= 1) return false;
-        var dx = (int)((x - left) * 65535L / (width - 1));
-        var dy = (int)((y - top) * 65535L / (height - 1));
-        var input = new Input { Type = 0, Data = new InputUnion { Mouse = new MouseInput { Dx = dx, Dy = dy, Flags = 0x0001 | 0x8000 | 0x4000, Extra = (IntPtr)InjectTag } } };
-        return SendInput(1, [input], Marshal.SizeOf<Input>()) == 1;
-    }
-
-    [DllImport("user32.dll")]
-    private static extern int GetSystemMetrics(int index);
-
     // KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE
     private const uint KeyExtended = 0x0001, KeyUp = 0x0002, KeyScanCode = 0x0008;
 

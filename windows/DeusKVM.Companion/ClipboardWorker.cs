@@ -61,7 +61,7 @@ internal sealed class ClipboardWorker : ApplicationContext
             await Task.Run(() => DesktopPipe.Pump(pipe, output.Reader, message =>
             {
                 if (message.Kind.StartsWith("clipboard-", StringComparison.Ordinal)) clipboard?.Post(message);
-                else if (message.Kind == "cursor-hide") context.Post(_ => cursor.Hide((message.X, message.Y)), null);
+                else if (message.Kind == "cursor-hide") context.Post(_ => cursor.Hide(), null);
                 else if (message.Kind == "cursor-reveal") context.Post(_ => cursor.Reveal(), null);
             }, shutdown.Token)).ConfigureAwait(false);
         }

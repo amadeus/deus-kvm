@@ -268,9 +268,7 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
                     // hears that the mouse left when the cursor moves onto a SYSTEM-owned window, so a
                     // SYSTEM hider leaves its tooltips open. Ok tells the agent it need not hide there.
                     var userHides = clipboardHost?.Connected == true && clipboardDefaultDesktop;
-                    if (userHides && monitors.FirstOrDefault(item => item.Id == config?.Monitor) is { } monitor)
-                        clipboardHost!.Send(new DesktopMessage("cursor-hide", X: monitor.Center.X, Y: monitor.Center.Y));
-                    else userHides = false;
+                    if (userHides) clipboardHost!.Send(new DesktopMessage("cursor-hide"));
                     desktop?.Send(new DesktopMessage("exit", SwitchId: payload[0], Ok: userHides));
                 }
                 break;

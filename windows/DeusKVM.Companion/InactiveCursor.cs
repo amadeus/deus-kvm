@@ -15,12 +15,11 @@ internal sealed class CursorHider : IDisposable
     private readonly WinlogonCursor secure = new();
     public bool Hidden => user.Hidden || secure.Hidden;
 
-    /// <param name="park">Where the hidden cursor waits (the screen's center), or null to leave it in place.</param>
     /// <param name="userHides">The user's own helper hides it on the Default desktop.</param>
-    public void Hide((int X, int Y)? park = null, bool userHides = false)
+    public void Hide(bool userHides = false)
     {
-        if (DesktopNative.DesktopState().Desktop == 1) secure.Hide(park);
-        else if (!userHides) user.Hide(park);
+        if (DesktopNative.DesktopState().Desktop == 1) secure.Hide();
+        else if (!userHides) user.Hide();
     }
 
     public void Reveal() { user.Reveal(); secure.Reveal(); }
@@ -43,7 +42,7 @@ internal sealed class CursorHider : IDisposable
 internal sealed class WinlogonCursor : IDisposable
 {
     private const uint WakeMessage = 0x8001, QuitMessage = 0x0012; // WM_APP + 1, WM_QUIT
-    private readonly ConcurrentQueue<(bool Hide, (int X, int Y)? Park)> requests = new();
+    private readonly ConcurrentQueue<bool> requests = new(); // true: hide
     private readonly ManualResetEventSlim ready = new();
     private readonly Thread thread;
     private volatile uint threadId;
@@ -57,12 +56,12 @@ internal sealed class WinlogonCursor : IDisposable
         ready.Wait(2000);
     }
 
-    public void Hide((int X, int Y)? park) => Post(true, park);
-    public void Reveal() { if (hidden) Post(false, null); }
+    public void Hide() => Post(true);
+    public void Reveal() { if (hidden) Post(false); }
 
-    private void Post(bool hide, (int X, int Y)? park)
+    private void Post(bool hide)
     {
-        requests.Enqueue((hide, park));
+        requests.Enqueue(hide);
         if (threadId != 0) PostThreadMessage(threadId, WakeMessage, IntPtr.Zero, IntPtr.Zero);
     }
 
@@ -83,7 +82,7 @@ internal sealed class WinlogonCursor : IDisposable
         {
             if (message.Window == IntPtr.Zero && message.Message == WakeMessage)
             {
-                while (requests.TryDequeue(out var request)) { if (request.Hide) cursor.Hide(request.Park); else cursor.Reveal(); }
+                while (requests.TryDequeue(out var hide)) { if (hide) cursor.Hide(); else cursor.Reveal(); }
             }
             else { TranslateMessage(ref message); DispatchMessage(ref message); }
             hidden = cursor.Hidden; // a click (its hook) reveals it too
@@ -144,50 +143,17 @@ internal sealed class InactiveCursor : NativeWindow, IDisposable
         SetLayeredWindowAttributes(Handle, 0, 1, 2);
     }
 
-    public void Hide((int X, int Y)? park = null)
+    public void Hide()
     {
         if (Hidden || DesktopNative.DesktopState().Desktop != desktop || !DesktopNative.GetCursorPos(out var point)) return;
-        var start = point;
-        if (park is { } at) point = new DesktopNative.Point { X = at.X, Y = at.Y };
         Hidden = true;
         if (!SetWindowPos(Handle, new IntPtr(-1), point.X, point.Y, 1, 1, 0x50)) // NOACTIVATE | SHOWWINDOW
         { Reveal(); return; }
-        // Parked first: the hook below runs on this thread, which does not pump while parking.
-        if (park is not null) Park(start, point);
         // Reveal before a click is routed so the hider cannot eat the first click.
         // Raw Input supplies device-specific movement; this hook never consumes input.
         hook = SetWindowsHookEx(14, mouseHook, GetModuleHandle(null), 0); // WH_MOUSE_LL
         if (hook == IntPtr.Zero) { Reveal(); return; }
         SetCursor(IntPtr.Zero);
-    }
-
-    // Moves the cursor from where the Mac left it to the parking point the way a real mouse would,
-    // in short injected steps, never in one jump. Measured on hardware: after the pointer crosses a
-    // taskbar button on its way out (any edge crossing near the clock), a jump away (SetCursorPos or
-    // one injected move) let the button's tooltip open about a second later and stay (3 of 4 runs);
-    // 12 steps 4 ms apart never did (8 of 8). Every step after the first carries this surface with
-    // it, so the cursor stays hidden on the way (still 0 of 5); covering the first step as well
-    // brings the tooltip back (6 of 6), since the taskbar must see the pointer land on an ordinary
-    // window. Steps are tagged like the Mac's, so nothing treats them as the PC's own mouse.
-    private void Park(DesktopNative.Point from, DesktopNative.Point to)
-    {
-        const int Steps = 12;
-        // This thread does not pump while parking: the cursor it shows over this surface must
-        // already be none, without waiting for WM_SETCURSOR.
-        SetCursor(IntPtr.Zero);
-        for (var step = 1; step <= Steps; step++)
-        {
-            var x = from.X + (to.X - from.X) * step / Steps;
-            var y = from.Y + (to.Y - from.Y) * step / Steps;
-            if (step > 1) SetWindowPos(Handle, new IntPtr(-1), x, y, 1, 1, 0x50); // NOACTIVATE | SHOWWINDOW
-            if (!DesktopNative.MoveCursorTo(x, y))
-            {
-                SetWindowPos(Handle, new IntPtr(-1), to.X, to.Y, 1, 1, 0x50);
-                DesktopNative.SetCursorPos(to.X, to.Y);
-                return;
-            }
-            if (step < Steps) Thread.Sleep(4);
-        }
     }
 
     public void Reveal()
