@@ -152,7 +152,7 @@ try {
     }
     Invoke-Companion $binary @('--stop')
     Invoke-Companion $binary @('--startup', 'manual')
-    # Preserve machine configuration byte-for-byte, independently of Bluetooth hardware.
+    # Preserve machine configuration byte-for-byte, with no Mac on the network.
     $settings = Join-Path $data 'settings.json'
     [IO.File]::WriteAllText($settings, '{"DeviceId":"test-selected-mac","DeviceName":"Keep this Mac"}')
     $before = (Get-FileHash -LiteralPath $settings).Hash
@@ -203,7 +203,7 @@ try {
         $settled = Wait-SingleCompanionTray $quietTrayId
         $settled.Dispose()
     } finally { $tray.Dispose() }
-    Write-Host 'Checking complete removal with no saved pairing (no Bluetooth hardware required).'
+    Write-Host 'Checking complete removal with no saved Mac.'
     Invoke-Companion $binary @('--tray-startup', 'on')
     Invoke-Companion $binary @('--remove', '--quiet')
     $removalTimer = [Diagnostics.Stopwatch]::StartNew()

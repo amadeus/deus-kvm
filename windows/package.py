@@ -26,7 +26,7 @@ if not required <= manifest.keys():
     raise SystemExit("Incomplete Framework build")
 (output / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
 for source_path, name in [("windows/README.md", "README.md"),
-                          ("docs/WINDOWS_FRAMEWORK_CHECKPOINT.md", "START_HERE.md")]:
+                          ("windows/START_HERE.md", "START_HERE.md")]:
     shutil.copyfile(source_path, output / name)
 archive.parent.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:

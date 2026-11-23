@@ -524,7 +524,7 @@ internal sealed class DesktopWorker : ApplicationContext
         lock (secureGate)
         {
             if (!secureFailing || now - secureFailingSince < SecureGraceMs) return false;
-            if (episode is not null) episode.FellBack = true;
+            if (episode is not null) episode.GaveUp = true;
             return true;
         }
     }
@@ -614,10 +614,10 @@ internal sealed class DesktopWorker : ApplicationContext
     {
         public double FirstForward = -1, FirstOk = -1;
         public int Forwarded, Failures;
-        public bool FellBack; // neither the relay nor this process could inject
+        public bool GaveUp; // neither the relay nor this process could inject
         public string? Failure;
         public string Summary(double end) => FormattableString.Invariant(
-            $"{kind}: ms={end - start:F0} relay={relay} firstForwardMs={At(FirstForward)} firstInjectedMs={At(FirstOk)} forwarded={Forwarded} failures={Failures} bluetooth={FellBack}") +
+            $"{kind}: ms={end - start:F0} relay={relay} firstForwardMs={At(FirstForward)} firstInjectedMs={At(FirstOk)} forwarded={Forwarded} failures={Failures} gaveUp={GaveUp}") +
             (Failure is null ? "" : $" lastFailure=\"{Failure}\"");
         private string At(double time) => time < 0 ? "-" : (time - start).ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
     }

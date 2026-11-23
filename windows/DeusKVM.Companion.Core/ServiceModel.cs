@@ -2,27 +2,21 @@ using System.Text.Json;
 
 namespace DeusKVM.Companion.Core;
 
+// DeviceId is the Mac's control-link id (a Guid); older files' other fields are ignored.
 public sealed record CompanionSettings(string DeviceId, string DeviceName)
 {
-    // DeviceId is the Mac's control-link id (a Guid). PairingDeviceId was the Bluetooth-era
-    // Classic endpoint; it is kept only so older files still parse.
-    public string? PairingDeviceId { get; init; }
-
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(DeviceId) || DeviceId.Length > 4096 || DeviceId.Any(char.IsControl))
             throw new ArgumentException("Choose one Mac.");
         if (string.IsNullOrWhiteSpace(DeviceName) || DeviceName.Length > 256 || DeviceName.Any(char.IsControl))
             throw new ArgumentException("The selected device name is invalid.");
-        if (PairingDeviceId is not null && (string.IsNullOrWhiteSpace(PairingDeviceId) ||
-            PairingDeviceId.Length > 4096 || PairingDeviceId.Any(char.IsControl)))
-            throw new ArgumentException("The selected pairing endpoint is invalid.");
     }
 }
 
 public sealed record WorkerStatus(string State, string Detail, DateTimeOffset At,
-    string? DeviceName = null, DateTimeOffset? LastDiscovery = null, int ServiceCount = 0,
-    bool HidServiceFound = false, string? Identity = null, int ProcessSession = -1,
+    string? DeviceName = null, DateTimeOffset? LastDiscovery = null,
+    string? Identity = null, int ProcessSession = -1,
     string? DeviceId = null, string[]? WaitingMacs = null, string? DiscoveryEvent = null, string[]? PausedMacs = null,
     bool SecureAttention = false);
 

@@ -101,10 +101,10 @@ public sealed class MacPriority(string? startupPreference = null, bool requireAv
     }
 }
 
-// Written only by the service's link worker, separate from interactive pairing hints.
+// Written only by the service's link worker; Add Mac writes settings.json, which it merges in.
 public sealed record AutomaticMacSettings(string? LastActiveId, CompanionSettings[] Macs)
 {
-    /// <summary>Only Macs saved by their control-link id; Bluetooth-era entries never match one.</summary>
+    /// <summary>Only Macs saved by their control-link id (entries from older builds have none).</summary>
     public AutomaticMacSettings NetworkOnly()
     {
         var macs = Macs.Where(mac => Guid.TryParse(mac.DeviceId, out _)).ToArray();
@@ -120,10 +120,8 @@ public sealed record AutomaticMacSettings(string? LastActiveId, CompanionSetting
     public AutomaticMacSettings Remember(CompanionSettings mac, bool active = false)
     {
         mac.Validate();
-        var previous = Macs.FirstOrDefault(item => item.DeviceId == mac.DeviceId);
-        var saved = mac with { PairingDeviceId = mac.PairingDeviceId ?? previous?.PairingDeviceId };
         return new(active ? mac.DeviceId : LastActiveId,
-            Macs.Where(item => item.DeviceId != mac.DeviceId).Append(saved).ToArray());
+            Macs.Where(item => item.DeviceId != mac.DeviceId).Append(mac).ToArray());
     }
 
     public void Validate()

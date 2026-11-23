@@ -17,7 +17,7 @@ internal sealed class LinkWorker : ApplicationContext
     private MacPriority priority = new();
     private readonly ControlArbiter arbiter = new();
     private AutomaticMacSettings saved = new(null, []);
-    private CompanionSettings? pairingHint;
+    private CompanionSettings? addedMac; // settings.json: the Mac last chosen in Add Mac
     private NetworkMacDiscovery? discovery;
     private ControlIdentity? identity;
     // Where each observed Mac answers, and when Bonjour (or mac-hosts.txt) last listed it.
@@ -25,7 +25,7 @@ internal sealed class LinkWorker : ApplicationContext
     private const long ForgetAfterMs = 5 * 60 * 1000;
     private bool started;
     private long lastTick;
-    private DateTime pairingHintWritten;
+    private DateTime addedMacWritten;
     public int ExitCode { get; private set; }
 
     private sealed class Attempt(MacSession link, Task work)
@@ -63,9 +63,9 @@ internal sealed class LinkWorker : ApplicationContext
 
     private async Task RunAsync(CancellationToken stop)
     {
-        pairingHint = JsonFiles.Read<CompanionSettings>(Paths.Settings);
-        if (pairingHint is not null && !Guid.TryParse(pairingHint.DeviceId, out _)) pairingHint = null; // a Bluetooth-era pairing
-        saved = (JsonFiles.Read<AutomaticMacSettings>(Paths.AutomaticMacs) ?? AutomaticMacSettings.Migrate(pairingHint)).NetworkOnly();
+        addedMac = JsonFiles.Read<CompanionSettings>(Paths.Settings);
+        if (addedMac is not null && !Guid.TryParse(addedMac.DeviceId, out _)) addedMac = null; // from an older build
+        saved = (JsonFiles.Read<AutomaticMacSettings>(Paths.AutomaticMacs) ?? AutomaticMacSettings.Migrate(addedMac)).NetworkOnly();
         saved.Validate();
         identity = ServiceIdentity.Load();
         Emit(status with { DiscoveryEvent = $"This PC's id: {ControlLink.PeerId(identity.Public)}; trusted Macs: {saved.Macs.Length}" });
@@ -73,7 +73,7 @@ internal sealed class LinkWorker : ApplicationContext
         discovery = new NetworkMacDiscovery(Discovered, message => Emit(status with { DiscoveryEvent = message }), Paths.MacHosts);
         while (!stop.IsCancellationRequested)
         {
-            RefreshPairingHint();
+            RefreshAddedMac();
             foreach (var connection in new[] { arbiter.Owner, arbiter.Requested }.OfType<long>())
                 if (!priority.Connections.Any(mac => mac.Connection == connection)) arbiter.Disconnected(connection);
             foreach (var pair in attempts.ToArray())
@@ -250,7 +250,6 @@ internal sealed class LinkWorker : ApplicationContext
                 Remember(winner.Link, true);
                 Emit(status with { State = "Connected", DeviceName = next.Name, DeviceId = next.Id,
                     Detail = "Active Mac; preparing edge and clipboard session", LastDiscovery = DateTimeOffset.UtcNow,
-                    ServiceCount = winner.Link.ServiceCount, HidServiceFound = true,
                     DiscoveryEvent = $"Active Mac: {next.Name}; connection={next.Connection}" });
             }
         }
@@ -263,15 +262,15 @@ internal sealed class LinkWorker : ApplicationContext
                     attempt.Link.RequestDisable();
     }
 
-    private void RefreshPairingHint()
+    private void RefreshAddedMac()
     {
-        // This loop runs every 250 ms; reopen and parse the file only after a pairing rewrites it.
+        // This loop runs every 250 ms; reopen and parse the file only after Add Mac rewrites it.
         var written = File.GetLastWriteTimeUtc(Paths.Settings);
-        if (written == pairingHintWritten) return;
-        pairingHintWritten = written;
+        if (written == addedMacWritten) return;
+        addedMacWritten = written;
         var next = JsonFiles.Read<CompanionSettings>(Paths.Settings);
-        if (next == pairingHint) return;
-        pairingHint = next;
+        if (next == addedMac) return;
+        addedMac = next;
         if (next is null || !Guid.TryParse(next.DeviceId, out _)) return;
         saved = saved.Remember(next); JsonFiles.Write(Paths.AutomaticMacs, saved);
         // A newly allowed Mac may already be listed (rejected while untrusted, or a manual
@@ -306,7 +305,7 @@ internal sealed class LinkWorker : ApplicationContext
                 Detail = paused.Length > 0 ? "Enable DeusKVM and allow this PC on a Mac to take control" :
                     priority.DiscoveryCandidates.Length > 0 ? "Connecting to Macs; on the Mac, turn on Enable control for this PC" :
                     saved.Macs.Length == 0 ? "No Mac added yet; choose Add Mac…" : "Looking for allowed Macs on the network",
-                HidServiceFound = false, ServiceCount = 0, LastDiscovery = null };
+                LastDiscovery = null };
         else if (attempts.TryGetValue(active.Connection, out var attempt))
             next = next with { State = attempt.RetryAt != 0 ? "Retrying" : !attempt.Work.IsCompleted ? "Opening" : "Connected",
                 Detail = attempt.RetryAt != 0 ? $"Retrying {active.Name}; connection priority is retained. {attempt.Link.Error}" : next.Detail };

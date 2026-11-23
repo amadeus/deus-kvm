@@ -45,8 +45,8 @@ companion: Bluetooth builds of the Mac app cannot connect to it.
 **Updating from a Bluetooth build:** Macs saved by earlier builds are ignored,
 because Macs and PCs are now known by network identities. Choose **Add Mac…**
 again for each Mac, then turn on **Enable control** for the PC again on each Mac.
-Old Bluetooth pairings are no longer used; remove them in Windows and macOS
-Bluetooth settings if you like.
+Old Bluetooth pairings are no longer used: remove the Mac from **Settings →
+Bluetooth & devices** once the network build works (the Mac has nothing to remove).
 
 ### Finding Macs
 

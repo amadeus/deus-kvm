@@ -28,7 +28,7 @@ public sealed class FileClipboardTests
         Assert.Empty(session.Read(2_000_000_000));
     }
     [Fact]
-    public void MissingNetworkFailsWithoutBluetoothFallback()
+    public void MissingNetworkFailsTheRead()
     {
         using var session = new FileClipboardSession(new(1, 2, "file", 4));
         Assert.Throws<NetworkUnavailableException>(() => session.Read(0));

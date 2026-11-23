@@ -33,7 +33,6 @@ internal sealed class MacSession : IDisposable
     public bool Active => control?.Active == true;
     public void SetActive(bool active) => control?.SetActive(active);
     public bool NeedsReconnect => control?.NeedsReconnect == true;
-    public int ServiceCount => Verified ? 1 : 0;
     public string? Error { get; private set; }
 
     public MacSession(ConnectedMac mac, IPEndPoint[] endpoints, ControlIdentity identity, Func<Guid, bool> trusted,

@@ -31,15 +31,14 @@ public sealed class ServiceModelTests
         Assert.Throws<ArgumentException>(() => new CompanionSettings(id, name).Validate());
 
     [Fact]
-    public void ConfigurationRoundTripPreservesWindowsEndpointAndUnicodeName()
+    public void ConfigurationRoundTripPreservesIdAndUnicodeName()
     {
         var folder = Path.Combine(Path.GetTempPath(), "deuskvm-test-" + Guid.NewGuid());
         Directory.CreateDirectory(folder);
         try
         {
             var path = Path.Combine(folder, "settings.json");
-            var value = new CompanionSettings(@"BluetoothLE#BluetoothLE00:11:22:33:44:55-66:77:88:99:aa:bb", "Amadeus’s Mac")
-            { PairingDeviceId = "classic-pairing-endpoint" };
+            var value = new CompanionSettings("fa988199-ba3a-c4cb-8620-946dd087f60c", "Amadeus’s Mac");
             value.Validate();
             JsonFiles.Write(path, value);
             Assert.Equal(value, JsonFiles.Read<CompanionSettings>(path));
@@ -51,16 +50,11 @@ public sealed class ServiceModelTests
         finally { Directory.Delete(folder, recursive: true); }
     }
     [Fact]
-    public void OlderSavedMacWithoutSeparatePairingEndpointRemainsValid()
+    public void AnOlderFileWithItsExtraFieldStillParses()
     {
         var settings = System.Text.Json.JsonSerializer.Deserialize<CompanionSettings>(
-            "{\"DeviceId\":\"existing-le-endpoint\",\"DeviceName\":\"Mac\"}")!;
+            "{\"DeviceId\":\"old-endpoint\",\"DeviceName\":\"Mac\",\"PairingDeviceId\":\"classic\"}")!;
         settings.Validate();
-        Assert.Null(settings.PairingDeviceId);
-        Assert.Equal("existing-le-endpoint", settings.DeviceId);
+        Assert.Equal("old-endpoint", settings.DeviceId);
     }
-    [Theory]
-    [InlineData("")] [InlineData("\n")]
-    public void InvalidSeparatePairingEndpointIsRejected(string id) =>
-        Assert.Throws<ArgumentException>(() => new CompanionSettings("le", "Mac") { PairingDeviceId = id }.Validate());
 }

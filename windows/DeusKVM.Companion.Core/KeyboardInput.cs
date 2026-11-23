@@ -2,7 +2,7 @@ namespace DeusKVM.Companion.Core;
 
 /// <summary>
 /// A key as SendInput takes it: by scan code (<see cref="Vk"/> 0, the normal case, so the PC's
-/// keyboard layout decides what it types, exactly as for a Bluetooth or USB keyboard), or by
+/// keyboard layout decides what it types, exactly as for a USB keyboard), or by
 /// virtual key for the few keys whose scan code SendInput cannot express (Pause, Num Lock) and
 /// for media keys.
 /// </summary>

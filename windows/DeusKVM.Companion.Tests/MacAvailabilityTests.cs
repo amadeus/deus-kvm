@@ -21,7 +21,7 @@ public sealed class MacAvailabilityTests
         Assert.Equal(b, policy.Next);
         policy.SetAvailable(b, false);
         Assert.Equal(a, policy.Next);
-        Assert.Equal(2, policy.Connections.Length); // no Bluetooth disconnect needed
+        Assert.Equal(2, policy.Connections.Length); // both stay connected
     }
 
     [Fact]

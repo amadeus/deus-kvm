@@ -122,14 +122,14 @@ public sealed class MacPriorityTests
     }
 
     [Fact]
-    public void MigrationAndAddingMacsPreserveStartupPreferenceAndPairingIdentity()
+    public void MigrationAndAddingMacsPreserveStartupPreference()
     {
-        var a = new CompanionSettings("a", "A") { PairingDeviceId = "classic-a" };
+        var a = new CompanionSettings("a", "A");
         var settings = AutomaticMacSettings.Migrate(a).Remember(new("b", "B"));
         Assert.Equal("a", settings.LastActiveId);
         Assert.Equal(2, settings.Macs.Length);
         settings = settings.Remember(new("a", "Renamed"), active: true);
-        Assert.Equal("classic-a", settings.Macs.Single(item => item.DeviceId == "a").PairingDeviceId);
+        Assert.Equal("Renamed", settings.Macs.Single(item => item.DeviceId == "a").DeviceName);
         settings = settings.Remember(new("b", "B"), active: true);
         settings.Validate();
         Assert.Equal("b", settings.LastActiveId);
