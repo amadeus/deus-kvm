@@ -50,7 +50,7 @@ exit, offer change, relay Release, desktop switch.
   tests (net10.0).
 - Hardware pending: typing, shortcuts and held-key repeat feel identical to
   Bluetooth; every row of docs/KEYBOARD_COVERAGE.md; media and volume keys; scroll
-  speed and both inversions; Ctrl+Alt+Delete raises the security screen and typing there, on the
+  speed and both inversions; typing on the security screen, on the
   login screen, in a UAC prompt and an elevated window; pulling the
   network mid-keypress and crossing back with a key held leave nothing held.
 - 2026-11-22 hardware: typing, pointer and clipboard work. PowerToys' Ctrl/Win swap
@@ -62,7 +62,8 @@ exit, offer change, relay Release, desktop switch.
   SendSAS called from the SYSTEM secure worker in the console session (Microsoft
   documents the caller must be running as a service; UltraVNC also calls it from its
   service), so the request now travels to the service process, which logs each
-  attempt in service.log. Pending: the security screen appears.
+  attempt in service.log. Confirmed on hardware: Cmd+Option+Delete raises the
+  security screen from the service.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 
