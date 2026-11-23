@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace DeusKVM.Companion;
 
 /// <summary>
-/// Ctrl+Alt+Delete from the Mac, raised by the service process itself. Windows ignores the chord
+/// Ctrl+Alt+Delete from the Mac, raised by the service process itself (the link runs in it). Windows ignores the chord
 /// through SendInput by design, and SendSAS works only for a caller "running as a service" (a
 /// SYSTEM helper in the user's session is not enough), once the SoftwareSASGeneration policy
 /// allows services (1, or 3 with Ease of Access apps). The policy is set here the first time it

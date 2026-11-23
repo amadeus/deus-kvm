@@ -17,8 +17,7 @@ public sealed record CompanionSettings(string DeviceId, string DeviceName)
 public sealed record WorkerStatus(string State, string Detail, DateTimeOffset At,
     string? DeviceName = null, DateTimeOffset? LastDiscovery = null,
     string? Identity = null, int ProcessSession = -1,
-    string? DeviceId = null, string[]? WaitingMacs = null, string? DiscoveryEvent = null, string[]? PausedMacs = null,
-    bool SecureAttention = false);
+    string? DeviceId = null, string[]? WaitingMacs = null, string? DiscoveryEvent = null, string[]? PausedMacs = null);
 
 public sealed record ServiceSnapshot(int ProcessId, string Identity, int ProcessSession,
     uint ConsoleSession, string ConsoleState, WorkerStatus Worker, DateTimeOffset UpdatedAt);

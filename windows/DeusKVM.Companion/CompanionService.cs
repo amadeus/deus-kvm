@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.ServiceProcess;
-using System.Text.Json;
 using DeusKVM.Companion.Core;
 
 namespace DeusKVM.Companion;
@@ -29,7 +27,7 @@ internal sealed class CompanionService : ServiceBase
     protected override void OnStart(string[] args)
     {
         shutdown = new CancellationTokenSource();
-        control = new ServiceControlServer(Log);
+        control = new ServiceControlServer(Log, () => Snapshot(ConsoleSession.Read(), worker, worker.At)); // live, not status.json
         runner = RunAsync(shutdown.Token);
     }
 
@@ -39,7 +37,7 @@ internal sealed class CompanionService : ServiceBase
         shutdown?.Cancel();
         control?.Dispose(); control = null;
         if (runner is not null && !runner.Wait(TimeSpan.FromSeconds(10)))
-            throw new System.TimeoutException("Link worker did not stop within ten seconds.");
+            throw new System.TimeoutException("The link did not stop within ten seconds.");
         shutdown?.Dispose();
         shutdown = null;
     }
@@ -60,7 +58,7 @@ internal sealed class CompanionService : ServiceBase
             Log($"Service started as {ProcessIdentity.Name}; session {ProcessIdentity.Session}");
             while (!stop.IsCancellationRequested)
             {
-                await RunWorkerAsync(stop);
+                await RunLinkAsync(stop);
                 await Task.Delay(TimeSpan.FromSeconds(2), stop);
             }
         }
@@ -78,73 +76,52 @@ internal sealed class CompanionService : ServiceBase
         }
     }
 
-    private async Task RunWorkerAsync(CancellationToken stop)
+    // The link (discovery, Mac connections, priority, the session helpers) runs in this process on
+    // its own STA thread with a message loop, which its sessions post their work to. A link that
+    // stops reporting is a hang this process cannot undo from outside: the service exits nonzero
+    // and SCM recovery starts it again.
+    private async Task RunLinkAsync(CancellationToken stop)
     {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo(RuntimeCompat.ProcessPath!)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                WorkingDirectory = AppContext.BaseDirectory
-            }
-        };
-        process.StartInfo.SetArguments(["--link-worker"]);
-        worker = new("Starting", "Looking for Macs under the service account.", DateTimeOffset.UtcNow);
-        using var job = new WorkerJob(allowBreakaway: true);
-        process.Start();
-        job.Add(process);
-        Log($"Link worker started: PID {process.Id}");
+        worker = new("Starting", "Looking for Macs on the network", DateTimeOffset.UtcNow);
         var watchdog = new WorkerWatchdog();
-        // Killing the job closes redirected pipes, releasing both asynchronous readers.
-        var output = ReadOutputAsync();
-        var errors = process.StandardError.ReadToEndAsync();
-        try
+        var exited = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        LinkWorker? link = null;
+        string? previous = null;
+        var thread = new Thread(() =>
         {
-            while (!stop.IsCancellationRequested && !process.HasExited)
-            {
-                SaveStatus();
-                if (watchdog.IsExpired())
-                {
-                    Log("Link worker is unresponsive; replacing it.");
-                    break;
-                }
-                await Task.Delay(TimeSpan.FromSeconds(2), stop);
-            }
-        }
-        finally
-        {
-            if (!process.HasExited) job.Terminate();
-            await process.WaitForExitAsync(CancellationToken.None);
-            try { await output; } catch (OperationCanceledException) { }
             try
             {
-                var stderr = await errors;
-                if (!string.IsNullOrWhiteSpace(stderr)) Log($"Worker stderr: {stderr}");
+                using var running = new LinkWorker(next =>
+                {
+                    worker = next;
+                    watchdog.Observe(next.State);
+                    if (next.DiscoveryEvent is { } discovery) Log(discovery);
+                    var summary = $"{next.State}: {next.Detail}; last discovery={next.LastDiscovery:O}";
+                    if (summary != previous) { Log(summary); previous = summary; }
+                });
+                Volatile.Write(ref link, running);
+                if (stop.IsCancellationRequested) running.RequestStop();
+                Application.Run(running);
+                exited.TrySetResult(running.ExitCode);
             }
-            catch (OperationCanceledException) { }
-            Log($"Link worker exited: {process.ExitCode}");
-        }
-
-        async Task ReadOutputAsync()
+            catch (Exception error) { Log($"Link failed: {error}"); exited.TrySetResult(1); }
+        }) { IsBackground = true, Name = "DeusKVM link" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Log("Link started");
+        using var cancel = stop.Register(() => Volatile.Read(ref link)?.RequestStop());
+        while (!exited.Task.IsCompleted)
         {
-            string? previous = null;
-            while (await process.StandardOutput.ReadLineAsync() is { } line)
+            SaveStatus();
+            if (!stop.IsCancellationRequested && watchdog.IsExpired())
             {
-                if (line.Length > 16384) throw new InvalidDataException("Worker response is too large.");
-                var next = JsonSerializer.Deserialize<WorkerStatus>(line)
-                    ?? throw new InvalidDataException("Empty worker response.");
-                // Ctrl+Alt+Delete from the active Mac: only the service itself may raise it.
-                if (next.SecureAttention) { next = next with { SecureAttention = false }; Log(SecureAttention.Send()); }
-                worker = next;
-                watchdog.Observe(next.State);
-                if (next.DiscoveryEvent is { } discovery) Log(discovery);
-                var summary = $"{next.State}: {next.Detail}; last discovery={next.LastDiscovery:O}";
-                if (summary != previous) { Log(summary); previous = summary; }
+                Log("The link is unresponsive; restarting the service.");
+                SaveStatus(force: true);
+                Environment.Exit(1);
             }
+            await Task.WhenAny(exited.Task, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
         }
+        Log($"Link stopped: {await exited.Task}");
     }
 
     // Readers need changes promptly and otherwise only a refresh well inside ServicePolicy.IsFresh's
@@ -157,13 +134,17 @@ internal sealed class CompanionService : ServiceBase
             RuntimeCompat.TickCount64 - savedAt < 15000) return;
         try
         {
-            JsonFiles.Write(Paths.Status, new ServiceSnapshot(RuntimeCompat.ProcessId, ProcessIdentity.Name, ProcessIdentity.Session,
-                console.Id, console.State, current, DateTimeOffset.UtcNow));
+            JsonFiles.Write(Paths.Status, Snapshot(console, current));
             savedWorker = current; savedConsole = console; savedAt = RuntimeCompat.TickCount64;
         }
         // A transient lock (for example antivirus on status.json.new) retries on the next pass.
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
+
+    // The live copy (for the tray's watch) is dated by the link's last report, which repeats every
+    // 10 s, so it changes only when something does; the file gets the time it was written.
+    private static ServiceSnapshot Snapshot((uint Id, string State) console, WorkerStatus current, DateTimeOffset? at = null) =>
+        new(RuntimeCompat.ProcessId, ProcessIdentity.Name, ProcessIdentity.Session, console.Id, console.State, current, at ?? DateTimeOffset.UtcNow);
 
     private void Log(string text)
     {

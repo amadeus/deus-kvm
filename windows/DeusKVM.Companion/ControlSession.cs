@@ -4,7 +4,7 @@ using DeusKVM.Companion.Core;
 
 namespace DeusKVM.Companion;
 
-// The companion protocol with one Mac over its control link, on the link worker's STA thread
+// The companion protocol with one Mac over its control link, on the link's STA thread in the service
 // (the connection's threads post here). Desktop observations are requests; the Mac remains the
 // routing authority.
 internal sealed partial class ControlSession(Action<string> status, Action secureAttention) : IDisposable

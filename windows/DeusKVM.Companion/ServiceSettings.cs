@@ -2,7 +2,7 @@ namespace DeusKVM.Companion;
 
 /// <summary>
 /// The settings changes the tray can ask for, applied the same way whether they arrive over
-/// the service's control pipe (as SYSTEM) or from an elevated command line. The link worker
+/// the service's control pipe (as SYSTEM) or from an elevated command line. The service's link
 /// watches settings.json, so a saved Mac takes effect without a restart.
 /// </summary>
 internal static class ServiceSettings

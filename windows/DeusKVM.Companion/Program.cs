@@ -16,17 +16,8 @@ internal static class Program
             return 0;
         }
 
-        // a dedicated STA with a message loop: the control sessions post their work to it.
-        // it runs under the service identity/session, with no interactive windows.
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        if (args is ["--link-worker"])
-        {
-            using var worker = new LinkWorker();
-            Application.Run(worker);
-            return worker.ExitCode;
-        }
-
         // SYSTEM in the console session (login screen, signed in, locked): input, edge return,
         // cursor and displays. Spawned by the service.
         if (args is ["--session-agent", var agentPipe, var agentParent] && int.TryParse(agentParent, out var agentPid))

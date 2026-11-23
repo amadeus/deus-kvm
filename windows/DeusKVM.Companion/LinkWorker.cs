@@ -1,14 +1,14 @@
-using System.Text.Json;
 using DeusKVM.Companion.Core;
 
 namespace DeusKVM.Companion;
 
 // Finds trusted Macs on the network, holds one control link per Mac, and elects which one
-// owns the PC (the same arbitration as before). Runs on the service's STA child process.
+// owns the PC. Runs inside the service process on its own STA thread (see CompanionService),
+// reporting each status change to it.
 internal sealed class LinkWorker : ApplicationContext
 {
     private readonly CancellationTokenSource shutdown = new();
-    private readonly StreamWriter output = new(Console.OpenStandardOutput()) { AutoFlush = true };
+    private readonly Action<WorkerStatus> report;
     private readonly System.Windows.Forms.Timer heartbeat = new() { Interval = 10000 };
     private readonly Dictionary<long, Attempt> attempts = [];
     private readonly Dictionary<long, int> failures = [];
@@ -41,10 +41,18 @@ internal sealed class LinkWorker : ApplicationContext
         public long ProcessedRequest { get; set; }
     }
 
-    public LinkWorker()
+    public LinkWorker(Action<WorkerStatus> report)
     {
+        this.report = report;
         heartbeat.Tick += (_, _) => Emit(status);
         heartbeat.Start(); Application.Idle += Start;
+    }
+
+    /// <summary>Ends the link from any thread; its message loop exits once it has wound down.</summary>
+    public void RequestStop()
+    {
+        try { shutdown.Cancel(); }
+        catch (ObjectDisposedException) { }
     }
 
     private async void Start(object? sender, EventArgs args)
@@ -138,7 +146,8 @@ internal sealed class LinkWorker : ApplicationContext
         var link = new MacSession(mac, endpoints, identity!, Trusted,
             detail => { if (priority.Active?.Connection == mac.Connection) Emit(status with { Detail = detail }); },
             // Ctrl+Alt+Delete: SendSAS must come from the service process, which reads these lines.
-            () => { if (priority.Active?.Connection == mac.Connection) Emit(status with { SecureAttention = true }); });
+            // Ctrl+Alt+Delete from the active Mac: SendSAS must come from the service process (this one).
+            () => { if (priority.Active?.Connection == mac.Connection) Emit(status with { DiscoveryEvent = SecureAttention.Send() }); });
         attempts[mac.Connection] = new Attempt(link, link.Open()) { Failures = failures.GetValueOrDefault(mac.Connection) };
     }
 
@@ -324,8 +333,8 @@ internal sealed class LinkWorker : ApplicationContext
         // Cached: these lookups would otherwise run on every status line.
         next = next with { At = DateTimeOffset.UtcNow, Identity = ProcessIdentity.Name,
             ProcessSession = ProcessIdentity.Session };
-        output.WriteLine(JsonSerializer.Serialize(next));
-        status = next with { DiscoveryEvent = null, SecureAttention = false };
+        report(next);
+        status = next with { DiscoveryEvent = null };
     }
 
     protected override void Dispose(bool disposing)
@@ -334,7 +343,7 @@ internal sealed class LinkWorker : ApplicationContext
         {
             shutdown.Cancel(); heartbeat.Dispose(); discovery?.Dispose(); identity?.Dispose();
             foreach (var attempt in attempts.Values) attempt.Link.Dispose();
-            attempts.Clear(); output.Dispose(); shutdown.Dispose();
+            attempts.Clear(); shutdown.Dispose();
         }
         base.Dispose(disposing);
     }

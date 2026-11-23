@@ -2,7 +2,7 @@ namespace DeusKVM.Companion.Core;
 
 public sealed record ConnectedMac(string Id, string Name, string Address, long Connection);
 
-// One instance per link worker. All observations and elections are serialized by its STA.
+// One instance per link (in the service). All observations and elections are serialized by its STA.
 public sealed class MacPriority(string? startupPreference = null, bool requireAvailability = false)
 {
     private readonly Dictionary<string, ConnectedMac> connected = new(StringComparer.Ordinal);
@@ -101,7 +101,7 @@ public sealed class MacPriority(string? startupPreference = null, bool requireAv
     }
 }
 
-// Written only by the service's link worker; Add Mac writes settings.json, which it merges in.
+// Written only by the service's link; Add Mac writes settings.json, which it merges in.
 public sealed record AutomaticMacSettings(string? LastActiveId, CompanionSettings[] Macs)
 {
     /// <summary>Only Macs saved by their control-link id (entries from older builds have none).</summary>
