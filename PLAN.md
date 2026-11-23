@@ -195,6 +195,11 @@ prompt. The first Developer ID build needs Accessibility and Input Monitoring
 granted again on each Mac (the signing identity changed); notarizing later does
 not change it again.
 
+- Notarized: profile stored by the user; Apple accepted the submission, the
+  ticket is stapled, and a copy of the zip extracted with a quarantine flag passes
+  `spctl` as "Notarized Developer ID" (arm64 only). Pending: opening it on another
+  Mac without the prompt; re-granting the two permissions on each Mac.
+
 ### Mac CPU while moving the pointer — 2026-11-12
 
 Measured with a synthetic 120 Hz pointer and `sample`: on the Mac, DeusKVM's own
