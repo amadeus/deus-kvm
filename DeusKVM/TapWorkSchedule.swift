@@ -51,6 +51,9 @@ enum TapMask {
     ])
     static let motion = mask([.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged])
     static let remote = TrackpadGesture.remoteMask | mask([.scrollWheel])
+    /// Media keys at the HID level, only while remote: macOS 27 acts on a volume key's press
+    /// before a session tap sees it (only the release arrives there), so the press is taken here.
+    static let media = mask([MediaKeyEvent.eventType])
 
     private static func mask(_ types: [CGEventType]) -> CGEventMask {
         types.reduce(0) { $0 | CGEventMask(1) << CGEventMask($1.rawValue) }

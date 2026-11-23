@@ -34,6 +34,9 @@ final class InputTap: @unchecked Sendable {
     private var remoteTap: CFMachPort?
     /// Motion and drags: while remote, and on the Mac near the edge (`PointerProximity`).
     private var motionTap: CFMachPort?
+    /// Media keys at the HID level, while remote (`TapMask.media`): volume presses reach the PC
+    /// instead of changing the Mac's volume.
+    private var mediaTap: CFMachPort?
     private var motionGate = MotionGate.tap
     private var pollTimer: CFRunLoopTimer?
     private var lastPoll: CGPoint?
@@ -84,7 +87,7 @@ final class InputTap: @unchecked Sendable {
             _cancelTick()
             remote = false
             generation += 1
-            for tap in [eventTap, remoteTap, motionTap].compactMap(\.self) {
+            for tap in [eventTap, remoteTap, motionTap, mediaTap].compactMap(\.self) {
                 CFMachPortInvalidate(tap)
             }
             if let pollTimer { CFRunLoopTimerInvalidate(pollTimer) }
@@ -98,6 +101,7 @@ final class InputTap: @unchecked Sendable {
             // macOS may have disabled either of the others instead; restore what the state wants.
             if let remoteTap { CGEvent.tapEnable(tap: remoteTap, enable: remote) }
             if let motionTap { CGEvent.tapEnable(tap: motionTap, enable: motionGate == .tap) }
+            if let mediaTap { CGEvent.tapEnable(tap: mediaTap, enable: remote) }
             // Events, releases included, were lost while macOS had the tap disabled.
             _requestResync("tap re-enabled", force: true)
         }
@@ -169,15 +173,18 @@ final class InputTap: @unchecked Sendable {
         // A split-off tap that cannot be created leaves its events on the main tap, as before.
         let remoteTaps = Self.makeTap(TapMask.remote, refcon, enabled: false)
         let motionTaps = Self.makeTap(TapMask.motion, refcon, enabled: true)
+        // Without it (no permission for an HID-level tap) media keys stay on the main tap as before.
+        let mediaTaps = Self.makeTap(TapMask.media, refcon, enabled: false, location: .cghidEventTap)
+        log.notice("media keys: \(mediaTaps == nil ? "session tap only (HID tap unavailable)" : "HID tap while remote", privacy: .public)")
         let mask = TapMask.main | (remoteTaps == nil ? TapMask.remote : 0) | (motionTaps == nil ? TapMask.motion : 0)
         guard let main = Self.makeTap(mask, refcon, enabled: true) else {
-            for extra in [remoteTaps, motionTaps].compactMap(\.self) {
+            for extra in [remoteTaps, motionTaps, mediaTaps].compactMap(\.self) {
                 CFMachPortInvalidate(extra.tap)
             }
             return
         }
         let loop = CFRunLoopGetCurrent()!
-        for extra in [remoteTaps, motionTaps].compactMap(\.self) {
+        for extra in [remoteTaps, motionTaps, mediaTaps].compactMap(\.self) {
             CFRunLoopAddSource(loop, extra.source, .commonModes)
         }
         let poll = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 1e9, 1e9, 0, 0) { [weak self] _ in self?._poll() }!
@@ -187,6 +194,7 @@ final class InputTap: @unchecked Sendable {
             eventTap = main.tap
             remoteTap = remoteTaps?.tap
             motionTap = motionTaps?.tap
+            mediaTap = mediaTaps?.tap
             pollTimer = poll
             motionGate = .tap
             runLoop = loop
@@ -207,7 +215,7 @@ final class InputTap: @unchecked Sendable {
         if lock.withLock({ runState.isRunning }) { CFRunLoopRun() }
         keyboard.stop(on: loop)
         self.keyboard = nil
-        for tap in [main.tap, remoteTaps?.tap, motionTaps?.tap].compactMap(\.self) {
+        for tap in [main.tap, remoteTaps?.tap, motionTaps?.tap, mediaTaps?.tap].compactMap(\.self) {
             CFMachPortInvalidate(tap)
         }
         CFRunLoopTimerInvalidate(poll)
@@ -216,6 +224,7 @@ final class InputTap: @unchecked Sendable {
             eventTap = nil
             remoteTap = nil
             motionTap = nil
+            mediaTap = nil
             pollTimer = nil
             runLoop = nil
         }
@@ -489,10 +498,10 @@ extension InputTap {
     }
 
     private static func makeTap(
-        _ mask: CGEventMask, _ refcon: UnsafeMutableRawPointer, enabled: Bool
+        _ mask: CGEventMask, _ refcon: UnsafeMutableRawPointer, enabled: Bool, location: CGEventTapLocation = .cgSessionEventTap
     ) -> (tap: CFMachPort, source: CFRunLoopSource)? {
         guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+            tap: location, place: .headInsertEventTap, options: .defaultTap,
             eventsOfInterest: mask, callback: callback, userInfo: refcon
         ) else { return nil }
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
@@ -506,6 +515,7 @@ extension InputTap {
     /// Called with the lock held, whenever `remote`, the return probe or the layout changes.
     private func _applyTaps() {
         if let remoteTap { CGEvent.tapEnable(tap: remoteTap, enable: remote) }
+        if let mediaTap { CGEvent.tapEnable(tap: mediaTap, enable: remote) }
         if remote || returnProbe != nil {
             _setMotion(.tap)
         } else if !_edgeActive {
@@ -517,7 +527,7 @@ extension InputTap {
 
     /// Lock held: macOS disabled a tap that should be on (answering our own disables looped).
     private var _lostTap: Bool {
-        [(eventTap, true), (remoteTap, remote), (motionTap, motionGate == .tap)].contains { tap, on in
+        [(eventTap, true), (remoteTap, remote), (motionTap, motionGate == .tap), (mediaTap, remote)].contains { tap, on in
             tap.map { on && !CGEvent.tapIsEnabled(tap: $0) } ?? false
         }
     }

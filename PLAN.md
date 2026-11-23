@@ -171,6 +171,13 @@ the screen (Session 0), so it runs two helpers it manages:
   stream socket times out after 5 s of silence (the Mac pings every second) and
   reconnects; the agent exits (and is restarted) if one delivery runs over 5 s,
   logging that to edge-return.log; stream drops are logged there too.
+- Volume keys on the PC changed the Mac's volume instead. A listen-only session
+  tap on macOS 27.2.1 saw only the releases (NX_SYSDEFINED subtype 8, state 0x0B)
+  of volume up/down, never the presses: macOS acts on the press before session
+  taps. An HID-level tap saw both. The Mac now adds an HID-level media-key tap,
+  enabled only while remote, that consumes and forwards them (falls back to the
+  session tap if it cannot be created; the log says which at start). Pending:
+  volume up/down/mute and play/pause change the PC, not the Mac.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 
