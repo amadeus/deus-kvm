@@ -1,8 +1,9 @@
 # DeusKVM Companion: start here
 
 The companion lets your Mac's keyboard, mouse and trackpad control this PC over the
-local network. It needs the Mac app from the same release, and both computers on
-the same private network.
+local network, including at the login screen, the lock screen and UAC prompts. It
+needs the Mac app from the same release, and both computers on the same private
+network.
 
 ## Set up
 
@@ -10,7 +11,7 @@ the same private network.
    prompt. It installs or updates the service and opens its settings; nothing else
    is needed alongside it.
 2. Open DeusKVM on the Mac and allow local network access if macOS asks.
-3. In the companion, choose **Add Mac…**, pick your Mac and approve the prompt.
+3. In the companion, choose **Add Mac…** and pick your Mac.
 4. On the Mac, the PC appears in **Setup → Devices**; turn on **Enable control**.
 
 Repeat **Add Mac…** for each Mac. A Mac reached only over Tailscale or another

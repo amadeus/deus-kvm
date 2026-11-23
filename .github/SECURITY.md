@@ -29,11 +29,12 @@ DeusKVM controls your own Windows PC from your Mac. Reports are most useful for:
   always connects out to the Mac. Traffic is encrypted and authenticated with
   AES-GCM under keys derived from that offer.
 - The Windows service, which runs as LocalSystem, and its helper processes: the
-  desktop worker in the signed-in console session and the SYSTEM worker that
-  injects input on the secure desktop (UAC prompts, lock and login screens) and
-  behind elevated windows. Their named pipes are restricted to SYSTEM and, for
-  the desktop worker, the console user; network access is denied, and the
-  service checks each pipe client's process ID.
+  session agent (SYSTEM in the console session), which receives the Mac's input
+  stream and injects it on every desktop (the user's, elevated windows, UAC
+  prompts, lock and login screens), and the clipboard helper (the signed-in
+  user). Their named pipes are restricted to SYSTEM and, for the clipboard
+  helper, the console user; network access is denied, and the service checks
+  each pipe client's process ID (and each helper the server's).
 - The service's control pipe (`\\.\pipe\DeusKVM.Control`), the tray's remote
   control. SYSTEM and Administrators have full access and interactive (console)
   users read/write; network clients are denied. It accepts one bounded JSON

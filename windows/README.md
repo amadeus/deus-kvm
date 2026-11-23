@@ -1,10 +1,18 @@
 # DeusKVM Windows companion
 
-The service finds your Macs on the local network, connects to them, and owns
-switching and plain-text clipboard coordination. It launches the desktop worker
-and a SYSTEM secure-input worker that injects the Mac's input; the optional tray
-configures the service. Closing the tray leaves switching and clipboard sharing
-running. Bluetooth is not used.
+One service does everything. It finds your Macs on the local network, connects
+to them, owns switching and clipboard coordination, and starts two helpers it
+manages itself, because a service cannot reach the screen directly:
+
+- the **session agent**, SYSTEM in the console session whenever there is one (the
+  login screen before anyone signs in, while signed in, while locked). It injects
+  the Mac's keys, pointer and scroll on whichever screen has input, watches the
+  edge for the return to the Mac on all of them, and places and hides the cursor;
+- the **clipboard helper**, the signed-in user, only while someone is signed in:
+  clipboard, file and image paste must run as that user.
+
+The optional tray is a remote control for the service. Closing it leaves
+everything running. Bluetooth is not used.
 
 Windows owns the control decision. The first connected, enabled DeusKVM Mac
 becomes active. A later Mac is automatically disabled. Clicking **Enable DeusKVM**
@@ -52,7 +60,7 @@ Bluetooth & devices** once the network build works (the Mac has nothing to remov
 ### Finding Macs
 
 Each Mac listens on TCP port 53400 (another port if that one is busy) and
-announces itself with Bonjour (`_deuskvm._tcp`). The service's link worker sends
+announces itself with Bonjour (`_deuskvm._tcp`). The service sends
 Bonjour queries on every IPv4 interface and connects out to the Macs you added;
 Windows needs no listening port or inbound firewall rule.
 
@@ -69,15 +77,15 @@ by SYSTEM and Administrators.
 
 ### Network input
 
-When control passes to the PC, the desktop worker connects to an input listener on
+When control passes to the PC, the session agent connects to an input listener on
 the Mac, the same way file paste does, and receives the trackpad's pointer motion
-and clicks at the pad's own rate, plus keys, media keys and scroll steps. By
-default every step is handed to the SYSTEM secure-input worker, which injects it on
-whichever desktop has input, so input also works on UAC prompts, the lock screen
-and over elevated (administrator) windows. The desktop worker injects directly only
-while that worker is unavailable. The Windows Mouse settings apply.
+and clicks at the pad's own rate, plus keys, media keys and scroll steps. It
+injects each one as it arrives on whichever desktop has input: the user's desktop,
+over elevated (administrator) windows, and the login screen, lock screen and UAC
+prompts, where it also runs the edge test, so the edge returns to the Mac there
+too. The Windows Mouse settings apply.
 
-Keys arrive as whole keyboard states; the desktop worker turns them into key presses
+Keys arrive as whole keyboard states; the agent turns them into key presses
 and releases by scan code (so the PC's layout applies), repeats the newest held key
 at the Control Panel delay and rate, raises Ctrl+Alt+Delete through the service
 process (`SendSAS`, which only a service may call, after setting the `SoftwareSASGeneration` policy to allow
@@ -93,10 +101,10 @@ pointer back within 150 ms, they also go over the control link (at most once per
 100 ms). The settings window's status adds a "Network pointer: up" line while the
 stream runs.
 
-The SYSTEM-worker relay on a UAC prompt and the elevated-window fix were confirmed
-on hardware on 2026-11-11. Network edge return, keys and scrolling on the stream,
-and the network-only link itself (Bonjour discovery, **Add Mac…**, the encrypted
-control link) still need hardware validation.
+The network-only link, keys, scrolling, PowerToys remaps and Ctrl+Alt+Delete were
+confirmed on hardware on 2026-11-22 with the earlier two-worker build. The session
+agent (one SYSTEM helper for every desktop, including edge return on the login and
+lock screens and UAC prompts) still needs hardware validation.
 
 ### Multiple Macs
 
@@ -111,15 +119,16 @@ prove that behavior.
 
 ### Service
 
-The service runs as LocalSystem, including before login and after sign-out. Its
-link worker (`--link-worker`) inherits that identity in Session 0, runs discovery
-and the control links on a dedicated STA message loop, and is isolated so the
-service can terminate it if it stalls. A Mac restart, sleep or
-network change can end the link; the worker reconnects when the Mac is found again.
-The network-only link was confirmed at the login screen after a Windows reboot on
-2026-11-22: the Mac connects before sign-in and the pointer, keys and Ctrl+Alt+Delete
-work there. Edge return is not available until someone signs in (it comes from the
-desktop worker, which runs in the signed-in session); use the Mac's hotkey.
+The service runs as LocalSystem in Session 0, including before login and after
+sign-out. Discovery and the control links run inside it on a dedicated STA message
+loop; if that loop stops reporting, the service exits and Windows' service recovery
+restarts it. A Mac restart, sleep or network change can end the link; the service
+reconnects when the Mac is found again. While a Mac is active the service keeps the
+session agent running in the console session (restarting it when the session
+changes, for example after signing out) and the clipboard helper running for the
+signed-in user. The earlier build was confirmed at the login screen after a reboot
+on 2026-11-22; edge return there was then unavailable (it came from a helper in the
+signed-in session), which the session agent fixes.
 
 Windows may display its normal unsigned-app reputation prompt for this personal
 build. The EXE is built from this repository; no installer downloads or
@@ -190,13 +199,11 @@ automatically. Leave the service running and test:
   should occur. Quit the tray and repeat edge switching; it should still work.
 - Restart the Mac app and confirm the PC reconnects without adding the Mac
   again. If the link drops while remote, the Mac restores local input.
-- While controlling Windows, press Ctrl+Alt+Delete, then close the security
-  screen and return through the Windows edge. Edge return resumes on the normal
-  desktop without a hotkey round trip. While the security screen is open, use
-  the Mac hotkey if needed; returning locally that way must prevent a stale
-  Windows edge event from switching again after the security screen closes.
+- While controlling Windows, press Ctrl+Alt+Delete and return through the Windows
+  edge while the security screen is open, then again after closing it. Using the
+  Mac hotkey instead must not let a stale Windows edge event switch again later.
 
-The clipboard worker runs only in the signed-in console user session and
+The clipboard helper runs only in the signed-in console user session and
 accesses the clipboard only on the Default desktop. The local Mac hotkey
 remains available when an application confines the PC cursor.
 
@@ -204,15 +211,13 @@ remains available when an application confines the PC cursor.
 
 With the updated companion and Mac app, reboot Windows, cross from the Mac at
 the login screen and sign in. Once **Setup → Devices** on the Mac reports
-**Windows edge return ready**, move back through the Windows edge. The current
-handoff should continue without a hotkey round trip or another entry, and the
-cursor should stay where you left it when the desktop worker becomes ready.
-Also check that using the Mac hotkey before the worker is ready prevents a late
-return event after login. Amadeus confirmed login behavior works with the
-Bluetooth builds; this checklist remains useful for regressions.
+**Windows edge return ready**, move back through the Windows edge, both at the
+login screen and after signing in. The handoff should continue across sign-in
+without a hotkey round trip or another entry (the session agent keeps running in
+the same session).
 
-The tray can now auto-launch after login; the service and desktop worker still
-operate without it. Login launch does not open a settings window.
+The tray can auto-launch after login; the service and its helpers operate
+without it. Login launch does not open a settings window.
 
 Use **Open diagnostics** in the tray for `status.json` and `service.log` in
 `C:\ProgramData\DeusKVM`. Logs include discovery results, connection errors,
@@ -292,19 +297,19 @@ SDK. On Windows, run the same test command with `-f net48` as well (Windows CI
 runs both targets). The single EXE is written to the visible `releases/` folder
 at the repository root as `DeusKVM-Companion-win-x64-<date>.exe`; the
 repository-root `DeusKVM-Companion-win-x64.zip` carries the current one.
-Core tests run on macOS; service, desktop workers, Raw Input and tray execution
-must be verified on Windows.
+Core tests run on macOS; the service, the session agent and clipboard helper, Raw
+Input and tray execution must be verified on Windows.
 
 References: [service isolation](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services)
 and [service access rights](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights).
 
-Desktop worker API references: [CreateProcessAsUser](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessasuserw) and [Microsoft device instance property definitions](https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/shared/devpkey.h).
+Helper launch API references: [CreateProcessAsUser](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessasuserw) and [Microsoft device instance property definitions](https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/shared/devpkey.h).
 
 ## Desktop-launch correction (2026-09-13, historical)
 
-The desktop worker starts outside the Session 0 worker's job (then the
-Bluetooth worker, now the link worker), using explicit breakaway and the console
-user's token. Its retained process handle and background pipe-disconnect monitor
+The desktop worker (now the session agent and clipboard helper) started outside
+the Session 0 worker's job (then the Bluetooth worker; the link now runs in the
+service itself), using explicit breakaway and the console user's token. Its retained process handle and background pipe-disconnect monitor
 preserve service-owned shutdown across sessions. This fixed a launch path that
 could report "Access is denied" while the Mac link itself stayed connected.
 Startup failures keep the operation and Win32 error in status.json rather than

@@ -75,6 +75,36 @@ exit, offer change, relay Release, desktop switch.
   hotkey is needed there. On the "Restarting" screen the Mac's pointer does not
   work: Windows ends the session's helpers before that screen.
 
+### Windows: one service, everywhere — 2026-11-22
+
+The service owns everything; the tray is a remote control. A service cannot reach
+the screen (Session 0), so it runs two helpers it manages:
+
+- **Session agent** (`--session-agent`, SYSTEM in the console session whenever
+  there is one): receives the input stream and injects on whichever desktop has
+  input (each injecting thread attaches with `InputDesktop`), runs the edge test
+  there, places and hides the cursor, reports displays. Replaces the desktop
+  worker's input side and the SYSTEM secure worker; the relay, fallback,
+  elevated-window blocking and pointer pipe are gone.
+- **Clipboard helper** (`--clipboard-worker`, the signed-in user): clipboard,
+  file and image paste only, with a 5 s heartbeat.
+- The link worker child process is gone: the link runs in the service on an STA
+  thread; a stalled link makes the service exit nonzero for SCM recovery.
+- The tray talks to `\\.\pipe\DeusKVM.Control` (status watch, Add Mac, startup
+  preferences, stop) with no UAC; the installer lets interactive users start and
+  stop the service. The edge log moved to `%ProgramData%\DeusKVM`.
+
+- Validation: companion builds (Debug and Release, 0 warnings); 217 tests.
+- Hardware pending: boot to the login screen with nobody signed in, cross, type,
+  Ctrl+Alt+Delete and **edge return there**; sign in and keep going without a
+  reconnect; lock and unlock (edge return on the lock screen); UAC prompt and an
+  elevated window (pointer, keys, edge return); sign out to the login screen and
+  back; clipboard text, images and files after sign-in (off at the login
+  screen); tray status live, Add Mac and the startup checkboxes with no UAC
+  prompt, Start/Stop from the tray; key repeat rate as SYSTEM matches the user's
+  setting; cursor hiding on the user desktop after returning to the Mac; service
+  and PC restart recovery; both Macs and takeover.
+
 ### Mac CPU while moving the pointer — 2026-11-12
 
 Measured with a synthetic 120 Hz pointer and `sample`: on the Mac, DeusKVM's own

@@ -29,7 +29,8 @@ see the [Windows guide](windows/README.md)).
    or updates the service and opens its settings; no scripts or separate .NET
    installation are required.
 3. Choose **Add Mac…** in the Windows companion, pick your Mac's computer name
-   from the Macs found on the network, and approve the administrator prompt.
+   from the Macs found on the network (no administrator prompt while the
+   service is running).
 4. The PC appears in the Mac's **Setup → Devices** a few seconds later; turn on
    **Enable control** for it.
 5. In **Configuration**, choose the Mac display and exit edge, leave edge switching enabled,
@@ -89,10 +90,10 @@ something still needs setting up.
   settings UI separately. Closing either settings window leaves control running.
 
 The Windows service supports control at the login screen and across sign-in.
-A SYSTEM helper injects the pointer on UAC prompts, the lock screen, and
-administrator windows, which ordinary input cannot reach; if the helper cannot
-run there, the desktop worker injects where it can.
-Clipboard access remains limited to the signed-in desktop. See the
+Its SYSTEM session agent types and moves the pointer on every screen, including
+UAC prompts, the lock and login screens and administrator windows, and the
+Windows edge returns to the Mac on all of them. Clipboard access remains limited
+to the signed-in desktop. See the
 [Windows guide](windows/README.md) for service controls and diagnostics.
 
 ## Update or remove
