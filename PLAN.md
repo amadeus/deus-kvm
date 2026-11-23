@@ -64,6 +64,10 @@ exit, offer change, relay Release, desktop switch.
   service), so the request now travels to the service process, which logs each
   attempt in service.log. Confirmed on hardware: Cmd+Option+Delete raises the
   security screen from the service.
+- 2026-11-22 cleanup: the Mac's Bluetooth HID fallback, the chunk framer (both
+  sides), Bluetooth-era settings fields and the probe/test scripts are removed.
+  Pending hardware: a quick regression pass of typing, pointer, buttons, scroll,
+  media keys and leaving the PC with a key or button held.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 
