@@ -155,6 +155,13 @@ the screen (Session 0), so it runs two helpers it manages:
   hidden where it is, by the user's helper on the Default desktop, as before the
   rework. The taskbar tooltip race at the clock remains (it reproduced with that
   arrangement too, 4/4 in the scripted runs); no fix is shipped for it.
+  With a test hider over the clock, WindowFromPoint reports the hider on top of
+  Shell_TrayWnd, yet the tooltip still opens and sticks even after a
+  zero-distance or same-pixel injected move (13/13): covering the taskbar does
+  not cancel its pending tooltip. Suspected Windows regression: the PC took the
+  2026-11 Preview Update KB5132057 (build 26300.10075) on 2026-11-22, with
+  explorer.exe dated 2026-11-21, the day the tooltip was first noticed.
+  Uninstalling that update would confirm it.
 
 ### Mac CPU while moving the pointer — 2026-11-12
 
