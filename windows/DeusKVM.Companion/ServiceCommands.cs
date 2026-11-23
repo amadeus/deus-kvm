@@ -14,7 +14,7 @@ internal static class ServiceCommands
         using var identity = WindowsIdentity.GetCurrent();
         if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             throw new InvalidOperationException("This service operation requires administrator permission.");
-        if (File.Exists(Paths.RemovalMarker)) throw new InvalidOperationException("Finish the pending removal before changing service settings.");
+        ServiceSettings.RefuseDuringRemoval();
         using var service = new ServiceController(Paths.ServiceName);
         switch (args)
         {
@@ -33,18 +33,15 @@ internal static class ServiceCommands
                 }
                 break;
             case ["--startup", "auto" or "manual"]:
-                RunSc("config", Paths.ServiceName, "start=", args[1] == "auto" ? "auto" : "demand");
+                ServiceSettings.SetAutomaticStartup(args[1] == "auto");
                 break;
             case ["--tray-startup", "on" or "off"]:
-                TrayStartup.SetEnabled(args[1] == "on");
+                ServiceSettings.SetTrayStartup(args[1] == "on");
                 break;
             case ["--configure", var encoded]:
                 if (encoded.Length > 16384) throw new ArgumentException("Device selection is too large.");
-                var settings = JsonSerializer.Deserialize<CompanionSettings>(Convert.FromBase64String(encoded))
-                    ?? throw new ArgumentException("Invalid device selection.");
-                settings.Validate();
-                if (!Directory.Exists(Paths.DataDirectory)) throw new InvalidOperationException("Install the service first.");
-                JsonFiles.Write(Paths.Settings, settings);
+                ServiceSettings.Configure(JsonSerializer.Deserialize<CompanionSettings>(Convert.FromBase64String(encoded))
+                    ?? throw new ArgumentException("Invalid device selection."));
                 break;
             default:
                 throw new ArgumentException("Unknown companion command.");

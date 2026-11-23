@@ -79,6 +79,10 @@ internal static class ServiceInstaller
             ServiceCommands.RunSc("description", Paths.ServiceName, "Connects to your DeusKVM Macs over the local network and lets the active one control this PC, independently of user login.");
             ServiceCommands.RunSc("failure", Paths.ServiceName, "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000");
             ServiceCommands.RunSc("failureflag", Paths.ServiceName, "0");
+            // Interactive users may also start and stop it (RP, WP), so the tray needs no UAC
+            // prompt for that. Best effort: without it the tray elevates as before.
+            try { ServiceCommands.RunSc("sdset", Paths.ServiceName, ServiceSecurity); }
+            catch (InvalidOperationException) { }
             CreateShortcut();
             if (startAfterInstall)
             {
@@ -133,6 +137,10 @@ internal static class ServiceInstaller
             }
         }
     }
+
+    // Windows' default service DACL, plus start and stop for interactive users (IU).
+    internal const string ServiceSecurity =
+        "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)";
 
     private static void ProtectDirectory(string path)
     {

@@ -9,6 +9,7 @@ internal sealed class CompanionService : ServiceBase
 {
     private CancellationTokenSource? shutdown;
     private Task? runner;
+    private ServiceControlServer? control; // the tray's remote control
     private volatile WorkerStatus worker = new("Starting", "Starting the Mac link", DateTimeOffset.UtcNow);
     private readonly object logLock = new();
     private WorkerStatus? savedWorker;
@@ -28,6 +29,7 @@ internal sealed class CompanionService : ServiceBase
     protected override void OnStart(string[] args)
     {
         shutdown = new CancellationTokenSource();
+        control = new ServiceControlServer(Log);
         runner = RunAsync(shutdown.Token);
     }
 
@@ -35,6 +37,7 @@ internal sealed class CompanionService : ServiceBase
     {
         Log("Stop requested; automatic startup preference is unchanged.");
         shutdown?.Cancel();
+        control?.Dispose(); control = null;
         if (runner is not null && !runner.Wait(TimeSpan.FromSeconds(10)))
             throw new System.TimeoutException("Link worker did not stop within ten seconds.");
         shutdown?.Dispose();
