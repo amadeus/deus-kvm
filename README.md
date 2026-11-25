@@ -190,9 +190,8 @@ DeusKVM is licensed under [AGPL-3.0-only](LICENSE).
 
 ## Acknowledgments
 
-DeusKVM was forked from [BTRemote by jqssun](https://github.com/jqssun/darwin-bt-remote).
-We built a new Mac-to-Windows KVM app on top of its Bluetooth HID foundation,
-adding screen-edge switching, a Windows companion service, login-screen control,
-and shared text clipboard support, and later moved everything onto the local
-network. Thanks to the original author and contributors
-for making that foundation available as open source.
+DeusKVM began as a fork of [BTRemote by jqssun](https://github.com/jqssun/darwin-bt-remote),
+whose Bluetooth HID implementation inspired this project. DeusKVM has since
+taken a different direction: all communication now uses the local network,
+and the app no longer uses any Bluetooth functionality. Thanks to the original
+author and contributors for the inspiration and open-source foundation.
