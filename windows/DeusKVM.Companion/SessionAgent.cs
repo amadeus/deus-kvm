@@ -40,7 +40,7 @@ internal sealed class SessionAgent : ApplicationContext
     private readonly object gate = new();
     private readonly Dictionary<long, Source> sources = [];
     private InputOwnership ownership = new();
-    private readonly OwnershipWork work = new();
+    private readonly DesktopInputReadiness work = new();
     private readonly KeyboardState keyboard = new();
     private readonly ConsumerState media = new();
     private readonly KeyRepeater repeater;
@@ -48,7 +48,9 @@ internal sealed class SessionAgent : ApplicationContext
     private int repeatSerial;
     private bool releasePending, started, seeded;
     private long pendingSince;
-    private bool clipboardReadyOnDefault;
+    private SessionLockState sessionLock;
+    private bool sessionNotifications;
+    private string? lastReadiness;
     private MonitorInfo[] monitors = [];
     private byte blind = 4;
     private readonly DiagnosticHistory history = new();
@@ -80,6 +82,7 @@ internal sealed class SessionAgent : ApplicationContext
             if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid) || pid != parent)
                 throw new InvalidDataException("Unexpected agent pipe server");
             var post = context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            sessionNotifications = WTSRegisterSessionNotification(window.Handle, 0);
             if (!DesktopNative.RegisterRawInputDevices([new() { Page = 1, Usage = 2, Flags = 0x2100, Target = window.Handle }],
                 1, (uint)Marshal.SizeOf<DesktopNative.RawDevice>())) throw new Win32Exception(Marshal.GetLastWin32Error());
             Refresh(); timer.Start();
@@ -123,6 +126,7 @@ internal sealed class SessionAgent : ApplicationContext
         try
         {
             var desktop = DesktopNative.DesktopState();
+            sessionLock = SessionLock.Read(ProcessIdentity.Session);
             var next = DesktopNative.Monitors();
             blind = desktop.Blind;
             if (next.Length > 0 && !next.SequenceEqual(monitors))
@@ -130,8 +134,12 @@ internal sealed class SessionAgent : ApplicationContext
                 monitors = next;
                 Send(new DesktopMessage("screens", Monitors: monitors));
             }
-            if (!work.Ready && pendingSince != 0 && RuntimeCompat.TickCount64 - pendingSince > 5000 && Owner is { } timedOut)
-                FailSource(timedOut, "Clipboard preparation timed out");
+            if (Owner is { } selected && ownership.IsRemote(selected.Id, selected.Stream))
+            {
+                if (!work.Ready && pendingSince != 0 && RuntimeCompat.TickCount64 - pendingSince > 5000)
+                    FailSource(selected, $"Input preparation timed out ({work.Reason}, session={sessionLock})");
+                else ScheduleReadiness(selected.Id, ownership.Generation);
+            }
             if (RuntimeCompat.TickCount64 - lastHealth >= 10000)
             {
                 lastHealth = RuntimeCompat.TickCount64;
@@ -170,13 +178,14 @@ internal sealed class SessionAgent : ApplicationContext
             }
             if (message.Kind == "clipboard-ready")
             {
-                if (message.Ok && work.Current(message.Source, message.Ownership))
-                    OnDesktop(() => Complete(message.Source, message.Ownership, message.SecureReady));
+                if (message.Ok && work.ClipboardInstalled(message.Source, message.Ownership))
+                    ScheduleReadiness(message.Source, message.Ownership);
                 return;
             }
             if (message.Kind == "clipboard-lost")
             {
-                if (Owner is { } selected) { ownership.Renew(); BeginOwner(selected); }
+                if (Owner is { } selected && ownership.IsRemote(selected.Id, selected.Stream))
+                { ownership.Renew(); BeginOwner(selected, renew: true); }
                 return;
             }
             if (!sources.TryGetValue(message.Source, out var source) || source.Stream != message.Stream) return;
@@ -189,9 +198,7 @@ internal sealed class SessionAgent : ApplicationContext
                     if (source.Config?.Edge != message.Edge || message.Capture == 0) { Ack(source, message, false); break; }
                     source.Switch = message.SwitchId; source.Capture = message.Capture;
                     ownership.Enter(source.Id, source.Stream, message.SwitchId, message.Capture);
-                    BeginOwner(source);
-                    // The placement waits behind the same clipboard barrier as keyboard/mouse input.
-                    work.Submit(source.Id, ownership.Generation, () => Place(source, message));
+                    BeginOwner(source, () => Place(source, message));
                     break;
                 case "resume":
                     if (source.Config?.Edge != message.Edge || message.Capture == 0) break;
@@ -218,17 +225,19 @@ internal sealed class SessionAgent : ApplicationContext
         }
     }
 
-    private void BeginOwner(Source source)
+    private void BeginOwner(Source source, Action? placement = null, bool renew = false)
     {
-        work.Begin(source.Id, ownership.Generation);
+        if (renew) work.Renew(source.Id, ownership.Generation);
+        else work.Begin(source.Id, ownership.Generation, placement);
         releasePending = true; repeater.Stop();
-        pendingSince = RuntimeCompat.TickCount64; clipboardReadyOnDefault = false; lastLeave = 0;
+        pendingSince = RuntimeCompat.TickCount64; lastLeave = 0;
         foreach (var item in sources.Values)
             item.Network?.SetOwner(item.Capture, ownership.Generation, item.Id == source.Id);
         Send(new DesktopMessage("ownership", Source: source.Id, Stream: source.Stream, Ownership: ownership.Generation, Capture: source.Capture));
         var generation = ownership.Generation;
         // Release the previous controller promptly; clipboard fetches never keep its keys held.
         OnDesktop(() => { lock (gate) { if (ownership.Generation == generation && InputDesktop.Attach()) ReleaseHeld(); } });
+        ScheduleReadiness(source.Id, generation);
         context?.Post(_ => cursor.Reveal(), null);
     }
     private void EndOwner()
@@ -239,17 +248,44 @@ internal sealed class SessionAgent : ApplicationContext
         Send(new DesktopMessage("ownership", Ownership: generation));
         OnDesktop(() => { lock (gate) { if (ownership.Generation == generation && InputDesktop.Attach()) ReleaseHeld(); } });
     }
-    private void Complete(long source, long generation, bool secureOnly)
+    private void ScheduleReadiness(long source, long generation) => OnDesktop(() => Complete(source, generation));
+
+    private InputDesktopAccess ReadAccess(bool refreshSession = false)
+    {
+        var attached = InputDesktop.Attach();
+        var desktop = attached ? InputDesktop.Current : null;
+        var isDefault = string.Equals(desktop, "Default", StringComparison.OrdinalIgnoreCase);
+        if (refreshSession || !work.Ready || work.ReadyWithoutClipboard || !isDefault || sessionLock != SessionLockState.Unlocked)
+            sessionLock = SessionLock.Read(ProcessIdentity.Session);
+        return new InputDesktopAccess(attached, isDefault,
+            string.Equals(desktop, "Winlogon", StringComparison.OrdinalIgnoreCase), sessionLock);
+    }
+
+    // Rechecked for every queued action and key repeat, not only the stream's first input.
+    private bool ReadyForInput(Source source, bool refreshSession = false)
+    {
+        var access = ReadAccess(refreshSession);
+        if (!access.Attached) return false;
+        if (work.NeedsRenewal(access))
+        { ownership.Renew(); BeginOwner(source, renew: true); return false; }
+        return true;
+    }
+
+    private void Complete(long source, long generation)
     {
         lock (gate)
         {
-            if (!work.Current(source, generation) || ownership.Owner != source || !InputDesktop.Attach()) return;
-            if (secureOnly && string.Equals(InputDesktop.Current, "Default", StringComparison.OrdinalIgnoreCase))
-            { context?.Post(_ => Refresh(), null); return; }
-            if (releasePending && !ReleaseHeld()) return;
-            clipboardReadyOnDefault = string.Equals(InputDesktop.Current, "Default", StringComparison.OrdinalIgnoreCase);
-            pendingSince = 0;
-            work.Complete(source, generation);
+            if (!work.Current(source, generation) || Owner is not { } selected || selected.Id != source ||
+                !ownership.IsRemote(source, selected.Stream)) return;
+            var access = ReadAccess(refreshSession: true);
+            if (work.NeedsRenewal(access))
+            { ownership.Renew(); BeginOwner(selected, renew: true); return; }
+            if (work.Complete(source, generation, access, () => !releasePending || ReleaseHeld(),
+                () => ReadyForInput(selected, refreshSession: true))) pendingSince = 0;
+            var detail = $"readiness source={source} generation={generation} capture={selected.Capture} " +
+                $"desktop={(access.Attached ? InputDesktop.Current : "unavailable")} session={access.Session} reason={work.Reason} ready={work.Ready} pending={work.Count}";
+            if (lastReadiness != detail)
+            { lastReadiness = detail; Note(detail); ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(detail)); }
         }
     }
     private void Place(Source source, DesktopMessage message)
@@ -316,6 +352,8 @@ internal sealed class SessionAgent : ApplicationContext
     }
     private void FailSource(Source source, string reason)
     {
+        var detail = $"input failed source={source.Id} generation={ownership.Generation} capture={source.Capture}: {reason}";
+        Note(detail); ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(detail));
         Send(new DesktopMessage("input-failed", Source: source.Id, Stream: source.Stream, Detail: reason));
         Remove(source);
     }
@@ -338,9 +376,8 @@ internal sealed class SessionAgent : ApplicationContext
             return ReleaseHeld();
         }
         if (admission.Disposition != InputDisposition.Forward) { arrivals.Discarded++; return true; }
-        // A secure-desktop acknowledgement cannot authorize a paste after returning to Default.
-        if (work.Ready && !clipboardReadyOnDefault && string.Equals(InputDesktop.Current, "Default", StringComparison.OrdinalIgnoreCase))
-        { ownership.Renew(); BeginOwner(source); }
+        // Revoke a lock-screen readiness grant before the first input reaches the unlocked desktop.
+        if (!ReadyForInput(source) && work.Ready) return false;
         var generation = ownership.Generation;
         if (!work.Submit(source.Id, generation, () => source.Delivery.Observe(Inject(source, admission.Record, admission.RestoreModifiers))))
         { FailSource(source, "Input preparation queue exceeded its limit"); return false; }
@@ -408,7 +445,8 @@ internal sealed class SessionAgent : ApplicationContext
             Interlocked.Exchange(ref deliveringSince, RuntimeCompat.TickCount64);
             try
             {
-                var ok = InputDesktop.Attach() && DesktopNative.InjectKey(key, false);
+                if (!ReadyForInput(source)) return;
+                var ok = DesktopNative.InjectKey(key, false);
                 source.Delivery.Observe(ok);
                 if (!ok) { releasePending = true; repeater.Stop(); }
             }
@@ -471,6 +509,7 @@ internal sealed class SessionAgent : ApplicationContext
         if (disposing)
         {
             Application.Idle -= Start; watchdog.Dispose();
+            if (sessionNotifications) WTSUnRegisterSessionNotification(window.Handle);
             lock (gate) foreach (var source in sources.Values) StopNetwork(source);
             OnDesktop(() => { lock (gate) if (InputDesktop.Attach()) ReleaseHeld(); });
             desktopOps.Dispose(); repeater.Dispose(); cursor.Dispose();
@@ -483,8 +522,18 @@ internal sealed class SessionAgent : ApplicationContext
         private readonly SessionAgent owner;
         public RawWindow(SessionAgent owner) { this.owner = owner; CreateHandle(new CreateParams { Caption = "DeusKVM session agent", Parent = new IntPtr(-3) }); }
         protected override void WndProc(ref System.Windows.Forms.Message message)
-        { if (message.Msg == 0xFF) owner.RawInput(message.LParam); base.WndProc(ref message); }
+        {
+            if (message.Msg == 0xFF) owner.RawInput(message.LParam);
+            else if (message.Msg == 0x02B1) owner.Refresh();
+            base.WndProc(ref message);
+        }
     }
+    [DllImport("wtsapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSRegisterSessionNotification(IntPtr window, uint flags);
+    [DllImport("wtsapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSUnRegisterSessionNotification(IntPtr window);
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint pid);

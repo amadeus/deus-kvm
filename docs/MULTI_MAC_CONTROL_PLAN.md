@@ -160,11 +160,13 @@ not described as hardware-validated releases.
 
 ## Test artifacts — 2026-11-25
 
-- Mac app: `releases/DeusKVM.app` (0.0.4, build 4), copied from the verified ZIP.
+- Mac app: `DeusKVM.app` (0.0.4, build 4), inside the verified ZIP.
 - Mac archive: `releases/DeusKVM-mac-arm64.zip`.
-  SHA-256: `d38c94b393777f7456125d6b3b8427fd4f172798fab95d21119c11195adb6812`.
+  SHA-256: `ffdc267373c79ed4b90b345d3e6c84e1deabec85309ef5c97ccc3180b70a6ac1`.
 - Windows installer: `releases/DeusKVM-Companion-win-x64-2026-11-25.exe`.
-  SHA-256: `fb26578c67ae393341471c50add814947366b3b9842abdd588e7eff0b121dc73`.
+  Rebuilt with the login-screen correction; an identical, clearly named copy is
+  `releases/DeusKVM-Companion-win-x64-2026-11-25-login-fix.exe`.
+  SHA-256: `83ba6ac5637fa08b3bb9fb12000b9d0c17af5e58af76d9d98723bd298dfd4a1c`.
 - The Mac app has a timestamped Developer ID signature, hardened runtime and a validated
   stapled notarization ticket. Gatekeeper accepts the refreshed archive's extracted app
   as `Notarized Developer ID`, including with a download quarantine flag.
@@ -179,3 +181,44 @@ not described as hardware-validated releases.
   named-pasteboard tests excluded from the final selected run.
 - [ ] Execute the net48 tests on Windows, including native OLE/image clipboard cases.
 - [ ] Complete the multi-machine hardware checklist above.
+
+## Login-screen regression — 2026-11-25
+
+- User hardware testing failed on Mac Studio: crossing onto the PC's login/lock screen
+  hid the Mac cursor, sent no usable input and could not edge-return. The local hotkey
+  still returned control. This is not a passed login/lock checkpoint.
+- Live Mac diagnostics at 21:55–21:56 show captured motion but zero forwarded events and
+  zero input frames, followed by five-second disconnect recovery or the six-second
+  `Windows entry timed out` fallback. The entry acknowledgement gate never opened.
+- The 21:59 problem report, saved while the user confirmed Windows was still locked,
+  reports the Default desktop and a connected/available clipboard helper. Therefore
+  desktop name alone is insufficient to decide whether login input can proceed without
+  clipboard preparation. After the timed-out captures the agent had no owner/pending work.
+- Review also found one-shot readiness loss after delayed desktop changes or attachment
+  failure, and a clipboard-thread race that could discard the new owner's sole snapshot
+  before its selection command was processed. The clipboard inbox correction is committed
+  as `3b48a07`; it retains a selected owner's snapshot until its matching selection is processed.
+- Windows now queries its own interactive session's native WTS lock state as well as the
+  attached desktop. A locked session or Winlogon desktop can prepare input without a user
+  clipboard. Pending readiness retries, and helper recovery preserves an unacknowledged
+  entry placement without replaying completed entries or old queued input.
+- Unlocking revokes readiness granted without clipboard preparation and requires a fresh
+  controller clipboard generation. Queued actions and key repeat recheck this boundary;
+  regression coverage includes an attachment failure followed by unlock during entry.
+- Root and independent review completed. All 278 portable Windows tests pass; two native
+  CNG tests remain skipped on macOS. The net48 test assembly and Release app build with zero
+  warnings/errors. The replacement installer's actual embedded ZIP/hash, all 14 runtime
+  files and OS-only bootstrap references pass verification. `git diff --check` passes.
+- No Mac source changes or installed Mac update are needed for this correction. The
+  replacement Windows installer is built locally and has not been installed or exercised
+  on the PC. During artifact verification, the existing Mac ZIP differed from the earlier
+  recorded archive: its signature was valid and Gatekeeper accepted it, but its ticket was
+  absent. Restored the existing accepted ticket and repackaged without rebuilding. The
+  resulting ZIP extraction passes signature, stapled-ticket and Gatekeeper checks and
+  contains only the arm64 executable. The artifact checksum above reflects this repair.
+- [ ] Retest Mac Studio entry at the PC login/lock screen, mouse/keyboard control, edge
+  return and the local return hotkey using the replacement Windows installer.
+- [ ] Retest lock/unlock while controlling, then clipboard paste and takeover between both
+  Macs. Confirm only the current controller supplies remote clipboard data.
+- Windows-native tests and physical checks remain pending; source/build verification does
+  not establish that the reported hardware failure is resolved.

@@ -80,7 +80,7 @@ internal static class DesktopNative
     internal static double Milliseconds() => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
 
 
-    internal static bool IsDefaultDesktop() => DesktopState().Desktop == 0;
+    internal static bool IsDefaultDesktop() => DesktopState().Desktop == 0 && SessionLock.Read(ProcessIdentity.Session) == SessionLockState.Unlocked;
 
     // Desktop: 0 Default, 1 Winlogon (login and lock screens, UAC), 2 another. Blind: 0 when the
     // input desktop could be opened (the session agent, SYSTEM, can then inject and watch the edge

@@ -25,7 +25,7 @@ public sealed record EdgeConfiguration(byte Edge, string Monitor);
 public sealed record DesktopMessage(string Kind, EdgeConfiguration? Config = null, byte SwitchId = 0,
     byte Edge = 0, ushort Fraction = 0, MonitorInfo[]? Monitors = null,
     byte Blind = 4, byte Desktop = 2, bool MousePresent = false, bool Ok = false, int X = 0, int Y = 0, string? Detail = null, uint Epoch = 0, uint Revision = 0, byte[]? Clipboard = null, bool Center = false,
-    string? Report = null, string? Network = null, byte[]? Input = null, bool SecureReady = false,
+    string? Report = null, string? Network = null, byte[]? Input = null,
     long Source = 0, long Stream = 0, long Ownership = 0, ulong Capture = 0, long HostGeneration = 0);
 
 // Only fresh outward counts from the selected Mac mouse can trigger a return.

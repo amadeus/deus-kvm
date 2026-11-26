@@ -26,11 +26,19 @@ public sealed class OwnershipWork(int capacity = 256)
         waiting.Enqueue(action);
         return true;
     }
-    public bool Complete(long source, long generation)
+    public bool Complete(long source, long generation, Func<bool>? beforeAction = null)
     {
         if (!Current(source, generation)) return false;
         Ready = true;
-        while (waiting.Count > 0 && Current(source, generation) && Ready) waiting.Dequeue()();
+        while (waiting.Count > 0 && Current(source, generation) && Ready)
+        {
+            if (beforeAction is not null && !beforeAction())
+            {
+                if (Current(source, generation)) Ready = false;
+                return false;
+            }
+            if (Current(source, generation) && Ready) waiting.Dequeue()();
+        }
         return Current(source, generation) && Ready;
     }
     public void DiscardPending() => waiting.Clear();

@@ -81,9 +81,6 @@ internal sealed class DesktopRouter : IDisposable
         if (source != 0) clipboard.Send(new DesktopMessage("cursor-reveal", Source: source, Ownership: generation));
         foreach (var peer in peers.Values.ToArray())
             if (peer.Enabled) peer.AgentEvent(new DesktopMessage("ownership", Source: source, Ownership: generation, Ok: peer.Source == source));
-        // No signed-in clipboard exists on secure/login desktops. Input can proceed there.
-        if (state?.Desktop == 1)
-            agent.Send(new DesktopMessage("clipboard-ready", Source: source, Ownership: generation, Ok: true, SecureReady: true));
     }
 
     private void ClipboardEvent(DesktopMessage message)

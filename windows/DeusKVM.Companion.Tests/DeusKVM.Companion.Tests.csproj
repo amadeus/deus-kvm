@@ -14,6 +14,7 @@
     <Compile Include="../DeusKVM.Companion/GlobalUsings.cs" Link="GlobalUsings.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../DeusKVM.Companion/SessionLock.cs" Link="SessionLock.cs" />
     <Compile Include="../DeusKVM.Bootstrap/BundlePayload.cs" Link="BundlePayload.cs" />
     <None Include="../../protocol/file-network-fixtures.json" Link="file-network-fixtures.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../protocol/multi-mac-fixtures.json" Link="multi-mac-fixtures.json" CopyToOutputDirectory="PreserveNewest" />
