@@ -185,7 +185,7 @@ not described as hardware-validated releases.
 
 - User hardware testing failed on Mac Studio: crossing onto the PC's login/lock screen
   hid the Mac cursor, sent no usable input and could not edge-return. The local hotkey
-  still returned control. This is not a passed login/lock checkpoint.
+  still returned control. This initial failure was followed by the successful user retest below.
 - Live Mac diagnostics at 21:55–21:56 show captured motion but zero forwarded events and
   zero input frames, followed by five-second disconnect recovery or the six-second
   `Windows entry timed out` fallback. The entry acknowledgement gate never opened.
@@ -209,15 +209,16 @@ not described as hardware-validated releases.
   warnings/errors. The replacement installer's actual embedded ZIP/hash, all 14 runtime
   files and OS-only bootstrap references pass verification. `git diff --check` passes.
 - No Mac source changes or installed Mac update are needed for this correction. The
-  replacement Windows installer is built locally and has not been installed or exercised
-  on the PC. During artifact verification, the existing Mac ZIP differed from the earlier
+  replacement Windows installer was built locally for the user's retest. During artifact
+  verification, the existing Mac ZIP differed from the earlier
   recorded archive: its signature was valid and Gatekeeper accepted it, but its ticket was
   absent. Restored the existing accepted ticket and repackaged without rebuilding. The
   resulting ZIP extraction passes signature, stapled-ticket and Gatekeeper checks and
   contains only the arm64 executable. The artifact checksum above reflects this repair.
-- [ ] Retest Mac Studio entry at the PC login/lock screen, mouse/keyboard control, edge
-  return and the local return hotkey using the replacement Windows installer.
+- [x] User retested the replacement Windows installer and reported that it resolved the
+  login-screen control/return regression: "that seemed to fix it, everything good to push".
 - [ ] Retest lock/unlock while controlling, then clipboard paste and takeover between both
   Macs. Confirm only the current controller supplies remote clipboard data.
-- Windows-native tests and physical checks remain pending; source/build verification does
-  not establish that the reported hardware failure is resolved.
+- The reported login-screen regression is resolved according to the user's hardware retest.
+  Windows-native tests and the broader lock/unlock, clipboard and multi-Mac checklist remain
+  pending; the successful regression retest does not establish those separate checks.
