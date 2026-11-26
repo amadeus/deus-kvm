@@ -12,7 +12,7 @@ internal sealed class DesktopClipboard : IDisposable
     private readonly ConcurrentQueue<DesktopMessage> commands = new();
     private readonly object selectionGate = new();
     private RemoteClipboardLease? selection;
-    private DesktopMessage? incomingSnapshot;
+    private readonly RemoteClipboardInbox<DesktopMessage> incomingSnapshots = new();
     private volatile bool disposed, permitted, snapshotsAllowed;
     private volatile uint permittedEpoch;
     private volatile FileClipboardSession? remoteSession;
@@ -38,10 +38,10 @@ internal sealed class DesktopClipboard : IDisposable
                 if (old is not null && (message.Ownership < old.Ownership ||
                     message.Ownership == old.Ownership && old.Epoch != 0 && message.Epoch == 0)) return;
                 selection = new RemoteClipboardLease(message.Source, message.Ownership, message.Epoch);
+                incomingSnapshots.Select(selection);
             }
             old?.Revoke(); remoteSession?.Dispose(); sending?.Cancel();
             permitted = false; snapshotsAllowed = true;
-            Interlocked.Exchange(ref incomingSnapshot, null);
             while (commands.TryDequeue(out _)) { }
             commands.Enqueue(message); Wake(); return;
         }
@@ -52,13 +52,13 @@ internal sealed class DesktopClipboard : IDisposable
             if (!snapshotsAllowed) return;
             // Keep only the latest revision while OLE is busy. Lifecycle messages use the
             // separate queue, so coalescing can never discard an ownership transition.
-            Interlocked.Exchange(ref incomingSnapshot, message with { Revision = ClipboardNative.GetClipboardSequenceNumber() });
+            incomingSnapshots.Publish(selected, message with { Revision = ClipboardNative.GetClipboardSequenceNumber() });
             Wake(); return;
         }
         if (message.Kind == "clipboard-local")
         {
             snapshotsAllowed = false;
-            Interlocked.Exchange(ref incomingSnapshot, null);
+            incomingSnapshots.Clear();
             commands.Enqueue(message); Wake(); return;
         }
         if (message.Kind == "clipboard-start")
@@ -79,7 +79,7 @@ internal sealed class DesktopClipboard : IDisposable
         disposed = true; Volatile.Read(ref selection)?.Revoke();
         remoteSession?.Dispose(); sending?.Cancel();
         while (commands.TryDequeue(out _)) { }
-        Interlocked.Exchange(ref incomingSnapshot, null); Wake();
+        incomingSnapshots.Clear(); Wake();
     }
 
     private void Wake()
@@ -192,7 +192,7 @@ internal sealed class DesktopClipboard : IDisposable
                     else if (enabled && message.Kind == "clipboard-file-send") SendFile(message);
                 }
             }
-            var incoming = Interlocked.Exchange(ref incomingSnapshot, null);
+            var incoming = incomingSnapshots.Take(lease);
             if (snapshotsAllowed && incoming is not null && lease?.Matches(incoming.Source, incoming.Ownership, incoming.Epoch) == true)
                 snapshotMessage = incoming;
             if (lease is not { Valid: true } scope || !accessible) return;
