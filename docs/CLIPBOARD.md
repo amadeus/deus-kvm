@@ -33,9 +33,9 @@ sharing even when the tray window is closed. Bluetooth is not used.
    over during a slow transfer, then check Windows → Mac paste after returning.
 
 Automated coverage includes isolated named pasteboards, ownership/revision rules
-and wire fixtures; it does not touch the user's clipboard. macOS clipboard tests
-that require desktop access remain pending for this build because the test
-session reported Secure Input and denied pasteboard access. Real multi-Mac
+and wire fixtures; it does not touch the user's clipboard. All 163 Mac tests passed
+after unlocking the desktop, including the clipboard tests previously blocked by
+Secure Input and denied pasteboard access. Real multi-Mac
 handoffs, native Windows clipboard rendering and Finder/Explorer integration
 remain hardware checks; earlier transfer results do not validate this change.
 

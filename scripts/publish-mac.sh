@@ -14,6 +14,10 @@ case "$mac_arch" in
 esac
 team="UHD99KF9X7"
 profile="${DEUSKVM_NOTARY_PROFILE:-deuskvm}"
+notary_auth=(--keychain-profile "$profile")
+if [[ -n "${DEUSKVM_NOTARY_KEYCHAIN:-}" ]]; then
+  notary_auth+=(--keychain "$DEUSKVM_NOTARY_KEYCHAIN")
+fi
 signing=()
 if security find-identity -v -p codesigning | grep -q "Developer ID Application: .*($team)"; then
   signing=(CODE_SIGN_STYLE=Manual "CODE_SIGN_IDENTITY=Developer ID Application" DEVELOPMENT_TEAM="$team"
@@ -29,15 +33,16 @@ xcodebuild -project DeusKVM.xcodeproj -scheme DeusKVM -configuration Release \
 mac_app=".build/ReleaseDerivedData/Build/Products/Release/DeusKVM.app"
 codesign --verify --deep --strict "$mac_app"
 mkdir -p releases
-if [[ ${#signing[@]} -gt 0 ]] && xcrun notarytool history --keychain-profile "$profile" >/dev/null 2>&1; then
+if [[ ${#signing[@]} -gt 0 ]] && xcrun notarytool history "${notary_auth[@]}" >/dev/null 2>&1; then
   upload="$(mktemp -d)/DeusKVM.zip"
   ditto -c -k --keepParent "$mac_app" "$upload"
-  xcrun notarytool submit "$upload" --keychain-profile "$profile" --wait
+  xcrun notarytool submit "$upload" "${notary_auth[@]}" --wait
   xcrun stapler staple "$mac_app"
   spctl --assess --type execute --verbose=2 "$mac_app"
 else
-  echo "Notarization skipped (no keychain profile \"$profile\"): run" \
-    "xcrun notarytool store-credentials $profile --apple-id <Apple ID> --team-id $team" >&2
+  echo "Notarization skipped: Developer ID signing or keychain profile \"$profile\" is unavailable." >&2
+  echo "An existing profile may be inaccessible while the Mac or keychain is locked." >&2
+  echo "Unlock its keychain, or configure DEUSKVM_NOTARY_KEYCHAIN with a file-based keychain containing the profile." >&2
 fi
 ditto -c -k --sequesterRsrc --keepParent "$mac_app" "releases/DeusKVM-mac-$mac_arch.zip"
 printf '%s\n' "$PWD/releases/DeusKVM-mac-$mac_arch.zip"

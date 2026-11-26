@@ -159,6 +159,27 @@ open it without the Gatekeeper prompt. Create the profile once with
 `xcrun notarytool store-credentials deuskvm --apple-id <Apple ID> --team-id <team>`
 and an app-specific password; without it the build is signed but not notarized.
 
+For unattended notarization while the screen is locked, the script also accepts
+`DEUSKVM_NOTARY_KEYCHAIN=/absolute/path/to/build.keychain-db`. Apple supports this
+explicit [file-based keychain option](https://developer.apple.com/documentation/technotes/tn3147-migrating-to-the-latest-notarization-tool);
+the default profile uses the data-protection keychain, which may be inaccessible
+while locked. Create a dedicated build keychain in Keychain Access, then store
+the profile there yourself (the command prompts for the app-specific password):
+
+```sh
+xcrun notarytool store-credentials deuskvm --apple-id '<Apple ID>' \
+  --team-id UHD99KF9X7 --keychain '/absolute/path/to/build.keychain-db'
+DEUSKVM_NOTARY_KEYCHAIN='/absolute/path/to/build.keychain-db' ./scripts/publish-mac.sh
+```
+
+That keychain must remain unlocked for the job; its idle/sleep lock settings are
+separate from the screen lock. Keeping it unlocked makes its build credential
+available to authorized processes while the screen is locked. The script does
+not change keychain settings or store an unlock password. Verify access with
+`notarytool history` using the same profile and keychain during a locked-screen
+test before relying on unattended builds. Signing also requires access to the
+Developer ID private key; it was already accessible during this build's lock.
+
 For a direct Apple Silicon Release build:
 
 ```sh

@@ -144,27 +144,38 @@ not described as hardware-validated releases.
   references. The extracted Mac ZIP passed strict/deep signature verification, and every
   packaged Mach-O is arm64 only. The publish script now cleans before building, preventing
   old resources and notarization tickets from surviving in the product.
+- Unlocked-session retry (2026-11-25): the existing `deuskvm` profile became accessible
+  without recreating credentials. Apple accepted submission
+  `5077c0ae-2f37-4192-a9d9-86963197b559`, with no issues in the notarization log.
+  The app was stapled and the ZIP regenerated. A quarantined ZIP extraction passes
+  ticket validation, strict/deep signature verification and Gatekeeper as
+  `Notarized Developer ID`; all Mach-O binaries remain arm64 only.
+  The complete Mac suite now passes all 163 tests, including the eleven previously
+  blocked clipboard tests. The earlier "missing profile" result was an access problem
+  while the Mac was locked, not proof that the stored profile was absent.
+- Added optional `DEUSKVM_NOTARY_KEYCHAIN` selection to the publish script and documented
+  storing a profile in a dedicated file-based keychain for unattended notarization.
+  Shell syntax and diff checks pass. No credentials or keychain lock settings were
+  changed; actual locked-screen access with that optional configuration remains untested.
 
 ## Test artifacts — 2026-11-25
 
 - Mac app: `releases/DeusKVM.app` (0.0.4, build 4), copied from the verified ZIP.
 - Mac archive: `releases/DeusKVM-mac-arm64.zip`.
-  SHA-256: `3c441f3c2423a26f4a030a48e06af048e82dfac4e1ca74fcbfe5559e9b77cead`.
+  SHA-256: `d38c94b393777f7456125d6b3b8427fd4f172798fab95d21119c11195adb6812`.
 - Windows installer: `releases/DeusKVM-Companion-win-x64-2026-11-25.exe`.
   SHA-256: `fb26578c67ae393341471c50add814947366b3b9842abdd588e7eff0b121dc73`.
-- The Mac app has a timestamped Developer ID signature and hardened runtime, but this
-  build is **not notarized**: `notarytool` reports no keychain item for profile `deuskvm`
-  on this machine. Gatekeeper assesses it as `Unnotarized Developer ID`; opening a
-  downloaded copy on another Mac may be blocked until notarization is completed. The
-  earlier successful notarization recorded in `PLAN.md` does not cover this new binary.
+- The Mac app has a timestamped Developer ID signature, hardened runtime and a validated
+  stapled notarization ticket. Gatekeeper accepts the refreshed archive's extracted app
+  as `Notarized Developer ID`, including with a download quarantine flag.
 - These are local artifacts, not a published release. Neither packaged app was installed
   or launched for hardware testing. Update the Windows companion and every Mac together.
 
 ## Outstanding validation
 
-- [ ] Restore/configure the existing notarization profile locally, notarize this build,
+- [x] Access the existing notarization profile locally, notarize this build,
   staple the accepted ticket, repackage and verify Gatekeeper acceptance.
-- [ ] Run all Mac tests in an unlocked normal desktop session, including the eleven
+- [x] Run all Mac tests in an unlocked normal desktop session, including the eleven
   named-pasteboard tests excluded from the final selected run.
 - [ ] Execute the net48 tests on Windows, including native OLE/image clipboard cases.
 - [ ] Complete the multi-machine hardware checklist above.
