@@ -22,9 +22,10 @@ else
   echo "No Developer ID Application certificate for $team: using development signing (Gatekeeper will warn on other Macs)" >&2
 fi
 xcodegen generate
+# Recreate the product so old resources and stapled notarization tickets cannot survive a rebuild.
 xcodebuild -project DeusKVM.xcodeproj -scheme DeusKVM -configuration Release \
   -destination 'generic/platform=macOS' -derivedDataPath .build/ReleaseDerivedData \
-  ARCHS=arm64 ONLY_ACTIVE_ARCH=NO "${signing[@]}" build
+  ARCHS=arm64 ONLY_ACTIVE_ARCH=NO "${signing[@]}" clean build
 mac_app=".build/ReleaseDerivedData/Build/Products/Release/DeusKVM.app"
 codesign --verify --deep --strict "$mac_app"
 mkdir -p releases
