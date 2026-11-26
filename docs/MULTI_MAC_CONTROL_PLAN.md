@@ -164,8 +164,7 @@ not described as hardware-validated releases.
 - Mac archive: `releases/DeusKVM-mac-arm64.zip`.
   SHA-256: `ffdc267373c79ed4b90b345d3e6c84e1deabec85309ef5c97ccc3180b70a6ac1`.
 - Windows installer: `releases/DeusKVM-Companion-win-x64-2026-11-25.exe`.
-  Rebuilt with the login-screen correction; an identical, clearly named copy is
-  `releases/DeusKVM-Companion-win-x64-2026-11-25-login-fix.exe`.
+  Rebuilt with the login-screen correction; this is the single current Windows installer.
   SHA-256: `83ba6ac5637fa08b3bb9fb12000b9d0c17af5e58af76d9d98723bd298dfd4a1c`.
 - The Mac app has a timestamped Developer ID signature, hardened runtime and a validated
   stapled notarization ticket. Gatekeeper accepts the refreshed archive's extracted app
