@@ -1,5 +1,10 @@
 # Enable to take over — two-Mac checkpoint
 
+This checkpoint records the previous exclusive-control model. The new
+[multi-Mac plan](MULTI_MAC_CONTROL_PLAN.md) replaces automatic disabling with
+persistent readiness and takeover on real input. Use that plan's hardware checklist
+for current builds; the Enable-to-take-over steps below are historical.
+
 Update **Windows and both Macs**. Add each Mac once with **Add Mac…** on the PC
 and turn on **Enable control** for the PC on each Mac.
 The earlier Windows-only build does not implement this flow.

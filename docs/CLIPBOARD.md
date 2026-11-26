@@ -25,14 +25,19 @@ sharing even when the tray window is closed. Bluetooth is not used.
    again. Test reconnect and lock/unlock with new text. The clipboard must not
    synchronize on the login/security screen.
 7. Using disposable test text, check a password manager that marks its clipboard
-   private. Confirm that private text/images and text over 64 KiB do not
-   replace the other machine's clipboard.
+   private. Private text/images and text over 64 KiB must never be published;
+   switching to that Mac must not leave another Mac's remote content available.
+8. Give two Macs distinguishable text, images and files. With both still in
+   PC-control mode, paste from each as its first input after the other has been
+   controlling Windows. Only the triggering Mac's content may paste. Also take
+   over during a slow transfer, then check Windows → Mac paste after returning.
 
-The handoff-only Mac update is tested using isolated named pasteboards, including
-native reads/writes and stale-write rejection; the user's clipboard is untouched.
-Real handoffs and Finder/Explorer integration still require the hardware checks
-above (text has not yet been checked on hardware over the network-only link, since
-2026-11-22). Automated tests do not establish live end-to-end behavior.
+Automated coverage includes isolated named pasteboards, ownership/revision rules
+and wire fixtures; it does not touch the user's clipboard. macOS clipboard tests
+that require desktop access remain pending for this build because the test
+session reported Secure Input and denied pasteboard access. Real multi-Mac
+handoffs, native Windows clipboard rendering and Finder/Explorer integration
+remain hardware checks; earlier transfer results do not validate this change.
 
 ## Behavior and limits
 
@@ -41,23 +46,34 @@ above (text has not yet been checked on hardware over the network-only link, sin
   formatting is not transferred. Screenshot images are supported separately
   as described below. File-list clipboards are excluded
   from text sharing, even if they also contain a text representation.
-- Mac copies stay local until switching to Windows. At handoff, DeusKVM reads
-  the latest clipboard and offers its text/file/image metadata, including menu and
-  right-click copies. Connecting alone does not publish the Mac clipboard.
-  Windows offers continue to arrive through the companion; text is fetched when
-  the Mac becomes active. File contents transfer only when pasted; clipboard
-  images download as soon as their offer is accepted.
-- Transfers run asynchronously; switching does not wait for the clipboard.
-  The Mac has no repeating clipboard poll. It reads for initial session setup,
-  handoff and validation of incoming writes; operation-specific retries stop
-  after at most two seconds (network image transfer has its own timeouts).
-  Large text/images may take time before a paste sees them.
+- All enabled Macs can stay connected, but remote clipboard content comes only
+  from the current controller. Actual input sent to Windows selects that Mac;
+  a paste shortcut can itself take control. Background clipboard updates never
+  change the controller. Connecting alone does not publish a Mac clipboard.
+- Taking control requests a fresh typed snapshot: text, file, image, empty or
+  unavailable. Windows revokes the previous source and prepares the new clipboard
+  before delivering the triggering input. This readiness wait covers metadata,
+  bounded text and native clipboard installation, not bulk image/file download.
+  Missing readiness cannot fall back to another Mac's clipboard.
+- While selected and in PC-control mode, the Mac checks pasteboard changeCount
+  every 500 ms; it reads payloads only after a change. The subscription stops on
+  return, ownership loss or disable. Setup, explicit capture and incoming writes
+  also read the pasteboard; their operation-specific retries are bounded.
+- Returning locally retains the last controller as the Windows clipboard
+  partner, so Windows → Mac text and file paste still works. A controller change,
+  or disabling/disconnecting the clipboard partner, invalidates the prior
+  session's transfers.
+  File contents remain on demand. Mac → Windows image rendering is also on
+  demand; Windows → Mac images download asynchronously when accepted.
   Text over the cap is skipped rather than truncated.
 - Empty text is supported. Embedded NUL and malformed Unicode are rejected.
   Newlines are LF on the wire and CRLF when written to Windows.
-- Imported revisions are recorded and marked so they are not echoed back. A
-  fresh local clipboard change cancels a pending import. A busy clipboard write
-  is retried for up to two seconds; a newer local revision takes precedence.
+- Imported revisions are recorded and marked so they are not echoed back or
+  offered as another Mac's content. Ownership changes clear old remote imports,
+  including text, while preserving genuine Windows-local copies. A local copy
+  defeats an older pending snapshot; a later distinct copy from the selected
+  Mac can publish a new snapshot. Late replies from old ownership generations
+  cannot install data or unblock input.
 - Only the Mac's selected, allowed PC can exchange clipboard messages. Sharing
   pauses on Windows lock/secure desktop/logout, Mac sleep/session deactivation
   or secure input, and when the user disables it. Old-session pending payloads
@@ -71,20 +87,22 @@ above (text has not yet been checked on hardware over the network-only link, sin
 
 ## Implementation
 
-`ClipboardTransfer.swift` and `ClipboardTransfer.cs` implement matching pure
-state machines. HELLO's optional `clipboard:1` capability gates the extension;
-older companions still switch normally without clipboard sharing.
+Update both applications: the current protocol requires `multiInput:1`,
+`inputNetwork:3` and `clipboardSnapshot:1`. Older builds are not compatible with
+this ownership model. `clipboard:1` and CLIP_STATE still negotiate clipboard
+consent; disabling sharing leaves input control available.
 
-The Windows service owns an epoch and advertises availability with CLIP_STATE.
-The Mac acknowledges only after priming its local snapshot and checking its
-sharing preference/session. Windows then primes its desktop snapshot before
-handling a pending remote offer. This ordering prevents a first snapshot from
-cancelling an import that started during connection setup.
+The Windows service owns the clipboard epoch. A snapshot request also carries
+the input ownership generation. `ClipboardSnapshot` represents a complete reply
+with its source revision and explicit content kind. Text is inline; file/image
+metadata points to the authenticated file source. `DesktopClipboard` is the sole
+incoming installation authority and acknowledges readiness only for the matching
+source, generation and epoch. Empty/private/unavailable replies finish explicitly
+after old remote content has been invalidated.
 
 All integers below are little-endian. Each message travels as one sealed frame
-on the TCP control link (stream 0 control, 1 bulk), in order. The Bluetooth
-builds' 20-byte frames and CRC-32C chunking are gone; the message payloads are
-unchanged.
+on the TCP control link (stream 0 control, 1 bulk), in order. The maximum control
+payload is 128 KiB; snapshot JSON is bounded to 96 KiB, including base64 text.
 
 | Message | Stream | Payload |
 | --- | --- | --- |
@@ -92,10 +110,13 @@ unchanged.
 | CLIP_GET (0x21) | 0 | epoch u32, copy sequence u32, byte offset u32 |
 | CLIP_DATA (0x22) | 1 | epoch u32, copy sequence u32, byte offset u32, 0–1024 bytes |
 | CLIP_STATE (0x23) | 0 | epoch u32, availability/enabled u8 |
+| CLIPBOARD_SNAPSHOT (0x52) | 0 request, 1 reply | JSON: epoch, ownership generation, request marker; reply adds revision, kind and optional text/file |
 
-The receiver requests one 1 KiB block at a time. A missing block request retries
-after five seconds, up to three times. Input never shares this link: it uses the
-separate input stream.
+CLIP_GRAB/GET/DATA and the matching `ClipboardTransfer` state machines now serve
+Windows → Mac text. The receiver requests one 1 KiB block at a time, retrying a
+missing block after five seconds up to three times. Mac → Windows uses the typed
+snapshot path. Input uses its separate stream, ordered behind ownership readiness
+when the controller changes.
 
 The Windows link worker coordinates the transfer but does not access the
 Session 0 clipboard. `DesktopClipboard` uses a dedicated STA thread within the
@@ -103,11 +124,15 @@ signed-in desktop worker, isolated from the Raw Input STA; it wakes on clipboard
 change notifications (`AddClipboardFormatListener`), service commands and session
 lock/unlock, with a one-second desktop check and a 200 ms retry only while an
 operation can still fail transiently (the old 200 ms poll remains as a fallback
-if the listener cannot be registered). `ClipboardPasteboard`
-uses a dedicated Mac queue, isolated from the main/input run loops. Native
+if the listener cannot be registered). `RemoteClipboard` installs a live OLE
+object for text, files and images; it is never flushed eagerly. The pipe thread
+can revoke its source lease and cancel blocked network reads even while the
+clipboard STA is rendering. `ClipboardPasteboard` uses a dedicated Mac queue,
+isolated from the main/input run loops. Native
 revision checks protect a newer local copy even if it happens before DeusKVM
-notices it. Clipboard owners can delay rendering; these reads cannot stall the
-input loop. The Mac pasteboard API does not provide an atomic compare-and-write,
+notices it. Clipboard owners can delay rendering; those reads stay off input
+threads, though a new controller must finish clipboard preparation before its
+queued input is delivered. The Mac pasteboard API does not provide an atomic compare-and-write,
 so an external write exactly between its final revision check and replacement
 remains a native API race.
 
@@ -124,10 +149,10 @@ Native memory ownership follows
 
 ## Screenshot image clipboard
 
-Both apps advertise `images: 1` in HELLO. A clipboard image uses FILE_OFFER with
-`contentType: "image/png"` and the existing authenticated LAN transport. Older
-peers do not receive image offers. Install the updated Mac app and Windows
-companion; both computers need to be reachable on the local network.
+Both apps advertise `images: 1` in HELLO. An image uses a file descriptor with
+`contentType: "image/png"` and the authenticated LAN transport: inside the typed
+snapshot for Mac → Windows, and FILE_OFFER for Windows → Mac. Install the updated
+Mac app and Windows companion; both must be reachable on the local network.
 
 - Mac captures explicit PNG or TIFF clipboard data, including screenshots copied
   by CleanShot, and converts it to PNG. Explicit image data takes precedence when
@@ -135,22 +160,23 @@ companion; both computers need to be reachable on the local network.
   file copy: its image is only the file's icon (`com.apple.icns` or
   `com.apple.finder.noderef` present), so it stays a file offer. Windows captures registered `PNG` data
   or a native bitmap (including Windows' conversion from DIB/DIBV5).
-- The receiver downloads the image asynchronously into memory, then publishes
-  actual image formats: PNG and TIFF on macOS; registered PNG and CF_DIB on
-  Windows. PNG preserves transparency; the Windows DIB fallback uses a white
+- Windows installs PNG/CF_DIB metadata immediately and fetches image bytes when
+  a consumer requests a format. macOS downloads an accepted image asynchronously,
+  then publishes PNG and TIFF. PNG preserves transparency; the Windows DIB fallback uses a white
   background. Chromium/Electron reads registered PNG before bitmap fallback
   ([Chromium implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/ui/base/clipboard/clipboard_win.cc)).
-- Windows also offers the same downloaded PNG through its existing virtual-file
-  data object, so Explorer can paste `Screenshot.png` from the same copy.
+- Windows also offers `Screenshot.png` through the same live OLE data object,
+  so Explorer can paste it from the same copy.
   PNG/DIB and the [Shell file formats](https://learn.microsoft.com/en-us/windows/win32/shell/clipboard)
-  coexist; file paste reads the cached bytes without another network transfer.
+  coexist; source identity and revocation checks apply to every format and read.
 - On Mac, Finder **Cmd+V** saves the cached screenshot in the current folder via
   the existing Finder paste handler. Native PNG/TIFF remain on the clipboard for
   Discord and other image apps. Finder Automation permission is required, as for
   ordinary file paste; Finder menu/right-click paste is not added. An existing
   destination filename is never overwritten.
 - Images are limited to **32 MiB of encoded data** and **40 million decoded
-  pixels**. The image must finish transferring before it can be pasted.
+  pixels**. A Windows paste consumer may wait for image data to arrive;
+  the Mac publishes the image only after download completes.
   No screenshot file is saved until a file paste is requested. Image paste into
   applications uses the native clipboard; Finder Cmd+V uses the handler above.
 - The sharing preference, privacy markers, clipboard revisions, selected peer,
@@ -181,10 +207,11 @@ native Explorer virtual-file stream; Windows → Mac uses Finder Cmd+V with
 DeusKVM progress/cancel UI, as authorized by the user. Other Finder paste commands
 and destination apps are not intercepted.
 
-`files: 1` and `fileNetwork: 1` remain in HELLO; optional `fileReceive: 1` negotiates
-reverse metadata support. FILE_OFFER (0x24, bulk JSON, at most 4096 bytes) carries
-epoch, source clipboard revision, text offer sequence, filename, size and, for a
-screenshot, `contentType`. On a Mac source it also carries up to four private or
+`files: 1`, `fileNetwork: 1` and `fileReceive: 1` remain in HELLO.
+FILE_OFFER (0x24, bulk JSON, at most 4096 bytes) carries reverse metadata;
+Mac source metadata is embedded in CLIPBOARD_SNAPSHOT. Both descriptors carry
+epoch, source clipboard revision, clipboard sequence, filename, size and, for a
+screenshot, `contentType`. A Mac source also includes up to four private or
 link-local IPv4 addresses (wired interfaces before Wi-Fi), an ephemeral port and a
 per-offer key; Windows tries the addresses in order.
 Old FILE_GET/FILE_DATA IDs (0x25/0x26) are reserved but no longer serve file contents.

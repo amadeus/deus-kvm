@@ -13,6 +13,20 @@ enabled on the Mac. Both
 computers must be reachable on the local network. Allow Mac local-network access
 if prompted. No Windows listening port or new inbound firewall rule is required.
 
+## Multi-Mac checkpoint
+
+All enabled Macs stay connected. Input sent to Windows selects the controller,
+and remote paste uses only that Mac's clipboard; the paste shortcut itself can
+take control. Returning locally retains that Mac as the Windows clipboard partner
+for reverse paste. Another Mac taking over invalidates the previous source's
+offers and unfinished transfers. Update every Mac and Windows together.
+
+Hardware validation remains pending: put different files on two Macs, alternate
+control and paste as the first input from each, then take over during a slow
+transfer. No paste may use the other Mac's file. Also verify Windows → Mac paste
+after return and normal Windows-local copy/paste. See
+[MULTI_MAC_CONTROL_PLAN.md](MULTI_MAC_CONTROL_PLAN.md) for the full checklist.
+
 ## First test: Windows → Mac
 
 1. Copy **one small regular file** in Windows Explorer with Ctrl+C.

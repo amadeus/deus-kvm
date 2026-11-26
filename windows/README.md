@@ -14,13 +14,13 @@ manages itself, because a service cannot reach the screen directly:
 The optional tray is a remote control for the service. Closing it leaves
 everything running. Bluetooth is not used.
 
-Windows owns the control decision. The first connected, enabled DeusKVM Mac
-becomes active. A later Mac is automatically disabled. Clicking **Enable DeusKVM**
-on that Mac requests takeover: Windows asks the previous Mac to disable and
-release held input, waits for its acknowledgement, then grants the new Mac.
-Each active Mac supplies its own layout; clipboard sharing follows it and pauses
-while Windows is locked or signed out. Update the Mac apps together with this
-companion: Bluetooth builds of the Mac app cannot connect to it.
+All allowed, enabled Macs stay connected and ready. Each Mac independently
+switches between local input and PC-control mode. Windows follows the most recent
+real input from a Mac in PC-control mode, releasing the previous controller's held
+input before delivering the new controller's event. Taking control does not disable
+another Mac or return it to local mode. Each Mac supplies its own layout. Remote
+clipboard content follows the controller and pauses while Windows is locked or
+signed out. Update every Mac app together with this companion.
 
 ## Install and configure
 
@@ -41,15 +41,15 @@ companion: Bluetooth builds of the Mac app cannot connect to it.
 4. A few seconds later the PC appears in each Mac's **Setup → Devices**; turn on
    **Enable control** for it there.
 5. On each Mac, choose the Mac exit edge and Windows display in **Configuration**.
-   The active Mac's **Setup → Devices** reports **Windows edge return ready**;
+   Each ready Mac's **Setup → Devices** reports **Windows edge return ready**;
    Windows uses the edge opposite that Mac's edge. Disabled Macs cannot enter
    remote control or share clipboard data. The Mac reports local permission/capture
    blockers as well as ownership state; a handshake alone is not reported as ready.
-6. Click **Enable DeusKVM** on the other Mac to take control. The previous Mac
-   becomes disabled. Disabling the active Mac alone leaves Windows idle if all
-   other Macs are disabled. Returning the pointer locally does not relinquish
-   ownership. A stalled handoff waits for release acknowledgement or the end of
-   that Mac's connection; a heartbeat timeout alone cannot grant overlapping control.
+6. Cross onto Windows from either Mac. A Mac whose cursor is still local keeps
+   its input local until it crosses or uses **Switch to PC**. A Mac already in
+   PC-control mode takes control again as soon as you use it, without moving the
+   Windows cursor to a new entry point. **Disable DeusKVM** remains available
+   when you want a particular Mac off.
 
 **Updating from a Bluetooth build:** Macs saved by earlier builds are ignored,
 because Macs and PCs are now known by network identities. Choose **Add Mac…**
@@ -77,8 +77,8 @@ by SYSTEM and Administrators.
 
 ### Network input
 
-When control passes to the PC, the session agent connects to an input listener on
-the Mac, the same way file paste does, and receives the trackpad's pointer motion
+The shared session agent connects to an input listener on each ready
+Mac, the same way file paste does, and receives the trackpad's pointer motion
 and clicks at the pad's own rate, plus keys, media keys and scroll steps. It
 injects each one as it arrives on whichever desktop has input: the user's desktop,
 over elevated (administrator) windows, and the login screen, lock screen and UAC
@@ -108,14 +108,22 @@ lock screens and UAC prompts) still needs hardware validation.
 
 ### Multiple Macs
 
-If both Macs are found when the service starts, it prefers the last active
-enabled Mac, then stable id order. Disabled Macs stay disabled. Macs found
-afterward are ordered as observed by the companion.
+Every trusted, enabled Mac can be ready at once. Movement, clicks, scrolling,
+typing and media keys from a Mac in PC-control mode take control. Keepalives,
+background clipboard updates and automatic input cleanup do not. With simultaneous
+input from two Macs, Windows processes their events in arrival order.
 
-See [the two-Mac checkpoint](../docs/AUTOMATIC_MAC_CHECKPOINT.md) for the manual
-validation sequence (current setup steps are above). Automatic selection and
-reconnection require validation on Windows; successful cross-builds do not
-prove that behavior.
+A paste shortcut can itself take control: its remote clipboard comes from that
+Mac, including images and files. An unfinished transfer from a previous controller
+is cancelled, and old remote content is never used as a fallback. Ordinary copies
+made locally on Windows remain usable. Edge return goes to the current controller.
+Explicitly disabled Macs stay disabled across restarts.
+If an earlier build automatically disabled a Mac, enable it once after updating;
+the new build preserves saved disabled settings.
+
+See [the multi-Mac plan](../docs/MULTI_MAC_CONTROL_PLAN.md) for implementation
+progress and the pending hardware checklist. Successful cross-builds do not prove
+Windows installation, input injection, clipboard integration or secure-desktop behavior.
 
 ### Service
 
@@ -276,7 +284,7 @@ the selected display. Edge crossings retain proportional placement.
 The Mac's **Configuration** tab and menu bar share **Disable DeusKVM / Enable DeusKVM**.
 Disabling restores local control, stops input capture and clipboard sharing (the
 PC sees the Mac as paused), and changes the menu icon to a pause symbol. This
-state survives app restart. Enable to request control again. **Setup → Startup**
+state survives app restart. Enable to make the Mac ready again. **Setup → Startup**
 on the Mac also offers an opt-in **Launch DeusKVM at login** control.
 
 For the complete test sequence, see `docs/POLISH.md` in the repository. Test

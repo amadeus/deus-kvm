@@ -44,11 +44,15 @@ something still needs setting up.
 
 ## Everyday use
 
-- Windows automatically uses the first connected, enabled DeusKVM Mac. A second
-  Mac connects in a disabled state. Click **Enable DeusKVM** on that Mac to take
-  control: Windows disables the previous Mac before granting the new one.
-  Add each Mac once with **Add Mac…**. Each Mac keeps its own layout.
-  Update Windows and both Macs; see the [takeover checkpoint](docs/AUTOMATIC_MAC_CHECKPOINT.md).
+- All allowed, enabled Macs stay connected and ready. Each Mac keeps its own
+  layout and switches between local input and PC control independently. Once a
+  Mac is in PC-control mode, moving, clicking, scrolling or typing from it takes
+  control of Windows. Other Macs stay enabled and keep their current mode; use
+  one again to take control back from the current Windows cursor position.
+  Add each Mac once with **Add Mac…** and update Windows and all Macs together.
+  If an earlier build automatically disabled a Mac, enable it once; saved disabled
+  settings remain respected.
+  See the [multi-Mac progress and test plan](docs/MULTI_MAC_CONTROL_PLAN.md).
 
 - Edge crossings place the cursor at the corresponding position on the other
   display. Release held keys and mouse buttons before switching.
@@ -66,6 +70,9 @@ something still needs setting up.
   supports [on-demand file paste in both directions](docs/FILE_PASTE_CHECKPOINT.md)
   for one regular file up to 2 GB, using networking only. Windows → Mac uses
   Finder Cmd+V with DeusKVM progress/cancel UI. Contents transfer only when pasted.
+  Remote clipboard content follows the controlling Mac. A paste shortcut can
+  itself take control and uses that Mac's clipboard; it never falls back to a
+  different Mac's content. Background clipboard traffic does not take control.
 - Pointer motion and clicks go to Windows at the trackpad's own rate, keys as
   whole keyboard states (no six-key limit), plus media keys and scroll steps.
   Windows repeats held keys at its own keyboard delay and rate; Ctrl+Alt+Delete

@@ -2193,3 +2193,10 @@ SwiftLint and SwiftFormat pass, and the Debug build succeeds. Pending manual
 check: with a browser password field holding Secure Input, the icon shows the
 lock and the menu names the browser. The icon should return once the field
 loses focus.
+
+### Independent multi-Mac input control
+
+Implementation and review progress are tracked in
+[MULTI_MAC_CONTROL_PLAN.md](docs/MULTI_MAC_CONTROL_PLAN.md). All enabled Macs remain
+ready, with input and remote clipboard ownership following real PC-directed activity.
+Explicit Enable/Disable remains a user choice. Hardware validation is pending.
