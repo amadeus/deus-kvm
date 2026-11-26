@@ -59,6 +59,7 @@ targets:
       - DeusKVM/MediaKeyEvent.swift
       - DeusKVM/DirectInputController.swift
       - DeusKVM/InputGate.swift
+      - DeusKVM/CaptureEntryGate.swift
       - DeusKVM/AppSettings.swift
       - DeusKVM/DeviceNameStore.swift
       - DeusKVM/InputSink.swift
@@ -82,6 +83,7 @@ targets:
       - DeusKVM/Clipboard/ClipboardTransfer.swift
       - DeusKVM/Clipboard/ClipboardRevision.swift
       - DeusKVM/Clipboard/ClipboardPasteboard.swift
+      - DeusKVM/Clipboard/ClipboardSnapshot.swift
       - DeusKVM/Clipboard/ClipboardImage.swift
       - DeusKVM/Clipboard/ClipboardImageFile.swift
       - DeusKVM/Clipboard/FileNetworkReceiver.swift

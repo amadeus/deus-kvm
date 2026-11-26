@@ -81,7 +81,7 @@ final class QMKKeymapCoverageTests: XCTestCase {
         try send(controller, .keyDown, key: 0x2A)
         XCTAssertEqual(reports.last, KeyboardReport(keys: [.backslash]))
         controller.stop()
-        XCTAssertEqual(reports.last, .zero)
+        XCTAssertEqual(recorder.events.last, .reset)
     }
 
     func testMenuAndApplicationOverlapWithoutEarlyRelease() {

@@ -79,7 +79,7 @@ internal sealed class SettingsForm : Form
             if (!ServicePolicy.IsFresh(snapshot.UpdatedAt, DateTimeOffset.UtcNow)) { detail.Text = "Waiting for a fresh service status…"; return; }
             selected.Text = snapshot.Worker.DeviceName is { } active ? $"Active: {active}" : "Waiting for a Mac";
             if (snapshot.Worker.WaitingMacs is { Length: > 0 } waiting)
-                selected.Text += $"\nWaiting: {string.Join(", ", waiting)}";
+                selected.Text += $"\nReady: {string.Join(", ", waiting)}";
             if (snapshot.Worker.PausedMacs is { Length: > 0 } paused)
                 selected.Text += $"\nDisabled or not allowed: {string.Join(", ", paused)}";
             detail.Text = $"Mac link: {snapshot.Worker.State}\n{snapshot.Worker.Detail}";

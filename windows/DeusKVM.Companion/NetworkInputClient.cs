@@ -28,9 +28,8 @@ internal sealed class NetworkInputClient : IDisposable
     private readonly Thread thread;
     private Socket? socket;
     private volatile bool up;
-    // An edge-return request for the Mac (InputRecord.LeaveFlags) and until when (Stopwatch ticks)
-    // the acknowledgements keep carrying it; set from the desktop thread.
-    private long leave, leaveUntil, leaveSerial;
+    private readonly InputStreamFeedback feedback = new();
+    public void SetOwner(ulong capture, long ownership, bool owns) => feedback.SetOwner(capture, checked((ulong)ownership), owns);
     private static readonly long LeaveTicks = System.Diagnostics.Stopwatch.Frequency * 3 / 10;
 
     /// <summary>The stream is up: acknowledgements are flowing to the Mac.</summary>
@@ -44,16 +43,11 @@ internal sealed class NetworkInputClient : IDisposable
     public bool Leave(uint flags)
     {
         if (!up) return false;
-        Interlocked.Exchange(ref leave, flags);
-        Interlocked.Exchange(ref leaveUntil, System.Diagnostics.Stopwatch.GetTimestamp() + LeaveTicks);
-        Interlocked.Increment(ref leaveSerial);
+        feedback.Leave(flags, System.Diagnostics.Stopwatch.GetTimestamp() + LeaveTicks);
         return true;
     }
 
-    /// <summary>The request in force: its flags and serial, or zeros.</summary>
-    private (uint Flags, long Serial) PendingLeave() =>
-        System.Diagnostics.Stopwatch.GetTimestamp() < Interlocked.Read(ref leaveUntil)
-            ? ((uint)Interlocked.Read(ref leave), Interlocked.Read(ref leaveSerial)) : (0, 0);
+    private InputFeedback Feedback() => feedback.Read(System.Diagnostics.Stopwatch.GetTimestamp());
 
     public NetworkInputClient(FileNetworkOffer offer, Func<InputEvent, bool> deliver, Action<string> status)
     {
@@ -130,15 +124,16 @@ internal sealed class NetworkInputClient : IDisposable
             status("up");
             var buffer = new byte[4096];
             var filled = 0;
-            var ack = new byte[InputRecord.SealedAckLength];
+            var ack = new byte[InputRecord.ScopedSealedAckLength];
             var canInject = true; // last injection outcome; the ack reports it without waiting for this batch
             var pacer = new AckPacer(System.Diagnostics.Stopwatch.Frequency);
             void Acknowledge(uint sequence, uint received, bool deferred)
             {
-                var request = PendingLeave();
-                outgoing.Seal(InputRecord.Ack(sequence, received, !canInject, request.Flags, deferred), ack);
+                var owner = Feedback();
+                outgoing.Seal(InputRecord.ScopedAck(sequence, received, !canInject, owner.Leave,
+                    owner.Capture, owner.Ownership, owner.Owns, deferred), ack);
                 wire.Send(ack);
-                pacer.Sent(sequence, !canInject, request.Serial, System.Diagnostics.Stopwatch.GetTimestamp());
+                pacer.Sent(sequence, !canInject, owner.LeaveSerial, System.Diagnostics.Stopwatch.GetTimestamp());
             }
             while (!lifetime.IsCancellationRequested)
             {
@@ -164,7 +159,7 @@ internal sealed class NetworkInputClient : IDisposable
                     int length = buffer[offset];
                     if (length < 16) throw new InvalidDataException("Short record");
                     var plain = incoming.Open(buffer.AsSpan(offset + 1, length).ToArray());
-                    if (!InputRecord.TryParse(plain, out var record)) throw new InvalidDataException("Unknown record");
+                    if (!InputRecord.TryParseV3(plain, out var record)) throw new InvalidDataException("Unknown record");
                     records.Add(record);
                     last = record.Sequence;
                     ping |= record.Type == InputRecord.Ping;
@@ -176,13 +171,13 @@ internal sealed class NetworkInputClient : IDisposable
                 // Acknowledge first when due, so the round trip the Mac measures is the wire, not
                 // the injection that follows; the blocked flag reports the previous batch's outcome.
                 var now = System.Diagnostics.Stopwatch.GetTimestamp();
-                if (pacer.Read(sequence, InputRecord.Clock(), ping, !canInject, PendingLeave().Serial, now))
+                if (pacer.Read(sequence, InputRecord.Clock(), ping, !canInject, Feedback().LeaveSerial, now))
                     Acknowledge(sequence, pacer.PendingReceived, deferred: false);
                 var ok = true;
                 foreach (var record in records) ok &= deliver(record);
                 canInject = ok;
                 // An edge-return request this batch raised goes to the Mac now, not a step later.
-                if (pacer.Fresh(PendingLeave().Serial))
+                if (pacer.Fresh(Feedback().LeaveSerial))
                     Acknowledge(pacer.Pending ?? pacer.LastAcked ?? sequence, pacer.Pending is null ? InputRecord.Clock() : pacer.PendingReceived, deferred: true);
             }
         }

@@ -10,6 +10,7 @@ final class ClipboardPasteboard: @unchecked Sendable {
         let text: Data?
         let file: ClipboardFile?
         let network: FileNetworkOffer?
+        let shareable: Bool
     }
 
     static let ownType = NSPasteboard.PasteboardType("io.github.amadeus.deuskvm.clipboard")
@@ -28,11 +29,13 @@ final class ClipboardPasteboard: @unchecked Sendable {
     private let queue = DispatchQueue(label: "DeusKVM.clipboard")
     private let board: NSPasteboard
     private var retry: DispatchWorkItem?
+    private var watch: DispatchSourceTimer?
     private var requestDeadline: TimeInterval = 0
     private var epoch: UInt32 = 0
     private var enabled = false
     private var versions = ClipboardRevision()
     private var priming = true
+    private var captured: Snapshot?
     private var pendingYield = false
     private struct Pending {
         let text: Data?
@@ -78,7 +81,8 @@ final class ClipboardPasteboard: @unchecked Sendable {
             generation = next
             clearImage()
             self.epoch = epoch; self.enabled = enabled
-            versions = ClipboardRevision(); pending = nil; file = nil; priming = true; pendingYield = false
+            versions = ClipboardRevision(); pending = nil; file = nil; captured = nil; priming = true; pendingYield = false
+            watch?.cancel(); watch = nil
             network.configure(enabled)
             retry?.cancel(); retry = nil
             if enabled { requestPoll() }
@@ -88,6 +92,33 @@ final class ClipboardPasteboard: @unchecked Sendable {
 
     func yield() {
         queue.async { [self] in pendingYield = true; requestPoll() }
+    }
+
+    /// Ownership can change while this Mac remains remote. Re-read the current revision
+    /// instead of relying on the snapshot captured at its original edge crossing.
+    func capture(epoch: UInt32, completion: @escaping @Sendable (Snapshot?) -> Void) {
+        queue.async { [self] in
+            guard enabled, canAccess, self.epoch == epoch, !IsSecureEventInputEnabled() else {
+                completion(nil); return
+            }
+            poll()
+            guard canAccess, self.epoch == epoch, let captured,
+                  captured.revision == board.changeCount else { completion(nil); return }
+            completion(captured)
+        }
+    }
+
+    /// NSPasteboard has no change notification. Only the selected controller subscribes;
+    /// unchanged changeCount values do not read or encode clipboard payloads.
+    func watchChanges(_ value: Bool) {
+        queue.async { [self] in
+            watch?.cancel(); watch = nil
+            guard value, enabled, canAccess else { return }
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + 0.5, repeating: 0.5, leeway: .milliseconds(100))
+            timer.setEventHandler { [weak self] in self?.poll() }
+            watch = timer; timer.resume()
+        }
     }
 
     func write(_ text: Data, epoch: UInt32, revision: Int) {
@@ -212,14 +243,17 @@ final class ClipboardPasteboard: @unchecked Sendable {
             if file != nil, network.starting { return }
             versions.capture(revision)
             let endpoint = network.offer(epoch: epoch, sequence: UInt32(truncatingIfNeeded: revision), file: file != nil)
-            snapshot(Snapshot(
+            let current = Snapshot(
                 epoch: epoch,
                 generation: generation,
                 revision: revision,
                 text: bytes,
                 file: file,
-                network: endpoint
-            ))
+                network: endpoint,
+                shareable: types.isDisjoint(with: privateTypes)
+            )
+            captured = current
+            snapshot(current)
             priming = false
         }
         if pendingYield { pendingYield = false; yielded(epoch, generation) }

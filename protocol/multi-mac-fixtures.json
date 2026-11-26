@@ -1,0 +1,63 @@
+{
+  "capture": "8877665544332211",
+  "ownership": "1122334455667788",
+  "sequence": 67305985,
+  "captured": 134678021,
+  "records": [
+    {
+      "name": "motion",
+      "type": 1,
+      "hex": "0101020304050607081122334455667788feff2c01"
+    },
+    {
+      "name": "right-button-down",
+      "type": 2,
+      "hex": "02010203040506070811223344556677880201"
+    },
+    {
+      "name": "ping",
+      "type": 3,
+      "hex": "0301020304050607080000000000000000"
+    },
+    {
+      "name": "keyboard",
+      "type": 4,
+      "hex": "04010203040506070811223344556677888202044c"
+    },
+    {
+      "name": "consumer",
+      "type": 5,
+      "hex": "0501020304050607081122334455667788e900"
+    },
+    {
+      "name": "scroll",
+      "type": 6,
+      "hex": "0601020304050607081122334455667788fd01"
+    },
+    {
+      "name": "reset",
+      "type": 7,
+      "hex": "0701020304050607081122334455667788"
+    }
+  ],
+  "acknowledgement": "10000000200000003fabefbe11223344556677888877665544332211",
+  "clipboardRequest": {
+    "epoch": 7,
+    "generation": 1234605616436508552,
+    "request": true
+  },
+  "clipboardSnapshot": {
+    "epoch": 7,
+    "generation": 1234605616436508552,
+    "revision": 12,
+    "kind": "text",
+    "text": "aGVsbG8K8J+agA=="
+  },
+  "control": {
+    "enter": "ab03efbe1122334455667788",
+    "center": "ab031122334455667788",
+    "resume": "ab031122334455667788",
+    "exit": "ab1122334455667788",
+    "acknowledge": "ab01feff2c01001122334455667788"
+  }
+}

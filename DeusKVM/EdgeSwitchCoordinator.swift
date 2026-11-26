@@ -36,6 +36,8 @@ final class EdgeSwitchCoordinator: ObservableObject {
     private var captureTarget: UUID?
     private var restoringPreferences = true
     private var switchID: UInt8 = 0
+    private var captureToken: UInt64 = 0
+    private let pendingEntry = CaptureEntryWait()
     private var companionCapture = false
     private var lastReturnRejection: TimeInterval = 0
     @Published private(set) var reportingProblem = false
@@ -122,8 +124,15 @@ final class EdgeSwitchCoordinator: ObservableObject {
         link.note = { [weak self] in self?.diagnostics.note($0) }
         // The stream belongs to the capture target, so its requests go through the same checks.
         networkPointer.onLeave = { [weak self] leave in
-            guard let self, let target = captureTarget else { return }
+            guard let self, let target = captureTarget, leave.capture == captureToken else { return }
             _returnFromPC(target: target, switchID: leave.switchID, edge: leave.edge, fraction: leave.fraction, via: "network")
+        }
+        link.companion.onEntryAck = { [weak self] target, capture, ok in
+            guard let self, isRemote, target == captureTarget, capture == captureToken,
+                  let generation = pendingEntry.consume(capture: capture), tap.isCurrent(generation) else { return }
+            if ok {
+                link.input.startInput(generation: generation, capture: capture, network: networkPointer.server)
+            } else { returnLocal(reason: "Windows entry was not ready") }
         }
         link.companion.onReady = { [weak self] _ in self?._configureCompanion(); self?._refresh() }
         link.companion.onActivity = { [weak self] id in
@@ -133,16 +142,10 @@ final class EdgeSwitchCoordinator: ObservableObject {
             if recovering { _refresh() } else { scheduleChecks() }
         }
         link.companion.onSelection = { [weak self] in self?._refresh() }
-        link.companion.onDisableRequested = { [weak self] current, acknowledge in
-            guard let self else { return }
-            if current { setEnabled(false) } else {
-                returnLocal(reason: "previous Windows ownership revoked")
-                link.releaseInputForDisable()
-            }
-            link.afterInputRelease(acknowledge)
-        }
-        link.companion.onLeave = { [weak self] target, switchID, edge, fraction in
-            self?._returnFromPC(target: target, switchID: switchID, edge: edge, fraction: fraction, via: "control link")
+        link.companion.onIncompatible = { [weak self] message in self?.lastError = message }
+        link.companion.onLeave = { [weak self] target, switchID, edge, fraction, capture in
+            guard let self, captureToken == capture else { return }
+            _returnFromPC(target: target, switchID: switchID, edge: edge, fraction: fraction, via: "control link")
         }
         _refreshDisplays()
         link.onTargetWillChange = { [weak self] in
@@ -218,9 +221,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
         if !value {
             tap.stop(); tapReady = false; tapStarting = false; keyboardMonitoringReady = false
         }
-        if value { link.companion.prepareControlRequest() }
         link.setEnabled(value)
-        if value { link.companion.requestControl() }
         _refresh()
     }
 
@@ -243,9 +244,10 @@ final class EdgeSwitchCoordinator: ObservableObject {
         // captured for this session may follow EXIT there.
         tap.forceLocal()
         if isRemote, let target = captureTarget {
-            link.companion.send(.exit, payload: Data([switchID]), to: target)
+            link.companion.send(.exit, payload: Data([switchID]) + CompanionProtocol.u64(captureToken), to: target)
         }
         companionCapture = false
+        pendingEntry.cancel()
         cursor.restore(at: point)
         if wasRemote { tap.observeReturn(since: startedAt) }
         link.input.stopInput()
@@ -376,11 +378,9 @@ final class EdgeSwitchCoordinator: ObservableObject {
             companion.sendJSON(PCConfiguration(edge: edge.opposite.wireValue, monitor: monitor.id), type: .config, to: target)
         }
         if isRemote, captureTarget == target, companion.supportsResume(target) {
-            // HELLO/SCREEN_INFO can arrive after the user has already crossed.
-            // Reassert ownership without another entry warp; EXIT remains ordered
-            // after this message on the control stream if the user returns locally.
+            // Restore capture metadata without taking ownership or replaying placement.
             companionCapture = true
-            companion.send(.resume, payload: Data([switchID, edge.opposite.wireValue]), to: target)
+            companion.send(.resume, payload: Data([switchID, edge.opposite.wireValue]) + CompanionProtocol.u64(captureToken), to: target)
         }
     }
 
@@ -399,38 +399,7 @@ final class EdgeSwitchCoordinator: ObservableObject {
                 scheduleChecks()
             }
         case let .begin(generation, origin, fromEdge):
-            let startedAt = ProcessInfo.processInfo.systemUptime
-            _refresh()
-            guard tap.isCurrent(generation) else { return }
-            guard canSwitch, !IsSecureEventInputEnabled(),
-                  let geometry else { returnLocal(); return }
-            guard cursor.hide(at: geometry.parkingPoint, returningTo: origin) else {
-                lastError = L10n.Layout.cursorFailedString
-                returnLocal()
-                return
-            }
-            lastError = nil
-            captureTarget = currentTarget
-            isRemote = true
-            scheduleChecks()
-            refreshClipboard()
-            let setupMs = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
-            beginDiagnostics(setupMs: setupMs)
-            switchID &+= 1
-            companionCapture = currentTarget.map { link.companion.ready.contains($0) } ?? false
-            if let target = currentTarget {
-                let fraction = geometry.fraction(at: origin)
-                let entry = CompanionEntry.packet(
-                    id: switchID, edge: edge.opposite.wireValue, fraction: fraction,
-                    fromEdge: fromEdge, supportsCenter: link.companion.supportsCenter(target)
-                )
-                link.companion.send(
-                    CompanionProtocol.Message(rawValue: entry.type)!, payload: entry.payload, to: target
-                )
-            }
-            // Input captured since the crossing waits on the input queue until this point,
-            // so it follows ENTER and never forwards for a refused crossing.
-            link.input.startInput(generation: generation, network: networkPointer.server)
+            beginCapture(generation: generation, origin: origin, fromEdge: fromEdge)
         case let .end(generation):
             if tap.isCurrent(generation) { returnLocal(reason: "toggle hotkey") }
         case .disabled:
@@ -443,6 +412,43 @@ final class EdgeSwitchCoordinator: ObservableObject {
 }
 
 extension EdgeSwitchCoordinator {
+    private func beginCapture(generation: Int, origin: CGPoint, fromEdge: Bool) {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        _refresh()
+        guard tap.isCurrent(generation) else { return }
+        guard canSwitch, !IsSecureEventInputEnabled(),
+              let geometry else { returnLocal(); return }
+        guard cursor.hide(at: geometry.parkingPoint, returningTo: origin) else {
+            lastError = L10n.Layout.cursorFailedString
+            returnLocal()
+            return
+        }
+        lastError = nil
+        captureTarget = currentTarget
+        isRemote = true
+        scheduleChecks()
+        refreshClipboard()
+        let setupMs = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
+        beginDiagnostics(setupMs: setupMs)
+        switchID &+= 1
+        captureToken &+= 1
+        if captureToken == 0 { captureToken = 1 }
+        pendingEntry.arm(generation: generation, capture: captureToken) { [weak self] in
+            self?.returnLocal(reason: "Windows entry timed out")
+        }
+        companionCapture = currentTarget.map { link.companion.ready.contains($0) } ?? false
+        if let target = currentTarget {
+            let fraction = geometry.fraction(at: origin)
+            let entry = CompanionEntry.packet(
+                id: switchID, edge: edge.opposite.wireValue, fraction: fraction,
+                fromEdge: fromEdge, supportsCenter: link.companion.supportsCenter(target), capture: captureToken
+            )
+            link.companion.send(
+                CompanionProtocol.Message(rawValue: entry.type)!, payload: entry.payload, to: target
+            )
+        }
+    }
+
     private func _refreshConnectionState() {
         let companion = link.companion
         let state = StatusBarConnectionState.resolve(
@@ -544,9 +550,7 @@ extension EdgeSwitchCoordinator {
         diagnostics.began("remote capture began setupMs=\(setupMs)")
     }
 
-    /// Writes what the app knows right now, the recent per-second samples and the Windows
-    /// companion's report, then calls `completion`
-    /// with the file it wrote. Used for lag, early returns or anything else that misbehaves.
+    /// Saves current diagnostics and the Windows report, then returns the report file.
     func reportProblem(completion: @escaping @MainActor @Sendable (URL) -> Void) {
         guard !reportingProblem else { return }
         reportingProblem = true

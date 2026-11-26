@@ -77,6 +77,23 @@ internal static partial class ClipboardNative
         return WriteFormats(window, [(UnicodeText, Utf16.GetBytes(decoded.Replace("\n", "\r\n") + "\0"))],
             expected, canAccess, out revision);
     }
+
+    // Ownership changes must remove text imports too, including an import left by a previous
+    // helper process. The marker is checked while holding the clipboard, so a genuine local
+    // copy is never erased by a delayed reset.
+    public static bool ClearImported(IntPtr window, Func<bool> permitted, out uint revision)
+    {
+        revision = GetClipboardSequenceNumber();
+        if (!OpenClipboard(window)) return false;
+        try
+        {
+            if (!permitted()) return false;
+            if (IsClipboardFormatAvailable(Own) && !EmptyClipboard()) return false;
+            revision = GetClipboardSequenceNumber();
+            return true;
+        }
+        finally { CloseClipboard(); }
+    }
     private static bool WriteFormats(IntPtr window, (uint Format, byte[] Bytes)[] formats, uint expected,
         Func<bool> canAccess, out uint revision)
     {

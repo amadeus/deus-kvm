@@ -3,13 +3,12 @@ import Foundation
 enum CompanionProtocol {
     static let version = 1
     /// The largest message; each travels whole in one ControlLink frame.
-    static let maximumPayload = 65536
+    static let maximumPayload = 131_072
 
     enum Message: UInt8, Sendable {
         case hello = 0x01, ping = 0x02, pong = 0x03, screens = 0x04, config = 0x05
         case enter = 0x11, enterAck = 0x12, leave = 0x13, state = 0x14, exit = 0x15, resume = 0x16, enterCenter = 0x17
         case availability = 0x18, selection = 0x19
-        case requestControl = 0x1A, releaseAck = 0x1B
         case clipGrab = 0x20, clipGet = 0x21, clipData = 0x22, clipState = 0x23
         case fileOffer = 0x24, fileGet = 0x25, fileData = 0x26, fileAccept = 0x27
         /// Problem report: the Mac asks (control stream, u32 token); Windows answers on the bulk
@@ -19,6 +18,7 @@ enum CompanionProtocol {
         /// Offered via HELLO `inputNetwork: 1` from the companion; 2 also takes keyboard, media-key
         /// and scroll records on the stream.
         case inputOffer = 0x32
+        case clipboardSnapshot = 0x52
         case nack = 0x7F
     }
 
@@ -29,6 +29,14 @@ enum CompanionProtocol {
     }
 
     enum Failure: Error { case malformed, sequence }
+
+    static func u64(_ value: UInt64) -> Data {
+        Data((0 ..< 8).map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) })
+    }
+
+    static func read64(_ data: Data, _ offset: Int) -> UInt64 {
+        (0 ..< 8).reduce(0) { $0 | UInt64(data[data.startIndex + offset + $1]) << ($1 * 8) }
+    }
 
     static func u32(_ value: UInt32) -> Data {
         Data((0 ..< 4).map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) })
@@ -54,10 +62,10 @@ struct CompanionHello: Codable {
     var selection: Int?
     var available: Bool?
     var availabilityEpoch: UInt32?
-    var takeover: Bool?
-    var requestControl: Bool?
     var report: Int?
     var inputNetwork: Int?
+    var multiInput: Int?
+    var clipboardSnapshot: Int?
 }
 
 struct PCMonitor: Codable, Identifiable, Equatable {
@@ -84,12 +92,23 @@ struct PCConfiguration: Codable, Equatable {
 }
 
 enum CompanionEntry {
-    static func packet(id: UInt8, edge: UInt8, fraction: UInt16, fromEdge: Bool, supportsCenter: Bool) -> CompanionProtocol.Packet {
+    static func packet(
+        id: UInt8,
+        edge: UInt8,
+        fraction: UInt16,
+        fromEdge: Bool,
+        supportsCenter: Bool,
+        capture: UInt64 = 0
+    ) -> CompanionProtocol.Packet {
         if !fromEdge, supportsCenter {
-            return .init(stream: 0, type: CompanionProtocol.Message.enterCenter.rawValue, payload: Data([id, edge]))
+            return .init(
+                stream: 0,
+                type: CompanionProtocol.Message.enterCenter.rawValue,
+                payload: Data([id, edge]) + CompanionProtocol.u64(capture)
+            )
         }
         return .init(stream: 0, type: CompanionProtocol.Message.enter.rawValue, payload: Data([
             id, edge, UInt8(truncatingIfNeeded: fraction), UInt8(fraction >> 8)
-        ]))
+        ]) + CompanionProtocol.u64(capture))
     }
 }

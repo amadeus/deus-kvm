@@ -15,7 +15,7 @@ internal sealed class LinkWorker : ApplicationContext
     private readonly List<(Task Work, long RetiredAt)> retired = [];
     private WorkerStatus status = new("Starting", "Looking for Macs on the network", DateTimeOffset.UtcNow);
     private MacPriority priority = new();
-    private readonly ControlArbiter arbiter = new();
+    private DesktopRouter? desktop;
     private AutomaticMacSettings saved = new(null, []);
     private CompanionSettings? addedMac; // settings.json: the Mac last chosen in Add Mac
     private NetworkMacDiscovery? discovery;
@@ -37,8 +37,6 @@ internal sealed class LinkWorker : ApplicationContext
         public int Failures { get; set; }
         public bool Attaching { get; set; }
         public bool Remembered { get; set; }
-        public uint? AvailabilityEpoch { get; set; }
-        public long ProcessedRequest { get; set; }
     }
 
     public LinkWorker(Action<WorkerStatus> report)
@@ -82,12 +80,9 @@ internal sealed class LinkWorker : ApplicationContext
         while (!stop.IsCancellationRequested)
         {
             RefreshAddedMac();
-            foreach (var connection in new[] { arbiter.Owner, arbiter.Requested }.OfType<long>())
-                if (!priority.Connections.Any(mac => mac.Connection == connection)) arbiter.Disconnected(connection);
             foreach (var pair in attempts.ToArray())
             {
                 if (priority.IsCurrent(pair.Value.Link.Mac)) continue;
-                arbiter.Disconnected(pair.Key);
                 Retire(pair.Value); attempts.Remove(pair.Key); failures.Remove(pair.Key);
             }
             retired.RemoveAll(item => item.Work.IsCompleted);
@@ -147,7 +142,8 @@ internal sealed class LinkWorker : ApplicationContext
             detail => { if (priority.Active?.Connection == mac.Connection) Emit(status with { Detail = detail }); },
             // Ctrl+Alt+Delete: SendSAS must come from the service process, which reads these lines.
             // Ctrl+Alt+Delete from the active Mac: SendSAS must come from the service process (this one).
-            () => { if (priority.Active?.Connection == mac.Connection) Emit(status with { DiscoveryEvent = SecureAttention.Send() }); });
+            () => { if (desktop?.Owner == mac.Connection) Emit(status with { DiscoveryEvent = SecureAttention.Send() }); },
+            desktop ??= new DesktopRouter());
         attempts[mac.Connection] = new Attempt(link, link.Open()) { Failures = failures.GetValueOrDefault(mac.Connection) };
     }
 
@@ -216,59 +212,12 @@ internal sealed class LinkWorker : ApplicationContext
         foreach (var attempt in attempts.Values)
         {
             var link = attempt.Link;
-            if (link.Ready) attempt.AvailabilityEpoch = link.AvailabilityEpoch;
-            priority.SetAvailable(link.Mac, link.Available && link.SupportsTakeover && attempt.RetryAt == 0);
+            var available = link.Available && attempt.RetryAt == 0;
+            priority.SetAvailable(link.Mac, available);
+            link.SetActive(available);
+            if (link.Controlling) priority.SelectRequested(link.Mac);
         }
-        // Availability flag 2 carries Enable + Request atomically; it cannot be
-        // mistaken for an unsolicited new connection while a later frame waits.
-        foreach (var attempt in attempts.Values.OrderBy(item => item.Link.RequestSerial))
-        {
-            if (attempt.Link.RequestSerial <= attempt.ProcessedRequest) continue;
-            attempt.ProcessedRequest = attempt.Link.RequestSerial;
-            if (attempt.Link.Available) arbiter.Request(attempt.Link.Mac.Connection);
-        }
-        if (arbiter.Requested is { } requested && attempts.TryGetValue(requested, out var requester) &&
-            requester.Link.Ready && !requester.Link.Available) arbiter.CancelRequest();
-
-        if (arbiter.Owner is { } owner && attempts.TryGetValue(owner, out var previous))
-        {
-            if (arbiter.Requested is not null || !previous.Link.Available)
-                arbiter.BeginRelease(previous.AvailabilityEpoch ?? 0);
-            if (arbiter.Releasing is not null)
-            {
-                previous.Link.RequestDisable(arbiter.ReleaseEpoch);
-                if (previous.Link.ReleaseAcknowledged is { } epoch && arbiter.Acknowledge(owner, epoch))
-                    priority.SetAvailable(previous.Link.Mac, false);
-            }
-            else if (!previous.Link.Active)
-            {
-                previous.Link.SetActive(true); // same owner after its link reconnected
-                previous.Link.RefreshDesktop();
-            }
-        }
-
-        if (arbiter.Owner is null && arbiter.Releasing is null)
-        {
-            var next = arbiter.Requested is { } target
-                ? priority.Candidates.FirstOrDefault(mac => mac.Connection == target) : priority.Next;
-            if (next is not null && attempts.TryGetValue(next.Connection, out var winner) && arbiter.Grant(next.Connection))
-            {
-                priority.SelectRequested(next);
-                winner.Link.SetActive(true);
-                winner.Link.RefreshDesktop();
-                Remember(winner.Link, true);
-                Emit(status with { State = "Connected", DeviceName = next.Name, DeviceId = next.Id,
-                    Detail = "Active Mac; preparing edge and clipboard session", LastDiscovery = DateTimeOffset.UtcNow,
-                    DiscoveryEvent = $"Active Mac: {next.Name}; connection={next.Connection}" });
-            }
-        }
-        // A connected non-owner is disabled on the Mac itself. Explicit Enable
-        // is the only way it can replace an existing owner, with its link intact.
-        if (arbiter.Owner is not null || arbiter.Requested is not null)
-            foreach (var attempt in attempts.Values)
-                if (attempt.Link.Mac.Connection != arbiter.Owner && attempt.Link.Mac.Connection != arbiter.Requested &&
-                    attempt.Link.Ready && attempt.Link.Available && attempt.Link.SupportsTakeover)
-                    attempt.Link.RequestDisable();
+        desktop?.Refresh();
     }
 
     private void RefreshAddedMac()
@@ -301,14 +250,14 @@ internal sealed class LinkWorker : ApplicationContext
 
     private void RefreshStatus()
     {
-        var active = priority.Connections.FirstOrDefault(mac => mac.Connection == arbiter.Owner);
+        var active = priority.Connections.FirstOrDefault(mac => mac.Connection == desktop?.Owner);
         var waiting = priority.Candidates.Where(mac => mac.Connection != active?.Connection &&
             attempts.TryGetValue(mac.Connection, out var attempt) && attempt.Link.Verified)
             .Select(mac => mac.Name).ToArray();
         var paused = attempts.Values.Where(item => item.Link.Ready && !item.Link.Available).Select(item => item.Link.Mac.Name).ToArray();
         var next = status with { DeviceName = active?.Name, DeviceId = active?.Id, WaitingMacs = waiting, PausedMacs = paused };
-        if (arbiter.Releasing is not null)
-            next = next with { State = "Waiting", Detail = $"Waiting for {active?.Name ?? "previous Mac"} to release control" };
+        if (active is null && waiting.Length > 0)
+            next = next with { State = "Ready", Detail = "Macs connected and ready; cross a screen edge or choose Switch to PC" };
         else if (active is null)
             next = next with { State = priority.Enumerated ? "Waiting" : "Starting",
                 Detail = paused.Length > 0 ? "Enable DeusKVM and allow this PC on a Mac to take control" :
@@ -317,7 +266,7 @@ internal sealed class LinkWorker : ApplicationContext
                 LastDiscovery = null };
         else if (attempts.TryGetValue(active.Connection, out var attempt))
             next = next with { State = attempt.RetryAt != 0 ? "Retrying" : !attempt.Work.IsCompleted ? "Opening" : "Connected",
-                Detail = attempt.RetryAt != 0 ? $"Retrying {active.Name}; connection priority is retained. {attempt.Link.Error}" : next.Detail };
+                Detail = attempt.RetryAt != 0 ? $"Retrying {active.Name}. {attempt.Link.Error}" : $"Last controller: {active.Name}; other enabled Macs remain ready" };
         if (next.State != status.State || next.Detail != status.Detail || next.DeviceId != status.DeviceId ||
             !waiting.SequenceEqual(status.WaitingMacs ?? []) || !paused.SequenceEqual(status.PausedMacs ?? [])) Emit(next);
     }
@@ -348,7 +297,7 @@ internal sealed class LinkWorker : ApplicationContext
             disposed = true;
             shutdown.Cancel(); heartbeat.Dispose(); discovery?.Dispose(); identity?.Dispose();
             foreach (var attempt in attempts.Values) attempt.Link.Dispose();
-            attempts.Clear(); shutdown.Dispose();
+            attempts.Clear(); desktop?.Dispose(); shutdown.Dispose();
         }
         base.Dispose(disposing);
     }

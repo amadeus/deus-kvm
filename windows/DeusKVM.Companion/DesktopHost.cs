@@ -37,6 +37,8 @@ internal sealed class DesktopHost(DesktopRole role, Action<DesktopMessage> recei
     private uint sessionId = uint.MaxValue;
     private string? userSid;
     private long lastMessage;
+    private long generation;
+    public long Generation => Interlocked.Read(ref generation);
     private string launchStep = "reading console session";
     public bool Connected { get; private set; }
     public string Detail { get; private set; } = role == DesktopRole.Agent ? "Waiting for the console session" : "Waiting for a signed-in user";
@@ -117,7 +119,7 @@ internal sealed class DesktopHost(DesktopRole role, Action<DesktopMessage> recei
             outgoing = Channel.CreateBounded<DesktopMessage>(32);
             lastMessage = RuntimeCompat.TickCount64;
             Detail = $"Connecting {Name.ToLowerInvariant()}";
-            _ = RunAsync(pipe, process.Id, outgoing, lifetime.Token);
+            _ = RunAsync(pipe, process.Id, outgoing, lifetime.Token, Generation);
             launchStep = "resuming console process";
             process.Resume();
         }
@@ -129,16 +131,17 @@ internal sealed class DesktopHost(DesktopRole role, Action<DesktopMessage> recei
         if (Connected && outgoing?.Writer.TryWrite(message) != true) Stop();
     }
 
-    private async Task RunAsync(NamedPipeServerStream connection, int pid, Channel<DesktopMessage> queue, CancellationToken stop)
+    private async Task RunAsync(NamedPipeServerStream connection, int pid, Channel<DesktopMessage> queue, CancellationToken stop, long runGeneration)
     {
         try
         {
             await connection.WaitForConnectionAsync(stop).WaitAsync(TimeSpan.FromSeconds(10), stop);
             if (!GetNamedPipeClientProcessId(connection.SafePipeHandle, out var peer) || peer != pid)
                 throw new InvalidDataException("Unexpected helper pipe client");
+            if (stop.IsCancellationRequested || runGeneration != Generation) return;
             Connected = true;
             Detail = $"{Name} connected";
-            receive(new DesktopMessage("connected"));
+            receive(new DesktopMessage("connected", HostGeneration: runGeneration));
             var writer = WriteAsync();
             try
             {
@@ -148,14 +151,14 @@ internal sealed class DesktopHost(DesktopRole role, Action<DesktopMessage> recei
                     lastMessage = RuntimeCompat.TickCount64;
                     if (message.Kind == "alive") continue;
                     if (message.Detail is not null) Detail = message.Detail;
-                    receive(message);
+                    if (runGeneration == Generation && !stop.IsCancellationRequested) receive(message with { HostGeneration = runGeneration });
                 }
             }
             finally { queue.Writer.TryComplete(); await writer; }
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or TimeoutException or JsonException)
         {
-            if (!stop.IsCancellationRequested)
+            if (!stop.IsCancellationRequested && runGeneration == Generation)
             {
                 Detail = $"{Name} disconnected: " + error.Message;
                 Stop();
@@ -171,13 +174,14 @@ internal sealed class DesktopHost(DesktopRole role, Action<DesktopMessage> recei
 
     private void Stop()
     {
+        var nextGeneration = Interlocked.Increment(ref generation);
         var wasConnected = Connected;
         Connected = false;
         lifetime?.Cancel(); lifetime?.Dispose(); lifetime = null;
         outgoing?.Writer.TryComplete(); outgoing = null;
         pipe?.Dispose(); pipe = null;
         process?.Dispose(); process = null;
-        if (wasConnected) receive(new DesktopMessage("disconnected"));
+        if (wasConnected) receive(new DesktopMessage("disconnected", HostGeneration: nextGeneration));
     }
 
     public void Dispose() => Stop();

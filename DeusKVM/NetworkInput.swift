@@ -9,6 +9,8 @@ enum NetworkInputEvent: Sendable, Equatable {
     case consumer(ConsumerKey)
     /// Already scaled and inverted; HID orientation (wheel up and pan right are positive).
     case scroll(wheel: Int8, pan: Int8)
+    /// Synthetic capture cleanup; never acquires Windows control.
+    case reset
 }
 
 /// What the PC needs to connect to the Mac's input listener: the same shape as the file
@@ -39,6 +41,9 @@ struct InputAck: Sendable, Equatable {
     var leave: InputLeave?
     /// Sent after its record's read (the PC paces routine acknowledgements): not a round trip.
     var deferred = false
+    var capture: UInt64 = 0
+    var ownership: UInt64 = 0
+    var owns = false
 }
 
 /// An edge-return request carried on an acknowledgement: the same fields as the control
@@ -47,6 +52,8 @@ struct InputLeave: Sendable, Equatable {
     let switchID: UInt8
     let edge: UInt8
     let fraction: UInt16
+    var capture: UInt64 = 0
+    var ownership: UInt64 = 0
 }
 
 /// The wire records of the input stream. Little-endian; each Mac to
@@ -64,7 +71,8 @@ enum InputRecord {
     static let scroll: UInt8 = 6
     /// Keys a keyboard record can carry; the network has no six-key rollover limit.
     static let maxKeys = 32
-    static let ackLength = 12
+    static let reset: UInt8 = 7
+    static let ackLength = 28
     static let ackBlockedFlag: UInt32 = 1
     static let ackLeaveFlag: UInt32 = 2
     static let ackDeferredFlag: UInt32 = 16
@@ -104,14 +112,28 @@ enum InputRecord {
         Data([scroll]) + u32(sequence) + u32(captured) + Data([UInt8(bitPattern: wheel), UInt8(bitPattern: pan)])
     }
 
+    static func scoped(_ record: Data, capture: UInt64) -> Data {
+        guard record.count >= 9 else { return Data() }
+        let token: UInt64 = record.first == ping ? 0 : capture
+        return record.prefix(9) + CompanionProtocol.u64(token) + record.dropFirst(9)
+    }
+
     static func ack(_ data: Data) -> InputAck? {
         guard data.count == ackLength else { return nil }
         let flags = read32(data, 8)
+        guard flags & 32 == 0 || (CompanionProtocol.read64(data, 12) != 0 && CompanionProtocol.read64(data, 20) != 0) else { return nil }
         let leave = flags & ackLeaveFlag == 0 ? nil :
-            InputLeave(switchID: UInt8(truncatingIfNeeded: flags >> 8), edge: UInt8((flags >> 2) & 3), fraction: UInt16(flags >> 16))
+            InputLeave(
+                switchID: UInt8(truncatingIfNeeded: flags >> 8),
+                edge: UInt8((flags >> 2) & 3),
+                fraction: UInt16(flags >> 16),
+                capture: CompanionProtocol.read64(data, 12),
+                ownership: CompanionProtocol.read64(data, 20)
+            )
         return InputAck(
             sequence: read32(data, 0), received: read32(data, 4), blocked: flags & ackBlockedFlag != 0,
-            leave: leave, deferred: flags & ackDeferredFlag != 0
+            leave: flags & 32 != 0 ? leave : nil, deferred: flags & ackDeferredFlag != 0,
+            capture: CompanionProtocol.read64(data, 12), ownership: CompanionProtocol.read64(data, 20), owns: flags & 32 != 0
         )
     }
 
@@ -227,6 +249,8 @@ struct InputStreamState: Sendable, Equatable {
         case let .scroll(wheel, pan):
             scrolls += 1
             build = { InputRecord.scroll(sequence: $0, captured: $1, wheel: wheel, pan: pan) }
+        case .reset:
+            build = { Data([InputRecord.reset]) + CompanionProtocol.u32($0) + CompanionProtocol.u32($1) }
         case let .motion(dx, dy):
             return motion(dx: dx, dy: dy, now: now).map { [$0] } ?? []
         case let .button(button, down):

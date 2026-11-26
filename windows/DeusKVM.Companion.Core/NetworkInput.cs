@@ -76,6 +76,32 @@ public static class InputRecord
         }
     }
 
+    /// <summary>v3 records add a capture token after the timestamp. Only keepalives use token zero.</summary>
+    public static bool TryParseV3(ReadOnlySpan<byte> plain, out InputEvent record)
+    {
+        record = default;
+        if (plain.Length < 17 || plain.Length > 17 + 2 + MaxKeys) return false;
+        var capture = BinaryPrimitives.ReadUInt64LittleEndian(plain.Slice(9));
+        if ((plain[0] == Ping) != (capture == 0)) return false;
+        Span<byte> unscoped = stackalloc byte[plain.Length - 8];
+        plain.Slice(0, 9).CopyTo(unscoped); plain.Slice(17).CopyTo(unscoped.Slice(9));
+        if (!TryParse(unscoped, out record)) return false;
+        record = record with { Capture = capture };
+        return true;
+    }
+
+    public const int ScopedAckLength = 28, ScopedSealedAckLength = ScopedAckLength + 16;
+    public const uint AckOwns = 32;
+    public static byte[] ScopedAck(uint sequence, uint received, bool blocked, uint leave, ulong capture, ulong ownership, bool owns, bool deferred = false)
+    {
+        var ack = new byte[ScopedAckLength];
+        Ack(sequence, received, blocked, owns ? leave : 0, deferred).CopyTo(ack, 0);
+        if (owns) BinaryPrimitives.WriteUInt32LittleEndian(ack.AsSpan(8), BinaryPrimitives.ReadUInt32LittleEndian(ack.AsSpan(8)) | AckOwns);
+        BinaryPrimitives.WriteUInt64LittleEndian(ack.AsSpan(12), capture);
+        BinaryPrimitives.WriteUInt64LittleEndian(ack.AsSpan(20), ownership);
+        return ack;
+    }
+
     public static byte[] Ack(uint sequence, uint received, bool blocked, uint leave = 0, bool deferred = false)
     {
         var ack = new byte[AckLength];

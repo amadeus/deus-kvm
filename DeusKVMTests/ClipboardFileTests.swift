@@ -1,6 +1,13 @@
 import XCTest
 
 final class ClipboardFileTests: XCTestCase {
+    func testOffersUseTheSameReservedFilenameRulesAsWindows() {
+        for name in ["CON", "con.txt", "LPT9.log", "AUX"] {
+            XCTAssertFalse(ClipboardFileOffer(epoch: 1, clipboardSequence: 2, sequence: 3, name: name, size: 4).valid)
+        }
+        XCTAssertTrue(ClipboardFileOffer(epoch: 1, clipboardSequence: 2, sequence: 3, name: "notes.txt", size: 4).valid)
+    }
+
     func testReadsOnlyRequestedBlocksAndRejectsChangedOrRemovedSource() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: url) }

@@ -1,6 +1,10 @@
 import XCTest
 
 final class NetworkInputTests: XCTestCase {
+    private func acknowledgement(_ bytes: [UInt8], capture: UInt64 = 0, ownership: UInt64 = 0) -> Data {
+        Data(bytes) + CompanionProtocol.u64(capture) + CompanionProtocol.u64(ownership)
+    }
+
     func testRecordsHaveTheDocumentedLayout() {
         XCTAssertEqual(
             Array(InputRecord.motion(sequence: 0x0403_0201, captured: 0x0807_0605, dx: -2, dy: 300)),
@@ -16,25 +20,35 @@ final class NetworkInputTests: XCTestCase {
         XCTAssertEqual(InputRecord.buttonCode(.left), 1)
         XCTAssertEqual(Array(InputRecord.ping(sequence: 2, captured: 3)), [3, 2, 0, 0, 0, 3, 0, 0, 0])
         XCTAssertEqual(
-            InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 0, 0, 0, 0])),
+            InputRecord.ack(acknowledgement([0x10, 0, 0, 0, 0x20, 0, 0, 0, 0, 0, 0, 0])),
             InputAck(sequence: 0x10, received: 0x20, blocked: false)
         )
-        XCTAssertEqual(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0, 0, 0]))?.blocked, true, "bit 0: the PC cannot inject")
+        XCTAssertEqual(
+            InputRecord.ack(acknowledgement([0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0, 0, 0]))?.blocked,
+            true,
+            "bit 0: the PC cannot inject"
+        )
         XCTAssertNil(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0])), "the old eight-byte form is rejected")
         XCTAssertEqual(
-            InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x0F, 0xAB, 0xEF, 0xBE])),
-            InputAck(sequence: 0x10, received: 0x20, blocked: true, leave: InputLeave(switchID: 0xAB, edge: 3, fraction: 0xBEEF)),
+            InputRecord.ack(acknowledgement([0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x2F, 0xAB, 0xEF, 0xBE], capture: 1, ownership: 1)),
+            InputAck(
+                sequence: 0x10,
+                received: 0x20,
+                blocked: true,
+                leave: InputLeave(switchID: 0xAB, edge: 3, fraction: 0xBEEF, capture: 1, ownership: 1),
+                capture: 1, ownership: 1, owns: true
+            ),
             "bit 1: an edge-return request; edge in bits 2-3, switch id 8-15, fraction 16-31"
         )
-        XCTAssertNil(InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0xAB, 0xEF, 0xBE]))?.leave, "no bit 1, no request")
+        XCTAssertNil(InputRecord.ack(acknowledgement([0x10, 0, 0, 0, 0x20, 0, 0, 0, 1, 0xAB, 0xEF, 0xBE]))?.leave, "no bit 1, no request")
         XCTAssertNil(InputRecord.ack(Data([1, 2, 3])))
-        let deferred = InputRecord.ack(Data([0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x10, 0, 0, 0]))
+        let deferred = InputRecord.ack(acknowledgement([0x10, 0, 0, 0, 0x20, 0, 0, 0, 0x10, 0, 0, 0]))
         XCTAssertEqual(deferred?.deferred, true, "bit 4: sent later than its record's read")
         XCTAssertEqual(deferred?.blocked, false)
         XCTAssertNil(deferred?.leave)
         XCTAssertEqual(InputRecord.clock(uptime: 0.0015), 15)
         XCTAssertEqual(InputRecord.clock(uptime: 429_496.7296), 0, "wraps at 32 bits of 100 µs ticks")
-        XCTAssertEqual(InputRecord.sealedAckLength, 28)
+        XCTAssertEqual(InputRecord.sealedAckLength, 44)
     }
 
     func testMotionFlowsWhileThePCKeepsUpAndCoalescesOnceItIsBehind() throws {

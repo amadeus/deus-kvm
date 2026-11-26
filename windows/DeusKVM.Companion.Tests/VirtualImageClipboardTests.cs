@@ -26,7 +26,7 @@ public sealed class VirtualImageClipboardTests
         Assert.Equal(2, BitConverter.ToInt32(dib!, 4));
         Assert.Equal(24, BitConverter.ToInt16(dib!, 14));
         using var session = ClipboardImageContent.CreateFileSession(new(1, 2, "Screenshot.png", png.Length, ContentType: "image/png"), png);
-        var clipboard = new VirtualFileClipboard(session, () => true, png, dib!);
+        var clipboard = new RemoteClipboard(session, () => true, png, dib!);
         var formats = Enumerate(clipboard);
         foreach (var id in new[] { Format("PNG"), (short)8, Format("FileGroupDescriptorW"), Format("FileContents") })
             Assert.Contains(formats, entry => entry.cfFormat == id);
@@ -65,12 +65,48 @@ public sealed class VirtualImageClipboardTests
     public void OrdinaryFileObjectDoesNotAdvertiseAnImage()
     {
         using var session = new FileClipboardSession(new(1, 2, "file.txt", 1), new TestFileReader(_ => [1]));
-        var formats = Enumerate(new VirtualFileClipboard(session, () => true));
+        var formats = Enumerate(new RemoteClipboard(session, () => true));
         Assert.DoesNotContain(formats, entry => entry.cfFormat == Format("PNG") || entry.cfFormat == 8);
         Assert.Contains(formats, entry => entry.cfFormat == Format("FileContents"));
     }
 
-    private static List<FORMATETC> Enumerate(VirtualFileClipboard clipboard)
+    [Fact]
+    public void LazyImageMetadataDoesNotReadItsNetworkSource()
+    {
+        var reads = 0;
+        using var session = new FileClipboardSession(new(1, 2, "Screenshot.png", 64, ContentType: "image/png"),
+            new TestFileReader(_ => { reads++; throw new IOException("Metadata must not fetch image bytes"); }));
+        var clipboard = new RemoteClipboard(session, () => true);
+        var formats = Enumerate(clipboard);
+        Assert.Contains(formats, item => item.cfFormat == Format("PNG"));
+        Assert.Contains(formats, item => item.cfFormat == 8);
+        var descriptor = formats.Single(item => item.cfFormat == Format("FileGroupDescriptorW"));
+        clipboard.GetData(ref descriptor, out var medium);
+        ReleaseStgMedium(ref medium);
+        Assert.Equal(0, reads);
+    }
+
+    [Fact]
+    public void TextHasOnlyTextAndPrivacyFormats()
+    {
+        var formats = Enumerate(new RemoteClipboard("hello"u8.ToArray(), () => true));
+        Assert.Contains(formats, item => item.cfFormat == 13);
+        Assert.DoesNotContain(formats, item => item.cfFormat == Format("FileContents") || item.cfFormat == Format("PNG"));
+        Assert.Contains(formats, item => item.cfFormat == Format("DeusKVM.Clipboard"));
+    }
+
+    [Fact]
+    public void RevocationDuringRenderingDoesNotReturnTheAllocatedMedium()
+    {
+        using var session = new FileClipboardSession(new(1, 2, "file.txt", 1), new TestFileReader(_ => [1]));
+        var checks = 0;
+        var clipboard = new RemoteClipboard(session, () => ++checks == 1);
+        var descriptor = Enumerate(clipboard).Single(item => item.cfFormat == Format("FileGroupDescriptorW"));
+        Assert.Throws<COMException>(() => clipboard.GetData(ref descriptor, out _));
+        Assert.Equal(2, checks);
+    }
+
+    private static List<FORMATETC> Enumerate(RemoteClipboard clipboard)
     {
         var enumerator = clipboard.EnumFormatEtc(DATADIR.DATADIR_GET);
         var result = new List<FORMATETC>(); var entry = new FORMATETC[1];

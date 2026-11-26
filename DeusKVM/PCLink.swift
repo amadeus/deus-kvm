@@ -83,17 +83,6 @@ final class PCLink: ObservableObject {
         UserDefaults.standard.removeObject(forKey: AppSettings.allowedHostsKey)
     }
 
-    /// Releases held input on the PC ahead of an ownership change.
-    func releaseInputForDisable() {
-        input.stopInput()
-    }
-
-    /// Runs on the main thread once queued input and its releases have been sent.
-    func afterInputRelease(_ completion: @escaping () -> Void) {
-        let completion = Unchecked(value: completion)
-        input.afterRelease { DispatchQueue.main.async { MainActor.assumeIsolated { completion.value() } } }
-    }
-
     private func reconcile(ready: Set<UUID>) {
         var policy = hostPolicy
         policy.reconcile(ready: ready)
@@ -135,14 +124,14 @@ final class InputPipeline: @unchecked Sendable {
     }
 
     /// The coordinator approved the crossing and queued ENTER: forward this session, oldest first.
-    func startInput(generation: Int, network: InputNetworkServer) {
+    func startInput(generation: Int, capture: UInt64, network: InputNetworkServer) {
         queue.async { [self] in
             controller.start(InputSink(
                 send: { [weak network] in network?.send($0) },
                 pointerReady: { [weak network] in network?.isUp ?? false },
                 keysReady: { [weak network] in network?.keysUp ?? false }
             ))
-            network.resetSession()
+            network.resetSession(capture: capture)
             for (event, captured) in gate.start(generation) {
                 forward(event, captured)
             }

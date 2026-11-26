@@ -47,7 +47,7 @@ final class InputControllerTests: XCTestCase {
         controller.handle(DirectInputEvent(kind: .consumer(.volumeUp, down: true), modifiers: []))
         recorder.events.removeAll()
         controller.stop()
-        XCTAssertEqual(recorder.events, [.button(.middle, false), .keyboard(.zero), .consumer(.none)])
+        XCTAssertEqual(recorder.events, [.reset], "synthetic cleanup is distinct from user input and cannot acquire ownership")
         recorder.events.removeAll()
         controller.stop()
         XCTAssertEqual(recorder.events, [], "a second stop has nothing to release")

@@ -18,26 +18,38 @@ public interface IFileAsyncOperation
 
 // Live OLE data object: never flush it, which would eagerly render the contents.
 [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
-public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
+public sealed class RemoteClipboard : IDataObject, IFileAsyncOperation
 {
     private static readonly short Descriptor = Format("FileGroupDescriptorW"), Contents = Format("FileContents");
     private static readonly short Effect = Format("Preferred DropEffect"), Own = Format("DeusKVM.Clipboard");
     private static readonly short History = Format("CanIncludeInClipboardHistory"), Cloud = Format("CanUploadToCloudClipboard");
     private static readonly short Png = Format("PNG");
     private const short Dib = 8;
-    private readonly FileClipboardSession session;
+    private readonly FileClipboardSession? session;
+    private readonly byte[]? text;
+    private readonly bool image;
     private readonly FileClipboardOperation operation;
-    private readonly byte[]? png, dib;
+    private readonly CancellationTokenRegistration cancellation;
+    private byte[]? png, dib;
     private bool asyncMode = true;
     private IntPtr ownerWindow;
-    public VirtualFileClipboard(FileClipboardSession session, Func<bool> permitted)
+    public RemoteClipboard(FileClipboardSession session, Func<bool> permitted, CancellationToken lifetime = default)
     {
-        this.session = session;
+        this.session = session; image = session.Offer.IsImage;
+        cancellation = lifetime.Register(session.Dispose);
         operation = new FileClipboardOperation(permitted,
             () => Volatile.Read(ref ownerWindow) != IntPtr.Zero && GetClipboardOwner() == Volatile.Read(ref ownerWindow),
             session.Dispose, FilePasteDiagnostics.Write);
     }
-    internal VirtualFileClipboard(FileClipboardSession session, Func<bool> permitted, byte[] png, byte[] dib)
+    public RemoteClipboard(byte[] text, Func<bool> permitted)
+    {
+        var decoded = ClipboardTransfer.Decode(text) ?? throw new InvalidDataException("Invalid clipboard text");
+        this.text = Encoding.Unicode.GetBytes(decoded.Replace("\n", "\r\n") + "\0");
+        operation = new FileClipboardOperation(permitted,
+            () => Volatile.Read(ref ownerWindow) != IntPtr.Zero && GetClipboardOwner() == Volatile.Read(ref ownerWindow),
+            () => { }, FilePasteDiagnostics.Write);
+    }
+    internal RemoteClipboard(FileClipboardSession session, Func<bool> permitted, byte[] png, byte[] dib)
         : this(session, permitted)
     {
         this.png = png; this.dib = dib;
@@ -55,7 +67,8 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
     }
     internal bool Revoke()
     {
-        session.Dispose();
+        session?.Dispose();
+        cancellation.Dispose();
         return OleIsCurrentClipboard(this) == 0 && OleSetClipboard(null) >= 0;
     }
     public void SetAsyncMode(bool value) => asyncMode = value;
@@ -66,8 +79,23 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
     private static FORMATETC Entry(short id, TYMED medium, int index = -1) => new() { cfFormat = id, dwAspect = DVASPECT.DVASPECT_CONTENT, lindex = index, tymed = medium };
     private static FORMATETC[] FileFormats => [Entry(Descriptor, TYMED.TYMED_HGLOBAL), Entry(Contents, TYMED.TYMED_ISTREAM, 0),
         Entry(Effect, TYMED.TYMED_HGLOBAL), Entry(Own, TYMED.TYMED_HGLOBAL), Entry(History, TYMED.TYMED_HGLOBAL), Entry(Cloud, TYMED.TYMED_HGLOBAL)];
-    private FORMATETC[] Formats => png is null ? FileFormats :
-        [Entry(Png, TYMED.TYMED_HGLOBAL), Entry(Dib, TYMED.TYMED_HGLOBAL), .. FileFormats];
+    private FORMATETC[] Formats => text is not null
+        ? [Entry(13, TYMED.TYMED_HGLOBAL), Entry(Own, TYMED.TYMED_HGLOBAL),
+            Entry(History, TYMED.TYMED_HGLOBAL), Entry(Cloud, TYMED.TYMED_HGLOBAL)]
+        : image ? [Entry(Png, TYMED.TYMED_HGLOBAL), Entry(Dib, TYMED.TYMED_HGLOBAL), .. FileFormats] : FileFormats;
+
+    // Metadata installation is immediate. Network reads happen only when a consumer requests
+    // image bytes, independently of the service/clipboard STA's incoming message queue.
+    private byte[] ImageBytes(bool bitmap)
+    {
+        operation.CheckRead();
+        png ??= ClipboardImageContent.Read(session!, () => { operation.CheckRead(); return true; });
+        operation.CheckRead();
+        if (!bitmap) return png;
+        dib ??= ClipboardNative.ImageDib(png) ?? throw new COMException("Invalid clipboard image", unchecked((int)0x80040064));
+        operation.CheckRead();
+        return dib;
+    }
     public int QueryGetData(ref FORMATETC format)
     {
         var requested = format;
@@ -82,15 +110,21 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
         if (format.cfFormat == Contents)
         {
             FilePasteDiagnostics.Write("contents-stream-requested");
-            medium = new STGMEDIUM { tymed = TYMED.TYMED_ISTREAM,
-                unionmember = Marshal.GetComInterfaceForObject(new RemoteFileStream(session, operation.CheckRead, FilePasteDiagnostics.Write), typeof(IStream)) };
+            var stream = Marshal.GetComInterfaceForObject(new RemoteFileStream(session!, operation.CheckRead, FilePasteDiagnostics.Write), typeof(IStream));
+            try { operation.Check(); }
+            catch { Marshal.Release(stream); throw; }
+            medium = new STGMEDIUM { tymed = TYMED.TYMED_ISTREAM, unionmember = stream };
             return;
         }
         byte[] bytes;
         if (format.cfFormat == Png || format.cfFormat == Dib)
         {
             operation.CheckRead();
-            bytes = format.cfFormat == Png ? png! : dib!;
+            bytes = ImageBytes(format.cfFormat == Dib);
+        }
+        else if (format.cfFormat == 13 && text is not null)
+        {
+            operation.CheckRead(); bytes = text;
         }
         else if (format.cfFormat == Descriptor)
         {
@@ -98,16 +132,22 @@ public sealed class VirtualFileClipboard : IDataObject, IFileAsyncOperation
             BitConverter.GetBytes(1).CopyTo(bytes, 0);
             BitConverter.GetBytes(0x80004044u).CopyTo(bytes, 4); // Unicode, progress, size, attributes.
             BitConverter.GetBytes(0x80u).CopyTo(bytes, 4 + 36); // FILE_ATTRIBUTE_NORMAL.
-            BitConverter.GetBytes((uint)session.Offer.Size).CopyTo(bytes, 4 + 68);
-            Encoding.Unicode.GetBytes(session.Offer.Name + "\0").CopyTo(bytes, 4 + 72);
+            BitConverter.GetBytes((uint)session!.Offer.Size).CopyTo(bytes, 4 + 68);
+            Encoding.Unicode.GetBytes(session!.Offer.Name + "\0").CopyTo(bytes, 4 + 72);
         }
         else bytes = BitConverter.GetBytes(format.cfFormat == Effect || format.cfFormat == Own ? 1u : 0u);
         var handle = GlobalAlloc(0x42, (UIntPtr)bytes.Length);
         if (handle == IntPtr.Zero) throw new OutOfMemoryException();
         var pointer = GlobalLock(handle);
         if (pointer == IntPtr.Zero) { GlobalFree(handle); throw new OutOfMemoryException(); }
-        try { Marshal.Copy(bytes, 0, pointer, bytes.Length); }
-        finally { GlobalUnlock(handle); }
+        try
+        {
+            try { Marshal.Copy(bytes, 0, pointer, bytes.Length); }
+            finally { GlobalUnlock(handle); }
+            if (format.cfFormat is 13 or Dib || format.cfFormat == Png) operation.CheckRead();
+            else operation.Check();
+        }
+        catch { GlobalFree(handle); throw; }
         medium = new STGMEDIUM { tymed = TYMED.TYMED_HGLOBAL, unionmember = handle };
     }
     public IEnumFORMATETC EnumFormatEtc(DATADIR direction) => direction == DATADIR.DATADIR_GET ? new FileFormatEnumerator(Formats) : throw new COMException("Not supported", unchecked((int)0x80004001));

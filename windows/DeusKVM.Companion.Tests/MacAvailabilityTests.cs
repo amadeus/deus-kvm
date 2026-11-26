@@ -36,10 +36,7 @@ public sealed class MacAvailabilityTests
         state.Receive([12, 0, 0, 0, 1]);
         Assert.True(state.Available);
         Assert.Equal(new byte[] { 12, 0, 0, 0, 1 }, state.Selection(true));
-        state.Receive([13, 0, 0, 0, 2]);
-        Assert.True(state.Available);
-        Assert.True(state.Requested);
-        Assert.Equal(new byte[] { 13, 0, 0, 0, 1 }, state.Selection(true));
+        Assert.Throws<InvalidDataException>(() => state.Receive([13, 0, 0, 0, 2]));
         Assert.Throws<InvalidDataException>(() => state.Receive([1]));
         Assert.Throws<InvalidDataException>(() => state.Receive([12, 0, 0, 0, 3]));
     }

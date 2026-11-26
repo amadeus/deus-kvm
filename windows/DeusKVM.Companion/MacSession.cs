@@ -12,6 +12,7 @@ internal sealed class MacSession : IDisposable
     private readonly Func<Guid, bool> trusted;
     private readonly Action<string> detail;
     private readonly Action secureAttention;
+    private readonly DesktopRouter desktop;
     private ControlConnection? connection;
     private ControlSession? control;
     private bool disposed;
@@ -25,21 +26,18 @@ internal sealed class MacSession : IDisposable
     public bool Ready => control?.Ready == true;
     public bool Available => control?.Available == true;
     public bool SupportsSelection => control?.SupportsSelection == true;
-    public bool SupportsTakeover => control?.SupportsTakeover == true;
-    public long RequestSerial => control?.RequestSerial ?? 0;
-    public uint? ReleaseAcknowledged => control?.ReleaseAcknowledged;
-    public void RequestDisable(uint? epoch = null) => control?.RequestDisable(epoch);
     public uint AvailabilityEpoch => control?.AvailabilityEpoch ?? 0;
     public bool Active => control?.Active == true;
+    public bool Controlling => control?.Controlling == true;
     public void SetActive(bool active) => control?.SetActive(active);
     public bool NeedsReconnect => control?.NeedsReconnect == true;
     public string? Error { get; private set; }
 
     public MacSession(ConnectedMac mac, IPEndPoint[] endpoints, ControlIdentity identity, Func<Guid, bool> trusted,
-        Action<string> detail, Action secureAttention)
+        Action<string> detail, Action secureAttention, DesktopRouter desktop)
     {
         Mac = mac; Endpoints = endpoints; this.identity = identity; this.trusted = trusted; this.detail = detail;
-        this.secureAttention = secureAttention;
+        this.secureAttention = secureAttention; this.desktop = desktop;
     }
 
     public async Task Open()
@@ -79,7 +77,7 @@ internal sealed class MacSession : IDisposable
     public Task Attach()
     {
         if (disposed || !Verified || connection is null) return Task.CompletedTask;
-        control = new ControlSession(detail, secureAttention);
+        control = new ControlSession(desktop, Mac.Connection, detail, secureAttention);
         control.Attach(connection);
         connection = null; // the session owns it now
         return Task.CompletedTask;

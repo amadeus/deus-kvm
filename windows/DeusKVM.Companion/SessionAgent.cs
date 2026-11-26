@@ -9,421 +9,389 @@ using Microsoft.Win32.SafeHandles;
 namespace DeusKVM.Companion;
 
 /// <summary>
-/// `--session-agent`: the service's hands in the console session. It runs as SYSTEM whenever
-/// there is a console session (the login screen before anyone signs in, while signed in, while
-/// locked) and does everything that needs the screen: it receives the Mac's input stream and
-/// injects keys, pointer and scroll on whichever desktop has input (the user's desktop, behind
-/// elevated windows, the login and lock screens and UAC prompts), watches the configured edge for
-/// the return to the Mac on all of them, places the cursor on entry, hides it while the Mac is in
-/// control, and reports displays and desktop state. The clipboard is the only thing it does not
-/// do (<see cref="ClipboardWorker"/>, which must run as the user).
-///
-/// Threads: the window thread (this context: the cursor surface, raw input for the PC's own mouse,
-/// the one-second refresh) stays on the Default desktop it started on. Injection and the edge test
-/// run on the stream's receive thread and key repeats on the repeat thread; both attach to the
-/// input desktop themselves (<see cref="InputDesktop"/>). Work the window thread asks for on the
-/// input desktop (cursor placement, releasing held input) runs on <see cref="InputDesktopThread"/>.
+/// The service's single SYSTEM agent in the console session. Every enabled Mac has a stream;
+/// one arbitration gate orders ownership, held-input release, clipboard readiness and injection.
+/// The window thread owns surfaces; windowless input/desktop threads attach to the active desktop.
 /// </summary>
 internal sealed class SessionAgent : ApplicationContext
 {
+    private sealed class Source(long id, long stream)
+    {
+        public long Id { get; } = id;
+        public long Stream { get; } = stream;
+        public EdgeConfiguration? Config { get; set; }
+        public byte? Switch { get; set; }
+        public ulong Capture { get; set; }
+        public NetworkInputClient? Network { get; set; }
+        public InputOfferState Offers { get; } = new();
+        public string NetworkStatus { get; set; } = "no offer";
+        public InputDeliveryHealth Delivery { get; } = new();
+    }
     private readonly NamedPipeClientStream pipe;
     private readonly CancellationTokenSource shutdown = new();
-    private readonly Channel<DesktopMessage> output = Channel.CreateBounded<DesktopMessage>(128);
+    private readonly Channel<DesktopMessage> output = Channel.CreateBounded<DesktopMessage>(256);
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
+    private readonly System.Threading.Timer watchdog;
     private readonly RawWindow window;
     private readonly CursorHider cursor = new();
     private readonly InputDesktopThread desktopOps = new();
     private readonly int parent;
-    private readonly HandoffSession handoff = new();
-    private readonly DesktopRecoveryPoll recoveryPoll = new();
-    private readonly InputArrivalStats arrivals = new();
-    private NetworkInputClient? network;
     private SynchronizationContext? context;
-    private string networkStatus = "Network pointer: no offer";
-    // Stream state: held buttons and keys, the keyboard and media-key state, the repeat.
-    private readonly object networkGate = new();
-    private uint heldNetworkButtons; // MOUSEEVENTF up flags still owed
+    private readonly object gate = new();
+    private readonly Dictionary<long, Source> sources = [];
+    private InputOwnership ownership = new();
+    private readonly OwnershipWork work = new();
     private readonly KeyboardState keyboard = new();
     private readonly ConsumerState media = new();
     private readonly KeyRepeater repeater;
+    private uint heldButtons;
     private int repeatSerial;
-    // record received → SendInput returned, per ten-second window.
-    private readonly LatencySamples inject = new();
-    private long lastInjectReport;
-    // Edge test state, on the stream's thread.
-    private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests, rejectedLeaves;
-    private long lastEdgeReport, lastRejectionLog, lastLeaveSent, firstLeave;
-    private byte lastLeaveSwitch;
-    private const long LeaveIntervalMs = 100, LinkLeaveAfterMs = 150;
-    private DesktopNative.Point? lastPoint;
-    // Recent edge/desktop decisions for a problem report requested from the Mac; memory only,
-    // owned by the window thread (other threads add through Note).
-    private readonly DiagnosticHistory history = new();
-    // Replaced on the window thread, read by the stream's thread.
-    private volatile MonitorInfo[] monitors = [];
-    private volatile EdgeConfiguration? config;
+    private bool releasePending, started, seeded;
+    private long pendingSince;
+    private bool clipboardReadyOnDefault;
+    private MonitorInfo[] monitors = [];
     private byte blind = 4;
-    private bool started;
-    // When the stream's thread entered Inject (0 while it is not delivering). A delivery that never
-    // returns stops the stream's acknowledgements and the Mac gives up on it; nothing would recover.
-    private long deliveringSince;
-    private const long StuckDeliveryMs = 5000;
+    private readonly DiagnosticHistory history = new();
+    private long lastLeave, firstLeave, lastLeaveGeneration;
+    private long deliveringSince, lastHealth, lastRejection;
+    private readonly InputArrivalStats arrivals = new();
+    private readonly LatencySamples latency = new();
+    private int selectedMotion, otherMotion, heldMotion, clippedMotion, leaveRequests, rejectedLeaves;
+    private readonly List<KeyAction> owedReleases = [];
+    private uint owedButtons;
 
     public SessionAgent(string name, int parent)
     {
-        repeater = new KeyRepeater(Repeat);
         this.parent = parent;
+        watchdog = new System.Threading.Timer(_ => CheckDelivery(), null, 1000, 1000);
         pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+        repeater = new KeyRepeater(Repeat);
         window = new RawWindow(this);
         timer.Tick += (_, _) => Refresh();
         Application.Idle += Start;
     }
-
     private async void Start(object? sender, EventArgs args)
     {
         if (started) return;
-        started = true;
-        Application.Idle -= Start;
+        started = true; Application.Idle -= Start;
         try
         {
             await pipe.ConnectAsync(10000, shutdown.Token);
             if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid) || pid != parent)
                 throw new InvalidDataException("Unexpected agent pipe server");
-            var context = this.context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-            var connection = Task.Run(async () =>
-            {
-                try { await DesktopPipe.Pump(pipe, output.Reader, message => context.Post(_ => Handle(message), null), shutdown.Token).ConfigureAwait(false); }
-                finally { Environment.Exit(0); }
-            });
-            if (!DesktopNative.RegisterRawInputDevices([
-                new() { Page = 1, Usage = 2, Flags = 0x2100, Target = window.Handle }
-            ], 1, (uint)Marshal.SizeOf<DesktopNative.RawDevice>()))
-                throw new Win32Exception(Marshal.GetLastWin32Error());
-            Refresh();
-            timer.Start();
-            // Pipe EOF ends this process independently of the message loop.
-            await connection.ConfigureAwait(false);
+            var post = context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            if (!DesktopNative.RegisterRawInputDevices([new() { Page = 1, Usage = 2, Flags = 0x2100, Target = window.Handle }],
+                1, (uint)Marshal.SizeOf<DesktopNative.RawDevice>())) throw new Win32Exception(Marshal.GetLastWin32Error());
+            Refresh(); timer.Start();
+            await Task.Run(() => DesktopPipe.Pump(pipe, output.Reader, message => post.Post(_ => Handle(message), null), shutdown.Token)).ConfigureAwait(false);
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or Win32Exception or System.Text.Json.JsonException) { }
         finally { Environment.Exit(0); }
     }
-
     private void Send(DesktopMessage message)
     {
         if (!output.Writer.TryWrite(message)) pipe.Dispose();
     }
-
-    // A history line from another thread; the history belongs to the window thread.
+    private void OnDesktop(Action action)
+    {
+        desktopOps.Post(() =>
+        {
+            lock (gate)
+            {
+                Interlocked.Exchange(ref deliveringSince, RuntimeCompat.TickCount64);
+                try { action(); }
+                finally { Interlocked.Exchange(ref deliveringSince, 0); }
+            }
+        });
+    }
     private void Note(string line) => context?.Post(_ => history.Add(line), null);
+    private bool Current(Source source) => sources.TryGetValue(source.Id, out var current) && ReferenceEquals(source, current);
+    private Source? Owner => ownership.Owner is { } id ? sources.GetValueOrDefault(id) : null;
+
+    // Independent of the window loop: a control callback may itself be waiting for the input gate.
+    private void CheckDelivery()
+    {
+        var since = Interlocked.Read(ref deliveringSince);
+        if (since == 0 || RuntimeCompat.TickCount64 - since <= 5000) return;
+        EdgeDiagnostics.Write("session agent: input delivery stuck for 5 s; restarting");
+        Environment.Exit(3);
+    }
 
     private void Refresh()
     {
-        // The stream's thread stuck in one delivery: log it and exit, and the service starts a fresh
-        // agent (and stream) within seconds. The log line says this was the cause.
-        var since = Interlocked.Read(ref deliveringSince);
-        if (since != 0 && RuntimeCompat.TickCount64 - since > StuckDeliveryMs)
+        if (!Monitor.TryEnter(gate)) return;
+        try
         {
-            EdgeDiagnostics.Write($"session agent: input delivery stuck for {(RuntimeCompat.TickCount64 - since) / 1000} s ({networkStatus}); restarting");
-            Environment.Exit(3);
+            var desktop = DesktopNative.DesktopState();
+            var next = DesktopNative.Monitors();
+            blind = desktop.Blind;
+            if (next.Length > 0 && !next.SequenceEqual(monitors))
+            {
+                monitors = next;
+                Send(new DesktopMessage("screens", Monitors: monitors));
+            }
+            if (!work.Ready && pendingSince != 0 && RuntimeCompat.TickCount64 - pendingSince > 5000 && Owner is { } timedOut)
+                FailSource(timedOut, "Clipboard preparation timed out");
+            if (RuntimeCompat.TickCount64 - lastHealth >= 10000)
+            {
+                lastHealth = RuntimeCompat.TickCount64;
+                if (arrivals.Received > 0 || leaveRequests + rejectedLeaves > 0)
+                {
+                    var line = $"input 10s: sources={sources.Count} owner={ownership.Owner} {arrivals.Summary} latency=[{latency.Take()}] " +
+                        $"edge selected={selectedMotion} other={otherMotion} held={heldMotion} clipped={clippedMotion} leave={leaveRequests} rejected={rejectedLeaves}";
+                    history.Add(line); ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(line));
+                    arrivals.Reset(); selectedMotion = otherMotion = heldMotion = clippedMotion = leaveRequests = rejectedLeaves = 0;
+                }
+            }
+            if (blind != 0) cursor.Reveal(); else cursor.Follow(desktop.Desktop);
+            Send(new DesktopMessage("state", Blind: desktop.Blind, Desktop: desktop.Desktop, MousePresent: true,
+                Detail: desktop.Blind == 0 ? "Windows edge return ready" : "Input desktop unavailable; use the Mac hotkey"));
         }
-        var state = DesktopNative.DesktopState();
-        var next = DesktopNative.Monitors();
-        if (next.Length > 0 && !next.SequenceEqual(monitors))
-        {
-            var change = $"layout: {Describe(monitors)} -> {Describe(next)}";
-            history.Add(change);
-            if (monitors.Length > 0) ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(change));
-            cursor.Reveal();
-            handoff.Exit(); monitors = next;
-            Send(new DesktopMessage("screens", Monitors: next));
-        }
-        UpdateDesktopState(state);
-        ReportEdgeHealth();
-        ReportInject();
-    }
-
-    // Edge return works on every desktop the agent can attach to; only an input desktop it cannot
-    // open at all (none, or access denied) leaves the Mac's hotkey as the way back.
-    private void UpdateDesktopState((byte Blind, byte Desktop) state)
-    {
-        var next = state.Blind;
-        if (next != blind) history.Add($"desktop: blind={next} desktop={state.Desktop}");
-        blind = next;
-        handoff.SetAvailable(blind == 0);
-        if (blind != 0) cursor.Reveal(); else cursor.Follow(state.Desktop);
-        var detail = blind != 0 ? "Input desktop unavailable; use the Mac hotkey"
-            : state.Desktop == 0 ? "Windows edge return ready" : "Windows edge return ready (secure desktop)";
-        Send(new DesktopMessage("state", Blind: blind, Desktop: state.Desktop, MousePresent: true, Detail: detail, Network: networkStatus));
+        finally { Monitor.Exit(gate); }
     }
 
     private void Handle(DesktopMessage message)
     {
-        switch (message.Kind)
+        lock (gate)
         {
-            case "config":
-                cursor.Reveal();
-                handoff.Exit();
-                config = message.Config is { Edge: < 4 } ? message.Config : null;
-                history.Add($"config: edge={config?.Edge} monitor={Describe(monitors.FirstOrDefault(item => item.Id == config?.Monitor))}");
-                break;
-            case "reset": cursor.Reveal(); handoff.Exit(); StopNetwork("no offer"); history.Add("reset"); break;
-            case "exit":
-                if (handoff.Accept(message.SwitchId))
-                {
-                    handoff.Exit();
-                    ReleaseNetworkInput();
-                    // Ok: the user's clipboard helper hides it on the Default desktop (see ControlSession).
-                    if (blind == 0) cursor.Hide(userHides: message.Ok);
-                    lock (networkGate) { history.Add($"exit: switch={message.SwitchId} network={arrivals.Summary}"); arrivals.Reset(); }
-                }
-                break;
-            case "input-offer": StartNetwork(message.Report); break;
-            case "input-revoke": StopNetwork("no offer"); break;
-            case "resume":
-                // Reattach to current Mac ownership after login/agent startup.
-                // Never replay entry placement over the user's current cursor.
-                if (config?.Edge == message.Edge && monitors.Any(item => item.Id == config.Monitor))
-                {
-                    handoff.Enter(message.SwitchId);
-                    cursor.Reveal();
-                    UpdateDesktopState(DesktopNative.DesktopState());
-                    history.Add($"resume: switch={message.SwitchId}");
-                }
-                break;
-            case "report-request":
-                Send(new DesktopMessage("report", Epoch: message.Epoch, Report: BuildReport()));
-                break;
-            case "enter":
-                Enter(message);
-                break;
+            if (message.Kind == "generation")
+            {
+                if (!seeded) { ownership = new InputOwnership(message.Ownership); seeded = true; }
+                return;
+            }
+            if (!seeded) return;
+            if (message.Kind == "source")
+            {
+                if (sources.TryGetValue(message.Source, out var old) && old.Stream == message.Stream) return;
+                if (old is not null) Remove(old);
+                sources[message.Source] = new Source(message.Source, message.Stream);
+                ownership.Connect(message.Source, message.Stream);
+                return;
+            }
+            if (message.Kind == "clipboard-ready")
+            {
+                if (message.Ok && work.Current(message.Source, message.Ownership))
+                    OnDesktop(() => Complete(message.Source, message.Ownership, message.SecureReady));
+                return;
+            }
+            if (message.Kind == "clipboard-lost")
+            {
+                if (Owner is { } selected) { ownership.Renew(); BeginOwner(selected); }
+                return;
+            }
+            if (!sources.TryGetValue(message.Source, out var source) || source.Stream != message.Stream) return;
+            switch (message.Kind)
+            {
+                case "remove": Remove(source); break;
+                case "config": source.Config = message.Config is { Edge: < 4 } ? message.Config : null; break;
+                case "input-offer": StartNetwork(source, message.Report); break;
+                case "enter":
+                    if (source.Config?.Edge != message.Edge || message.Capture == 0) { Ack(source, message, false); break; }
+                    source.Switch = message.SwitchId; source.Capture = message.Capture;
+                    ownership.Enter(source.Id, source.Stream, message.SwitchId, message.Capture);
+                    BeginOwner(source);
+                    // The placement waits behind the same clipboard barrier as keyboard/mouse input.
+                    work.Submit(source.Id, ownership.Generation, () => Place(source, message));
+                    break;
+                case "resume":
+                    if (source.Config?.Edge != message.Edge || message.Capture == 0) break;
+                    if (ownership.Resume(source.Id, source.Stream, message.SwitchId, message.Capture))
+                    { source.Switch = message.SwitchId; source.Capture = message.Capture; }
+                    break;
+                case "exit":
+                    var wasOwner = ownership.Owner == source.Id;
+                    if (!ownership.Exit(source.Id, source.Stream, message.SwitchId, message.Capture)) break;
+                    source.Switch = null; source.Capture = 0;
+                    if (wasOwner)
+                    {
+                        work.Cancel(); pendingSince = 0; releasePending = true; repeater.Stop();
+                        var exitGeneration = ownership.Generation;
+                        OnDesktop(() => { lock (gate) { if (ownership.Generation == exitGeneration && InputDesktop.Attach()) ReleaseHeld(); } });
+                        if (blind == 0) cursor.Hide(userHides: message.Ok);
+                    }
+                    break;
+                case "report-request":
+                    Send(new DesktopMessage("report", Epoch: message.Epoch, Source: source.Id, Stream: source.Stream,
+                        Report: $"session agent: sources={sources.Count} owner={ownership.Owner} generation={ownership.Generation} pending={work.Count}\n" + string.Join("\n", history.Lines())));
+                    break;
+            }
         }
     }
 
-    // Places the cursor at the entry point on whichever desktop has input (on the input-desktop
-    // thread: this thread cannot reach a secure desktop), then acknowledges from here.
-    private void Enter(DesktopMessage message)
+    private void BeginOwner(Source source)
     {
-        cursor.Reveal();
-        handoff.Exit();
-        var current = config;
-        var monitor = monitors.FirstOrDefault(item => item.Id == current?.Monitor);
-        if (monitor is null || current is null || message.Edge != current.Edge)
+        work.Begin(source.Id, ownership.Generation);
+        releasePending = true; repeater.Stop();
+        pendingSince = RuntimeCompat.TickCount64; clipboardReadyOnDefault = false; lastLeave = 0;
+        foreach (var item in sources.Values)
+            item.Network?.SetOwner(item.Capture, ownership.Generation, item.Id == source.Id);
+        Send(new DesktopMessage("ownership", Source: source.Id, Stream: source.Stream, Ownership: ownership.Generation, Capture: source.Capture));
+        var generation = ownership.Generation;
+        // Release the previous controller promptly; clipboard fetches never keep its keys held.
+        OnDesktop(() => { lock (gate) { if (ownership.Generation == generation && InputDesktop.Attach()) ReleaseHeld(); } });
+        context?.Post(_ => cursor.Reveal(), null);
+    }
+    private void EndOwner()
+    {
+        work.Begin(0, ownership.Generation); pendingSince = 0; releasePending = true; repeater.Stop();
+        var generation = ownership.Generation;
+        foreach (var item in sources.Values) item.Network?.SetOwner(item.Capture, generation, false);
+        Send(new DesktopMessage("ownership", Ownership: generation));
+        OnDesktop(() => { lock (gate) { if (ownership.Generation == generation && InputDesktop.Attach()) ReleaseHeld(); } });
+    }
+    private void Complete(long source, long generation, bool secureOnly)
+    {
+        lock (gate)
         {
-            Acknowledge(message, monitor, false, new DesktopNative.Point());
-            return;
+            if (!work.Current(source, generation) || ownership.Owner != source || !InputDesktop.Attach()) return;
+            if (secureOnly && string.Equals(InputDesktop.Current, "Default", StringComparison.OrdinalIgnoreCase))
+            { context?.Post(_ => Refresh(), null); return; }
+            if (releasePending && !ReleaseHeld()) return;
+            clipboardReadyOnDefault = string.Equals(InputDesktop.Current, "Default", StringComparison.OrdinalIgnoreCase);
+            pendingSince = 0;
+            work.Complete(source, generation);
         }
-        // The Mac owns this handoff even if placement fails; edge observation resumes on return.
-        handoff.Enter(message.SwitchId);
+    }
+    private void Place(Source source, DesktopMessage message)
+    {
+        if (!Current(source) || ownership.Owner != source.Id || source.Capture != message.Capture) return;
+        var monitor = monitors.FirstOrDefault(item => item.Id == source.Config?.Monitor);
+        if (monitor is null) { Ack(source, message, false); return; }
         var point = message.Center ? monitor.Center : monitor.Entry(message.Edge, message.Fraction);
-        desktopOps.Post(() =>
-        {
-            var position = new DesktopNative.Point();
-            var ok = DesktopNative.SetCursorPos(point.X, point.Y) && DesktopNative.GetCursorPos(out position) &&
-                Math.Abs(position.X - point.X) <= 1 && Math.Abs(position.Y - point.Y) <= 1;
-            context?.Post(_ => Acknowledge(message, monitor, ok, position), null);
-        });
+        var position = new DesktopNative.Point();
+        var ok = DesktopNative.SetCursorPos(point.X, point.Y) && DesktopNative.GetCursorPos(out position) &&
+            Math.Abs(point.X - position.X) <= 1 && Math.Abs(point.Y - position.Y) <= 1;
+        Ack(source, message, ok, position);
     }
+    private void Ack(Source source, DesktopMessage message, bool ok, DesktopNative.Point position = default) =>
+        Send(new DesktopMessage("ack", SwitchId: message.SwitchId, Capture: message.Capture, Ok: ok,
+            X: position.X, Y: position.Y, Blind: ok ? blind : (byte)4, Source: source.Id, Stream: source.Stream, Ownership: ownership.Generation));
 
-    private void Acknowledge(DesktopMessage message, MonitorInfo? monitor, bool ok, DesktopNative.Point position)
+    private void StartNetwork(Source source, string? json)
     {
-        Send(new DesktopMessage("ack", SwitchId: message.SwitchId, Ok: ok, X: position.X, Y: position.Y, Blind: ok ? blind : (byte)4));
-        lastPoint = null;
-        history.Add($"enter: switch={message.SwitchId} ok={ok} center={message.Center} " +
-            $"monitor={Describe(monitor)} x={Fraction(monitor, position.X):0.000}");
-    }
-
-    private void RawInput(IntPtr handle)
-    {
-        // Probe immediately on first movement, but do not re-check the desktop and send status
-        // on every mouse packet while recovery is pending.
-        if (recoveryPoll.ShouldRefresh(blind != 0, handoff.Active is not null, RuntimeCompat.TickCount64)) Refresh();
-        if (!cursor.Hidden && (!handoff.CanReturn || config is null)) return;
-        var headerSize = (uint)(8 + IntPtr.Size * 2);
-        uint size = 0;
-        if (DesktopNative.GetRawInputData(handle, 0x10000003, IntPtr.Zero, ref size, headerSize) == uint.MaxValue ||
-            size < headerSize + 24 || size > 4096) return;
-        var buffer = Marshal.AllocHGlobal((int)size);
-        try
-        {
-            if (DesktopNative.GetRawInputData(handle, 0x10000003, buffer, ref size, headerSize) != size ||
-                Marshal.ReadInt32(buffer) != 0) return;
-            var mouse = buffer + (int)headerSize;
-            if (Marshal.ReadInt32(mouse, 20) == unchecked((int)DesktopNative.InjectTag)) return; // our own injected step
-            // Anything else is the PC's own mouse: it only reveals the cursor. The Mac's motion
-            // is observed as it is injected (ObserveMotion), never through Raw Input.
-            var dx = Marshal.ReadInt32(mouse, 12);
-            var dy = Marshal.ReadInt32(mouse, 16);
-            var buttons = Marshal.ReadInt16(mouse, 4);
-            if (dx != 0 || dy != 0) otherMotion++;
-            if (dx != 0 || dy != 0 || buttons != 0) cursor.Reveal();
-        }
-        finally { Marshal.FreeHGlobal(buffer); }
-    }
-
-    // The edge test for one pointer step the Mac produced, just injected, on the stream's thread
-    // (attached to the input desktop, so the cursor position is that desktop's).
-    private void ObserveMotion(int dx, int dy)
-    {
-        var current = config;
-        if (handoff.Active is not { } id || current is null || !handoff.CanReturn || (dx == 0 && dy == 0) ||
-            !DesktopNative.GetCursorPos(out var point)) return;
-        var layout = monitors;
-        var monitor = layout.FirstOrDefault(item => item.Id == current.Monitor);
-        if (monitor is null) return;
-        selectedMotion++;
-        var held = new[] { 1, 2, 4, 5, 6 }.Any(key => DesktopNative.GetAsyncKeyState(key) < 0);
-        var clipped = !DesktopNative.GetClipCursor(out var clip) || clip.Left > monitor.X || clip.Top > monitor.Y ||
-            clip.Right < monitor.X + monitor.W || clip.Bottom < monitor.Y + monitor.H;
-        if (held) heldMotion++;
-        if (clipped) clippedMotion++;
-        var previous = lastPoint;
-        lastPoint = point;
-        if (!EdgeDetector.Observe(monitor, layout, current, point.X, point.Y, dx, dy, held, clipped)) return;
-        var live = DesktopNative.MonitorAt(point.X, point.Y);
-        var verdict = EdgeDetector.Confirm(monitor, live, layout, current, point.X, point.Y, dx, dy);
-        var detail = LeaveDetail(verdict, monitor, live, point, previous, dx, dy);
-        if (verdict == EdgeVerdict.Leave)
-        {
-            leaveRequests++;
-            RequestLeave(id, current.Edge, monitor.Fraction(current.Edge, point.X, point.Y), detail);
-        }
-        else RejectLeave(detail);
-    }
-
-    // Asks the Mac to take the pointer back: on the network stream's acknowledgements (the next
-    // one is a pointer step away), and over the control link only while the stream is down or once
-    // the Mac has not taken it back within 150 ms. The control link gets at most one per 100 ms: one
-    // per step (~120/s) outran a briefly slow link, and the backlog delayed the return by seconds.
-    // The Mac acts on the first that arrives and ignores the rest.
-    private void RequestLeave(byte id, byte edge, ushort fraction, string detail)
-    {
-        var now = RuntimeCompat.TickCount64;
-        if (id != lastLeaveSwitch) { lastLeaveSwitch = id; firstLeave = now; lastLeaveSent = long.MinValue / 2; Note(detail); }
-        var network = this.network?.Leave(InputRecord.LeaveFlags(id, edge, fraction)) == true;
-        if (network && now - firstLeave < LinkLeaveAfterMs) return;
-        if (now - lastLeaveSent < LeaveIntervalMs) return;
-        lastLeaveSent = now;
-        Note(network ? "leave: not taken over the stream yet, also over the control link" : "leave: over the control link (stream down)");
-        Send(new DesktopMessage("leave", SwitchId: id, Edge: edge, Fraction: fraction));
-    }
-
-    // A layout that disagrees with Windows' live monitor is re-read, and the durable log gets a
-    // line, at most once per second however long the cursor pushes outward.
-    private void RejectLeave(string detail)
-    {
-        rejectedLeaves++;
-        var now = RuntimeCompat.TickCount64;
-        if (now - lastRejectionLog < 1000) return;
-        lastRejectionLog = now;
-        Note(detail);
-        ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(detail));
-        context?.Post(_ => Refresh(), null);
-    }
-
-    private void StartNetwork(string? json)
-    {
-        StopNetwork("connecting");
         FileNetworkOffer? offer = null;
         try { if (json is not null) offer = System.Text.Json.JsonSerializer.Deserialize<FileNetworkOffer>(json, FileClipboardOffer.WireJson); }
         catch (System.Text.Json.JsonException) { }
-        if (offer is not { Valid: true } || context is not { } post) { SetNetworkStatus("invalid offer"); return; }
-        history.Add($"network: offer port={offer.Port} hosts={offer.Hosts.Length}");
-        network = new NetworkInputClient(offer, Inject,
-            text => post.Post(_ => { if (text.StartsWith("closed", StringComparison.Ordinal)) ReleaseNetworkInput(); SetNetworkStatus(text); }, null));
+        if (offer is not { Valid: true } || context is not { } post) return;
+        var change = source.Offers.Receive(offer, source.Switch is not null);
+        if (change == InputOfferChange.Unchanged) return;
+        if (change == InputOfferChange.Reconnect)
+        {
+            FailSource(source, "Input listener changed during capture; reconnecting for a fresh local session");
+            return;
+        }
+        StopNetwork(source);
+        NetworkInputClient? client = null;
+        client = new NetworkInputClient(offer, record =>
+        {
+            lock (gate)
+            {
+                if (!Current(source) || !ReferenceEquals(source.Network, client)) return false;
+                Interlocked.Exchange(ref deliveringSince, RuntimeCompat.TickCount64);
+                try { return Deliver(source, record); }
+                finally { Interlocked.Exchange(ref deliveringSince, 0); }
+            }
+        },
+            text => post.Post(_ =>
+            {
+                lock (gate)
+                {
+                    if (!Current(source) || !ReferenceEquals(source.Network, client)) return;
+                    source.NetworkStatus = text;
+                    if (text.StartsWith("closed", StringComparison.Ordinal)) FailSource(source, "Input stream disconnected");
+                }
+            }, null));
+        source.Network = client;
     }
-
-    private void StopNetwork(string reason)
+    private void StopNetwork(Source source)
     {
-        network?.Dispose(); network = null;
-        ReleaseNetworkInput();
-        SetNetworkStatus(reason);
+        source.Network?.Dispose(); source.Network = null;
     }
-
-    private void SetNetworkStatus(string text)
+    private void Remove(Source source)
     {
-        var next = "Network pointer: " + text;
-        if (next == networkStatus) return;
-        networkStatus = next;
-        history.Add(next);
-        // Stream drops go to the durable log too, so a stall can be explained afterwards.
-        if (text.StartsWith("closed", StringComparison.Ordinal)) ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(next));
-        UpdateDesktopState(DesktopNative.DesktopState());
+        StopNetwork(source);
+        var wasOwner = ownership.Owner == source.Id;
+        ownership.Disconnect(source.Id, source.Stream); sources.Remove(source.Id);
+        if (wasOwner) EndOwner();
     }
-
-    // One record from the stream, on its receiving thread, while the Mac owns the handoff: injected
-    // at once on the input desktop. Returns whether the PC can take input right now; false rides on
-    // the next acknowledgement so the Mac stops sending within a round trip.
-    private bool Inject(InputEvent record)
+    private void FailSource(Source source, string reason)
     {
-        Interlocked.Exchange(ref deliveringSince, RuntimeCompat.TickCount64);
-        try { return Deliver(record); }
-        finally { Interlocked.Exchange(ref deliveringSince, 0); }
+        Send(new DesktopMessage("input-failed", Source: source.Id, Stream: source.Stream, Detail: reason));
+        Remove(source);
     }
 
-    private bool Deliver(InputEvent record)
+    // Called on an attached stream thread with gate held; control/ready callbacks use the same gate.
+    private bool Deliver(Source source, InputEvent record)
+    {
+        if (!InputDesktop.Attach()) return false;
+        if (record.Type == InputRecord.Ping)
+        {
+            return source.Delivery.Probe();
+        }
+        arrivals.Observe(DesktopNative.Milliseconds());
+        var admission = ownership.Observe(source.Id, source.Stream, record);
+        if (admission.OwnershipChanged) BeginOwner(source);
+        if (admission.Disposition == InputDisposition.Reset)
+        {
+            // Clear queued presses/placement from before cleanup. EXIT still owns mode changes.
+            work.DiscardPending(); repeater.Stop();
+            return ReleaseHeld();
+        }
+        if (admission.Disposition != InputDisposition.Forward) { arrivals.Discarded++; return true; }
+        // A secure-desktop acknowledgement cannot authorize a paste after returning to Default.
+        if (work.Ready && !clipboardReadyOnDefault && string.Equals(InputDesktop.Current, "Default", StringComparison.OrdinalIgnoreCase))
+        { ownership.Renew(); BeginOwner(source); }
+        var generation = ownership.Generation;
+        if (!work.Submit(source.Id, generation, () => source.Delivery.Observe(Inject(source, admission.Record, admission.RestoreModifiers))))
+        { FailSource(source, "Input preparation queue exceeded its limit"); return false; }
+        return source.Delivery.Healthy;
+    }
+    private bool Inject(Source source, InputEvent record, byte restoreModifiers)
     {
         var arrived = Stopwatch.GetTimestamp();
-        if (record.Type == InputRecord.Ping) return InputDesktop.Attach();
-        if (record.IsKeyboard || record.IsConsumer || record.IsScroll) return InjectKeys(record, arrived);
-        if (!record.IsMotion && !record.IsButton) return true;
-        lock (networkGate)
+        if (releasePending && !ReleaseHeld()) { arrivals.Discarded++; return false; }
+        var ok = true;
+        if (restoreModifiers != 0)
+            ok &= ApplyKeys(keyboard.Apply(restoreModifiers, []));
+        if (record.IsKeyboard) { ok &= ApplyKeys(keyboard.Apply(record.Modifiers, record.Keys ?? [])); ArmRepeat(); }
+        else if (record.IsConsumer) ok &= ApplyKeys(media.Apply(record.Usage));
+        else if (record.IsScroll) ok &= DesktopNative.InjectWheel(record.Wheel * 120, record.Pan * 120);
+        else if (record.IsButton)
         {
-            arrivals.Observe(DesktopNative.Milliseconds());
-            if (handoff.Active is null) { arrivals.Discarded++; return InputDesktop.Attach(); }
-            if (!InputDesktop.Attach()) return Drop();
-            bool ok;
-            if (record.IsButton)
-            {
-                var (down, up) = DesktopNative.ButtonFlags(record.Button);
-                if (record.Down) heldNetworkButtons |= up; else heldNetworkButtons &= ~up;
-                ok = DesktopNative.InjectMouse(0, 0, record.Down ? down : up);
-            }
-            else ok = DesktopNative.InjectMouse(record.Dx, record.Dy, DesktopNative.MouseMove);
-            if (!ok) return Drop();
-            Injected(arrived);
+            var (down, up) = DesktopNative.ButtonFlags(record.Button);
+            if (record.Down) heldButtons |= up; else heldButtons &= ~up;
+            ok &= DesktopNative.InjectMouse(0, 0, record.Down ? down : up);
         }
-        if (record.IsMotion) ObserveMotion(record.Dx, record.Dy);
-        return true;
-    }
-
-    // A keyboard state, media key or scroll step. Keys are state: the difference from the last
-    // record is injected, so a lost moment cannot leave a key held. Ctrl+Alt+Delete goes to the
-    // service (only a service may raise that screen).
-    private bool InjectKeys(InputEvent record, long arrived)
-    {
-        lock (networkGate)
+        else if (record.IsMotion)
         {
-            if (handoff.Active is null) { arrivals.Discarded++; return InputDesktop.Attach(); }
-            if (!InputDesktop.Attach()) return Drop();
-            if (record.IsScroll)
-            {
-                if (!DesktopNative.InjectWheel(record.Wheel * 120, record.Pan * 120)) return Drop();
-                Injected(arrived);
-                return true;
-            }
-            var actions = record.IsKeyboard ? keyboard.Apply(record.Modifiers, record.Keys ?? []) : media.Apply(record.Usage);
-            var ok = true;
-            foreach (var action in actions)
-            {
-                if (action.Kind == KeyActionKind.Sas) { Send(new DesktopMessage("sas")); Note("Ctrl+Alt+Delete: asked the service"); }
-                else ok &= DesktopNative.InjectKey(action.Key, action.Kind == KeyActionKind.Release);
-            }
-            if (record.IsKeyboard) ArmRepeat();
-            if (!ok) return Drop();
-            Injected(arrived);
-            return true;
+            ok &= DesktopNative.InjectMouse(record.Dx, record.Dy, DesktopNative.MouseMove);
+            if (ok) ObserveMotion(source, record.Dx, record.Dy);
         }
+        if (ok) arrivals.Injected++;
+        else { arrivals.Discarded++; releasePending = true; repeater.Stop(); }
+        latency.Add(LatencySamples.Micros(Stopwatch.GetTimestamp() - arrived));
+        return ok;
     }
-
-    private void Injected(long arrived)
+    private bool ApplyKeys(IEnumerable<KeyAction> actions)
     {
-        arrivals.Injected++;
-        inject.Add(LatencySamples.Micros(Stopwatch.GetTimestamp() - arrived));
+        var ok = true;
+        foreach (var action in actions)
+        {
+            if (action.Kind == KeyActionKind.Sas && Owner is { } source)
+                Send(new DesktopMessage("sas", Source: source.Id, Stream: source.Stream, Ownership: ownership.Generation));
+            else if (action.Kind != KeyActionKind.Sas) ok &= DesktopNative.InjectKey(action.Key, action.Kind == KeyActionKind.Release);
+        }
+        return ok;
     }
-
-    private bool Drop() { arrivals.Discarded++; return false; }
-
-    // Restarts the repeat delay when the newest held key changes (under networkGate).
+    private bool ReleaseHeld()
+    {
+        owedReleases.AddRange(keyboard.ReleaseAll()); owedReleases.AddRange(media.ReleaseAll());
+        owedButtons |= heldButtons; heldButtons = 0; ArmRepeat();
+        var ok = ApplyKeys(owedReleases);
+        if (owedButtons != 0) ok &= DesktopNative.InjectMouse(0, 0, owedButtons);
+        if (ok) { owedReleases.Clear(); owedButtons = 0; releasePending = false; }
+        return ok;
+    }
     private void ArmRepeat()
     {
         if (keyboard.RepeatSerial == repeatSerial) return;
@@ -432,132 +400,91 @@ internal sealed class SessionAgent : ApplicationContext
         var (delay, period) = DesktopNative.KeyRepeat();
         repeater.Start(key, repeatSerial, delay, period);
     }
-
-    // On the repeat thread: one more key-down for the key still held, if it is.
     private void Repeat(KeyStroke key, int serial)
     {
-        lock (networkGate)
+        lock (gate)
         {
-            if (serial != repeatSerial || keyboard.Repeating != key || handoff.Active is null) return;
-            if (InputDesktop.Attach()) DesktopNative.InjectKey(key, false);
+            if (!work.Ready || releasePending || serial != repeatSerial || keyboard.Repeating != key || Owner is not { } source) return;
+            Interlocked.Exchange(ref deliveringSince, RuntimeCompat.TickCount64);
+            try
+            {
+                var ok = InputDesktop.Attach() && DesktopNative.InjectKey(key, false);
+                source.Delivery.Observe(ok);
+                if (!ok) { releasePending = true; repeater.Stop(); }
+            }
+            finally { Interlocked.Exchange(ref deliveringSince, 0); }
         }
     }
-
-    // A button or key pressed from the stream is released when the stream, the handoff or the
-    // agent ends, so Windows never keeps one that the Mac can no longer release.
-    private void ReleaseNetworkInput()
+    private void ObserveMotion(Source source, int dx, int dy)
     {
-        List<KeyAction> keys;
-        uint buttons;
-        lock (networkGate)
+        if (source.Switch is not { } id || source.Config is not { } config || blind != 0 || !DesktopNative.GetCursorPos(out var point)) return;
+        var monitor = monitors.FirstOrDefault(item => item.Id == config.Monitor);
+        if (monitor is null) return;
+        selectedMotion++;
+        var held = new[] { 1, 2, 4, 5, 6 }.Any(key => DesktopNative.GetAsyncKeyState(key) < 0);
+        var clipped = !DesktopNative.GetClipCursor(out var clip) || clip.Left > monitor.X || clip.Top > monitor.Y ||
+            clip.Right < monitor.X + monitor.W || clip.Bottom < monitor.Y + monitor.H;
+        if (held) heldMotion++; if (clipped) clippedMotion++;
+        if (!EdgeDetector.Observe(monitor, monitors, config, point.X, point.Y, dx, dy, held, clipped)) return;
+        var verdict = EdgeDetector.Confirm(monitor, DesktopNative.MonitorAt(point.X, point.Y), monitors, config, point.X, point.Y, dx, dy);
+        if (verdict != EdgeVerdict.Leave)
         {
-            keys = keyboard.ReleaseAll().Concat(media.ReleaseAll()).ToList();
-            ArmRepeat();
-            buttons = heldNetworkButtons;
-            heldNetworkButtons = 0;
+            rejectedLeaves++;
+            if (RuntimeCompat.TickCount64 - lastRejection > 1000)
+            {
+                lastRejection = RuntimeCompat.TickCount64;
+                var line = $"leave rejected: {verdict} source={source.Id} capture={source.Capture} desktop={InputDesktop.Current} raw={dx},{dy} point={point.X},{point.Y}";
+                Note(line); ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(line));
+                context?.Post(_ => Refresh(), null);
+            }
+            return;
         }
-        if (buttons == 0 && keys.Count == 0) return;
-        desktopOps.Post(() =>
-        {
-            if (buttons != 0) DesktopNative.InjectMouse(0, 0, buttons);
-            foreach (var key in keys) DesktopNative.InjectKey(key.Key, up: true);
-        });
-    }
-
-    // Injection latency in the last ten seconds, if there was any (window thread).
-    private void ReportInject()
-    {
+        leaveRequests++;
         var now = RuntimeCompat.TickCount64;
-        if (now - lastInjectReport < 10000 || inject.Count == 0) return;
-        lastInjectReport = now;
-        var line = $"input inject 10s: [{inject.Take()}]";
-        history.Add(line);
-        ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(line));
+        if (lastLeaveGeneration != ownership.Generation)
+        { lastLeaveGeneration = ownership.Generation; firstLeave = now; lastLeave = long.MinValue / 2; }
+        var fraction = monitor.Fraction(config.Edge, point.X, point.Y);
+        var viaStream = source.Network?.Leave(InputRecord.LeaveFlags(id, config.Edge, fraction)) == true;
+        if (viaStream && now - firstLeave < 150 || now - lastLeave < 100) return;
+        lastLeave = now;
+        Send(new DesktopMessage("leave", Source: source.Id, Stream: source.Stream, Ownership: ownership.Generation,
+            Capture: source.Capture, SwitchId: id, Edge: config.Edge, Fraction: fraction));
     }
 
-    private static string LeaveDetail(EdgeVerdict verdict, MonitorInfo cached, MonitorInfo? live, DesktopNative.Point point,
-        DesktopNative.Point? previous, int dx, int dy)
+    private void RawInput(IntPtr handle)
     {
-        var physical = DesktopNative.GetPhysicalCursorPos(out var real) ?
-            real.X == point.X && real.Y == point.Y ? "same" : $"x={Fraction(live ?? cached, real.X):0.000}" : "unavailable";
-        var moved = previous is { } last ? Math.Abs(point.X - last.X) + Math.Abs(point.Y - last.Y) : -1;
-        return $"leave {verdict}: desktop={InputDesktop.Current} cached={Describe(cached)} live={Describe(live)} x={Fraction(cached, point.X):0.000} " +
-            $"physical={physical} awareness={DesktopNative.DpiAwareness()} movedPx={moved} raw={dx},{dy}";
-    }
-
-    private static double Fraction(MonitorInfo? monitor, int x) => monitor is null || monitor.W <= 0 ? -1 : (x - monitor.X) / (double)monitor.W;
-    private static string Describe(MonitorInfo? monitor) => monitor is null ? "none" : $"{monitor.W}x{monitor.H}@{monitor.Dpi}";
-    private static string Describe(IReadOnlyList<MonitorInfo> list) => list.Count == 0 ? "none" : string.Join(",", list.Select(Describe));
-
-    // Answers a problem report requested from the Mac. Sizes, fractions and counts only.
-    private string BuildReport()
-    {
-        var configured = monitors.FirstOrDefault(item => item.Id == config?.Monitor);
-        var state = DesktopNative.DesktopState();
-        var cursorLine = state.Desktop != 0 ? "cursor: on a secure desktop" : DesktopNative.GetCursorPos(out var point)
-            ? $"cursor: x={Fraction(configured, point.X):0.000} live={Describe(DesktopNative.MonitorAt(point.X, point.Y))} " +
-              $"physical={(DesktopNative.GetPhysicalCursorPos(out var real) ? real.X == point.X && real.Y == point.Y ? "same" : "differs" : "unavailable")}"
-            : "cursor: unavailable";
-        var lines = new List<string>
+        if (!cursor.Hidden) return;
+        var headerSize = (uint)(8 + IntPtr.Size * 2); uint size = 0;
+        if (DesktopNative.GetRawInputData(handle, 0x10000003, IntPtr.Zero, ref size, headerSize) == uint.MaxValue || size < headerSize + 24 || size > 4096) return;
+        var buffer = Marshal.AllocHGlobal((int)size);
+        try
         {
-            $"session agent: identity={ProcessIdentity.Name} session={ProcessIdentity.Session} awareness={DesktopNative.DpiAwareness()} " +
-                $"desktop={state.Desktop} blind={blind} handoff={handoff.Active is not null} hidden={cursor.Hidden} edge={config?.Edge} configured={Describe(configured)}",
-            $"{networkStatus.ToLowerInvariant()} {arrivals.Summary}",
-            $"cached layout: {Describe(monitors)}",
-            $"live layout: {Describe(DesktopNative.Monitors())}",
-            cursorLine,
-            $"since last health line: selected={selectedMotion} other={otherMotion} held={heldMotion} clipped={clippedMotion} " +
-                $"leave={leaveRequests} rejected={rejectedLeaves}",
-            $"history ({history.Count}, oldest first):"
-        };
-        lines.AddRange(history.Lines().Select(line => "  " + line));
-        return string.Join("\n", lines);
-    }
-
-    private void ReportEdgeHealth()
-    {
-        var now = RuntimeCompat.TickCount64;
-        if (now - lastEdgeReport < 5000) return;
-        lastEdgeReport = now;
-        if (EdgeHealth.ShouldWrite(handoff.Active is not null, leaveRequests, rejectedLeaves))
-        {
-            var value = $"edge health: active={handoff.Active is not null} blind={blind} configured={config is not null} " +
-                $"selected={selectedMotion} other={otherMotion} held={heldMotion} clipped={clippedMotion} leave={leaveRequests} rejected={rejectedLeaves}";
-            ThreadPool.QueueUserWorkItem(_ => EdgeDiagnostics.Write(value));
+            if (DesktopNative.GetRawInputData(handle, 0x10000003, buffer, ref size, headerSize) != size || Marshal.ReadInt32(buffer) != 0) return;
+            var mouse = buffer + (int)headerSize;
+            if (Marshal.ReadInt32(mouse, 20) == unchecked((int)DesktopNative.InjectTag)) return;
+            if (Marshal.ReadInt32(mouse, 12) != 0 || Marshal.ReadInt32(mouse, 16) != 0 || Marshal.ReadInt16(mouse, 4) != 0) { otherMotion++; cursor.Reveal(); }
         }
-        selectedMotion = otherMotion = heldMotion = clippedMotion = leaveRequests = rejectedLeaves = 0;
+        finally { Marshal.FreeHGlobal(buffer); }
     }
-
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
-            Application.Idle -= Start;
-            network?.Dispose();
-            ReleaseNetworkInput();
-            desktopOps.Dispose();
-            repeater.Dispose();
-            cursor.Dispose();
+            Application.Idle -= Start; watchdog.Dispose();
+            lock (gate) foreach (var source in sources.Values) StopNetwork(source);
+            OnDesktop(() => { lock (gate) if (InputDesktop.Attach()) ReleaseHeld(); });
+            desktopOps.Dispose(); repeater.Dispose(); cursor.Dispose();
             shutdown.Cancel(); timer.Dispose(); pipe.Dispose(); window.DestroyHandle(); shutdown.Dispose();
         }
         base.Dispose(disposing);
     }
-
     private sealed class RawWindow : NativeWindow
     {
         private readonly SessionAgent owner;
-        public RawWindow(SessionAgent owner)
-        {
-            this.owner = owner;
-            CreateHandle(new CreateParams { Caption = "DeusKVM session agent", Parent = new IntPtr(-3) });
-        }
+        public RawWindow(SessionAgent owner) { this.owner = owner; CreateHandle(new CreateParams { Caption = "DeusKVM session agent", Parent = new IntPtr(-3) }); }
         protected override void WndProc(ref System.Windows.Forms.Message message)
-        {
-            if (message.Msg == 0xFF) owner.RawInput(message.LParam);
-            base.WndProc(ref message);
-        }
+        { if (message.Msg == 0xFF) owner.RawInput(message.LParam); base.WndProc(ref message); }
     }
-
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint pid);

@@ -8,18 +8,17 @@ public sealed class MacAvailability
     public bool Negotiated { get; private set; }
     public bool Available { get; private set; }
     public uint Epoch { get; private set; }
-    public bool Requested { get; private set; }
 
     public void Hello(bool negotiated, uint epoch, bool available)
     {
-        Negotiated = negotiated; Epoch = epoch; Available = available; Requested = false;
+        Negotiated = negotiated; Epoch = epoch; Available = available;
     }
 
     public void Receive(byte[] payload)
     {
-        if (!Negotiated || payload.Length != 5 || payload[4] > 2)
+        if (!Negotiated || payload.Length != 5 || payload[4] > 1)
             throw new InvalidDataException("Invalid Mac availability");
-        Epoch = BinaryPrimitives.ReadUInt32LittleEndian(payload); Available = payload[4] != 0; Requested = payload[4] == 2;
+        Epoch = BinaryPrimitives.ReadUInt32LittleEndian(payload); Available = payload[4] != 0;
     }
 
     public byte[] Selection(bool active)

@@ -95,6 +95,22 @@ public sealed class InputOwnershipTests
         Assert.Equal(1L, state.Owner);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ResetAndExitKeepClipboardPartnerInEitherArrivalOrder(bool resetFirst)
+    {
+        var state = Ready(); state.Enter(1, 10, 1, 100);
+        var generation = state.Generation;
+        var reset = new InputEvent(InputRecord.Reset, 1, 0, Capture: 100);
+        if (resetFirst) state.Observe(1, 10, reset);
+        Assert.True(state.Exit(1, 10, 1, 100));
+        if (!resetFirst) state.Observe(1, 10, reset);
+        Assert.Equal(1L, state.Owner); Assert.Equal(generation, state.Generation);
+        Assert.False(state.IsRemote(1, 10));
+        Assert.Equal(InputDisposition.Ignore, state.Observe(1, 10, Motion(100)).Disposition);
+    }
+
     [Fact]
     public void OwnerGenerationAdvancesAndUnrelatedExitCannotReleaseOwner()
     {

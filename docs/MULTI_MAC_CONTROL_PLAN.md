@@ -18,6 +18,9 @@ can itself take control, and must use that Mac's content. Late offers, outstandi
 and content already installed in the Windows clipboard cannot leak a previous controller's
 content into a new paste. Ordinary Windows-local copies remain usable. Completed pastes
 are not undone. Input ownership, remote-mode state, and connection readiness are separate.
+Returning locally retains the last controller as the clipboard partner, so Windows-to-Mac
+text and on-demand file paste still work after EXIT. Another controller, explicit disable,
+or disconnection replaces or revokes that partnership.
 
 ## Architecture and review gates
 
@@ -38,9 +41,9 @@ are not undone. Input ownership, remote-mode state, and connection readiness are
 
 - [x] 1. Agree on concrete ownership, protocol, shared desktop and clipboard architecture;
   implement tested state models and protocol contracts.
-- [ ] 2. Implement persistent multi-Mac readiness and centralized input takeover, including
+- [x] 2. Implement persistent multi-Mac readiness and centralized input takeover, including
   held-input cleanup, per-Mac layouts, edge return, explicit disable and reconnect.
-- [ ] 3. Implement controller-scoped clipboard selection, stale-content invalidation and
+- [x] 3. Implement controller-scoped clipboard selection, stale-content invalidation and
   ordering of takeover/paste across text, images and files.
 - [ ] 4. Review end-to-end behavior; update documentation and diagnostics; run focused race
   regressions, full portable tests, Swift lint/format and both platform builds.
@@ -95,3 +98,40 @@ not described as hardware-validated releases.
   replaying ordinary keys, lock toggles or mouse downs. A new capture invalidates pending
   work even for the same owner. Eleven focused scenarios pass; full portable suite passes
   228 tests with two Windows-native skips. Integration is the next phase, not yet active.
+- Integration review requires capture-scoped entry acknowledgement before input leaves the
+  Mac, stale-operation fencing on Windows, and safe clipboard behavior across helper crashes
+  and secure/default desktop transitions. Saved disabled settings remain respected; Macs
+  disabled by an earlier build may need enabling once after update.
+- Phase 2 review in progress. Initial shared-agent rewrite was not accepted as complete:
+  retain native injection failure feedback, delivery-stall recovery, latency/arrival/edge
+  diagnostics and fast stream edge return; cancel buffered input on synthetic reset; release
+  held input promptly at takeover. The implementation agent is addressing these gates.
+  An independent test agent is checking actual cross-platform protocol contracts and races.
+- Independent protocol validation: seven C# codec/framing tests and 34 selected Swift tests
+  pass using shared v3 fixtures, high-bit capture identities, ownership values above 2^53,
+  exact control message lengths, and maximum-size text through real framing. The Windows
+  app cross-build passes with zero warnings/errors. Full integrated verification is pending.
+- Review caught a cross-stream RESET/EXIT race: resetting synthetic input must discard queued
+  input without renewing clipboard ownership. Normal EXIT retains the clipboard partner.
+  Restart generation and delayed helper callbacks remain explicit review gates.
+- Phases 2 and 3 accepted together after root review: a shared desktop agent serializes input
+  and ownership; capture-scoped entry acknowledgements release queued Mac input only after
+  placement and clipboard readiness. Controller-bound clipboard leases revoke outstanding
+  reads and stale imports, with text/file/image snapshots and lazy Windows rendering.
+  Background snapshots, resets and resumed capture metadata cannot acquire ownership.
+- Restart/source/stream/capture/clipboard-epoch fences, atomic edge-return feedback and
+  latched injection failure reporting are covered by portable regressions. Changed live
+  input offers force local recovery; duplicate offers are idempotent. An independent
+  watchdog covers injection, deferred desktop operations and key repeat without relying
+  on the potentially blocked window thread.
+- Final automated checks (2026-11-25): 260 portable Windows tests passed; two native CNG
+  tests skipped on macOS. Windows Release and net48 test assemblies build with zero
+  warnings/errors. The final arm64 Mac Debug build and 152 selected Swift tests passed.
+  SwiftFormat reports zero files needing formatting; strict SwiftLint reports zero
+  violations. `git diff --check` passes.
+- Eleven Mac clipboard runtime tests remain pending: the full-suite attempt failed when
+  Secure Input was active and even an isolated named pasteboard rejected writes. A
+  standalone probe confirmed the desktop limitation; existing handoff tests failed the
+  same initial snapshot checks. The final selected run explicitly excludes those tests;
+  privacy guards and tests were not weakened. Rerun the full suite in an unlocked normal
+  desktop session. Windows-native OLE tests and all hardware checks above remain pending.

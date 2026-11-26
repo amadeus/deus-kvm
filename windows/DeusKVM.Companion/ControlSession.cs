@@ -7,22 +7,33 @@ namespace DeusKVM.Companion;
 // The companion protocol with one Mac over its control link, on the link's STA thread in the service
 // (the connection's threads post here). Desktop observations are requests; the Mac remains the
 // routing authority.
-internal sealed partial class ControlSession(Action<string> status, Action secureAttention) : IDisposable
+internal sealed partial class ControlSession : IDisposable
 {
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true
     };
+    private readonly Action<string> status;
+    private readonly Action secureAttention;
+    private readonly DesktopRouter.Peer desktopPeer;
+    private DesktopRouter.Peer.Channel desktop => desktopPeer.Agent;
+    private DesktopRouter.Peer.Channel clipboardHost => desktopPeer.Clipboard;
+    private bool controlling;
+    private long ownership;
+    private ulong capture;
+    public bool Controlling => controlling;
+    public ControlSession(DesktopRouter router, long source, Action<string> status, Action secureAttention)
+    {
+        this.status = status; this.secureAttention = secureAttention;
+        desktopPeer = router.Register(source, DesktopEvent, ClipboardHostEvent);
+    }
+
     private readonly SynchronizationContext context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
     private readonly CompanionHandoff handoff = new();
     private readonly StateReporter stateReport = new();
     private (uint Token, string[] Service)? pendingReport;
     private ControlConnection? connection;
-    // The session agent (SYSTEM in the console session: input, edge, cursor, displays) and the
-    // clipboard helper (the signed-in user). Both run only while this Mac is active.
-    private DesktopHost? desktop;
-    private DesktopHost? clipboardHost;
     private MonitorInfo[] monitors = [];
     private byte[]? inputOffer;
     private EdgeConfiguration? config => handoff.Configuration;
@@ -32,12 +43,6 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
     private byte blind = 4;
     private MacAvailability availability = new();
     private bool active;
-    private int desktopGeneration;
-    private static long nextRequest;
-    private uint? requestedEpoch, disabledEpoch;
-    public long RequestSerial { get; private set; }
-    public uint? ReleaseAcknowledged { get; private set; }
-    public bool SupportsTakeover { get; private set; }
     public bool Ready => ready;
     public bool Available => ready && availability.Available && !NeedsReconnect;
     public bool SupportsSelection => ready && availability.Negotiated;
@@ -86,16 +91,8 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
     public void RefreshDesktop()
     {
         if (disposed || !active) return;
-        if (desktop is null)
-        {
-            var epoch = ++desktopGeneration;
-            desktop = new DesktopHost(DesktopRole.Agent,
-                message => context.Post(_ => { if (!disposed && active && epoch == desktopGeneration) DesktopEvent(message); }, null));
-            clipboardHost = new DesktopHost(DesktopRole.Clipboard,
-                message => context.Post(_ => { if (!disposed && active && epoch == desktopGeneration) ClipboardHostEvent(message); }, null));
-        }
+        desktopPeer.SetEnabled(true);
         desktop.Refresh();
-        clipboardHost?.Refresh();
     }
 
     public void SetActive(bool value, bool notify = true)
@@ -107,15 +104,14 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         if (!value)
         {
             RevealUserCursor();
-            desktopGeneration++;
             handoff.Reset(); UpdateClipboardSession(true);
-            desktop?.Dispose(); desktop = null; monitors = []; blind = 4;
-            clipboardHost?.Dispose(); clipboardHost = null;
+            desktopPeer.SetEnabled(false); monitors = []; blind = 4;
+            controlling = false; capture = 0;
             clipboardDesktopAvailable = clipboardDefaultDesktop = false;
         }
         if (notify && availability.Negotiated) Send(Protocol.Message.Selection, availability.Selection(active));
-        if (value) { disabledEpoch = null; ReleaseAcknowledged = null; ForwardInputOffer(); }
-        SetDetail(active ? "Active Mac; preparing desktop" : "Waiting for Windows priority");
+        if (value) { RefreshDesktop(); ForwardInputOffer(); }
+        SetDetail(active ? "Connected and ready for input" : "Disabled or not allowed");
     }
 
     // The Mac's input stream listener. Kept for the life of the link and handed to the session
@@ -135,23 +131,6 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
             desktop.Send(new DesktopMessage("input-offer", Report: System.Text.Encoding.UTF8.GetString(offer)));
     }
 
-    public void RequestDisable(uint? epoch = null)
-    {
-        var requested = epoch ?? availability.Epoch;
-        if (!ready || !availability.Negotiated || disabledEpoch == requested) return;
-        SetActive(false, notify: false);
-        var payload = new byte[5]; BinaryPrimitives.WriteUInt32LittleEndian(payload, requested);
-        disabledEpoch = requested;
-        Send(Protocol.Message.Selection, payload);
-    }
-
-    private void RequestOwnership()
-    {
-        if (!SupportsTakeover || !availability.Available || requestedEpoch == availability.Epoch) return;
-        requestedEpoch = availability.Epoch;
-        RequestSerial = Interlocked.Increment(ref nextRequest);
-    }
-
     private void Receive(Protocol.Packet packet)
     {
         if (NeedsReconnect) return;
@@ -163,21 +142,21 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
                 using var hello = JsonDocument.Parse(packet.Payload);
                 if (ready || hello.RootElement.GetProperty("v").GetInt32() != 1 ||
                     hello.RootElement.GetProperty("role").GetString() != "mac") throw new InvalidDataException("Invalid HELLO");
+                if (!hello.RootElement.TryGetProperty("multiInput", out var multi) || multi.GetInt32() != 1)
+                    throw new InvalidDataException("Update the Mac app for simultaneous network control");
                 ready = true;
                 stateReport.Reset();
                 var selected = hello.RootElement.TryGetProperty("selection", out var selection) && selection.TryGetInt32(out var version) && version == 1;
                 var epoch = selected ? hello.RootElement.GetProperty("availabilityEpoch").GetUInt32() : 0;
                 var enabled = !selected || hello.RootElement.GetProperty("available").GetBoolean();
                 availability.Hello(selected, epoch, enabled);
-                SupportsTakeover = selected && hello.RootElement.TryGetProperty("takeover", out var takeover) && takeover.ValueKind == JsonValueKind.True;
-                if (hello.RootElement.TryGetProperty("requestControl", out var request) && request.ValueKind == JsonValueKind.True) RequestOwnership();
                 clipboardPeer = hello.RootElement.TryGetProperty("clipboard", out var capability) &&
                     capability.TryGetInt32(out var clipboardVersion) && clipboardVersion == 1;
                 fileReceivePeer = hello.RootElement.TryGetProperty("fileReceive", out var reverseFiles) && reverseFiles.TryGetInt32(out var reverseVersion) && reverseVersion == 1;
                 filesPeer = hello.RootElement.TryGetProperty("files", out var files) && files.TryGetInt32(out var filesVersion) && filesVersion == 1;
                 imagesPeer = hello.RootElement.TryGetProperty("images", out var images) && images.TryGetInt32(out var imageVersion) && imageVersion == 1;
                 SendJson(Protocol.Message.Hello, new { v = 1, role = "pc", name = "DeusKVM Companion",
-                    computerName = Environment.MachineName, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, images = 1, selection = 1, takeover = true, report = 1, inputNetwork = 2 });
+                    computerName = Environment.MachineName, resume = true, center = true, clipboard = 1, files = 1, fileReceive = 1, fileNetwork = 1, images = 1, selection = 1, report = 1, inputNetwork = 3, multiInput = 1, clipboardSnapshot = 1 });
                 UpdateClipboardSession(true);
                 if (active && monitors.Length > 0) SendScreens();
                 SetDetail("Companion connected; waiting for desktop status");
@@ -185,7 +164,12 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
             else
             {
                 if (!ready) throw new InvalidDataException("Expected HELLO");
-                if (type is Protocol.Message.FileOffer or Protocol.Message.FileData or Protocol.Message.FileAccept)
+                if (type == Protocol.Message.ClipboardSnapshot)
+                {
+                    if (packet.Stream != 1) throw new InvalidDataException("Invalid clipboard snapshot stream");
+                    ReceiveClipboardSnapshot(packet.Payload);
+                }
+                else if (type is Protocol.Message.FileOffer or Protocol.Message.FileData or Protocol.Message.FileAccept)
                 {
                     if (packet.Stream != 1 || !filesPeer) throw new InvalidDataException("Invalid file message");
                     ReceiveFile(type, packet.Payload);
@@ -214,25 +198,12 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         {
             availability.Receive(payload);
             if (!availability.Available) SetActive(false, notify: false);
-            if (availability.Requested) RequestOwnership();
-            return;
-        }
-        if (type == Protocol.Message.RequestControl)
-        {
-            if (!SupportsTakeover || payload.Length != 4) throw new InvalidDataException("Invalid control request");
-            if (BinaryPrimitives.ReadUInt32LittleEndian(payload) == availability.Epoch) RequestOwnership();
             return;
         }
         if (type == Protocol.Message.ReportRequest)
         {
             if (payload.Length != 4) throw new InvalidDataException("Invalid report request");
             BeginReport(BinaryPrimitives.ReadUInt32LittleEndian(payload));
-            return;
-        }
-        if (type == Protocol.Message.ReleaseAck)
-        {
-            if (!SupportsTakeover || payload.Length != 4) throw new InvalidDataException("Invalid release acknowledgement");
-            ReleaseAcknowledged = BinaryPrimitives.ReadUInt32LittleEndian(payload);
             return;
         }
         if (!active && type is not (Protocol.Message.Ping or Protocol.Message.Pong)) return;
@@ -248,51 +219,59 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
                     desktop?.Send(new DesktopMessage("config", Config: config));
                 ResumeDesktop();
                 break;
-            case Protocol.Message.Enter when payload.Length == 4 && payload[1] < 4:
-                EnterDesktop(payload, false);
+            case Protocol.Message.Enter:
+            case Protocol.Message.EnterCenter:
+                if (!CaptureProtocol.TryReadEnter(type, payload, out var entry)) throw new InvalidDataException("Invalid capture entry");
+                EnterDesktop(entry);
                 break;
-            case Protocol.Message.EnterCenter when payload.Length == 2 && payload[1] < 4:
-                EnterDesktop(payload, true);
-                break;
-            case Protocol.Message.Resume when payload.Length == 2 && payload[1] < 4:
+            case Protocol.Message.Resume:
+                if (!CaptureProtocol.TryReadResume(payload, out var resumeId, out var resumeEdge, out var resumeCapture)) throw new InvalidDataException("Invalid capture resume");
                 RevealUserCursor();
-                handoff.Enter(payload[0], payload[1]);
+                capture = resumeCapture;
+                handoff.Enter(resumeId, resumeEdge);
                 ClipboardSwitch(true);
                 ResumeDesktop();
                 break;
-            case Protocol.Message.Exit when payload.Length == 1:
-                if (handoff.Accept(payload[0]))
+            case Protocol.Message.Exit:
+                if (!CaptureProtocol.TryReadExit(payload, out var exitId, out var exitCapture)) throw new InvalidDataException("Invalid capture exit");
+                if (handoff.Accept(exitId) && capture == exitCapture)
                 {
                     handoff.Exit(); ClipboardSwitch(false);
                     // On the user's desktop the user's own helper hides the cursor: the taskbar never
                     // hears that the mouse left when the cursor moves onto a SYSTEM-owned window, so a
                     // SYSTEM hider leaves its tooltips open. Ok tells the agent it need not hide there.
-                    var userHides = clipboardHost?.Connected == true && clipboardDefaultDesktop;
+                    var userHides = controlling && clipboardHost?.Connected == true && clipboardDefaultDesktop;
                     if (userHides) clipboardHost!.Send(new DesktopMessage("cursor-hide"));
-                    desktop?.Send(new DesktopMessage("exit", SwitchId: payload[0], Ok: userHides));
+                    desktop?.Send(new DesktopMessage("exit", SwitchId: payload[0], Ok: userHides, Capture: capture));
                 }
                 break;
             default: throw new InvalidDataException("Unsupported companion message");
         }
     }
 
-    private void RevealUserCursor() => clipboardHost?.Send(new DesktopMessage("cursor-reveal"));
+    private void RevealUserCursor() => clipboardHost.Send(new DesktopMessage("cursor-reveal"));
 
-    private void EnterDesktop(byte[] payload, bool center)
+    private void EnterDesktop(CaptureEntry entry)
     {
         RevealUserCursor();
-        handoff.Enter(payload[0], payload[1]);
+        capture = entry.Capture;
+        handoff.Enter(entry.SwitchId, entry.Edge);
         ClipboardSwitch(true);
-        if (desktop?.Connected == true && config is not null && config.Edge == payload[1])
-            desktop.Send(new DesktopMessage("enter", SwitchId: payload[0], Edge: payload[1], Center: center,
-                Fraction: center ? (ushort)0 : BinaryPrimitives.ReadUInt16LittleEndian(payload.AsSpan(2))));
-        else Send(Protocol.Message.EnterAck, [payload[0], 0, 0, 0, 0, 0, blind]);
+        if (desktop.Connected && config is not null && config.Edge == entry.Edge)
+            desktop.Send(new DesktopMessage("enter", SwitchId: entry.SwitchId, Edge: entry.Edge, Center: entry.Center,
+                Fraction: entry.Fraction, Capture: capture));
+        else SendEntryAck(entry.SwitchId, false, 0, 0, blind, capture);
     }
 
     // The clipboard helper: its clipboard messages, and whether it is there at all.
     private void ClipboardHostEvent(DesktopMessage message)
     {
         if (!active) return;
+        if (message.Kind == "clipboard-ready")
+        {
+            if (controlling && message.Epoch == clipboardEpoch && message.Ownership == ownership) desktop.Send(message);
+            return;
+        }
         if (message.Kind.StartsWith("clipboard-", StringComparison.Ordinal)) { ClipboardDesktopEvent(message); return; }
         if (message.Kind is "connected" or "disconnected") { clipboardDesktopAvailable = false; UpdateClipboardSession(true); }
     }
@@ -302,6 +281,13 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         if (!active) return;
         switch (message.Kind)
         {
+            case "input-failed":
+                Fail(message.Detail ?? "Input stream failed");
+                return;
+            case "ownership":
+                controlling = message.Ok; ownership = message.Ownership;
+                UpdateClipboardSession(true);
+                return;
             case "connected":
             case "disconnected":
                 handoff.DesktopChanged(); blind = 4;
@@ -310,7 +296,7 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
                 if (message.Kind == "connected") ForwardInputOffer();
                 break;
             case "sas":
-                secureAttention();
+                if (controlling && message.Ownership == ownership) secureAttention();
                 break;
             case "screens":
                 if (message.Monitors is not { Length: > 0 and <= 32 } screens ||
@@ -324,18 +310,19 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
                 SendState([blind, message.Desktop, (byte)(message.MousePresent ? 1 : 0)]);
                 SetDetail((message.Detail ?? "Desktop status received") + (message.Network is { Length: > 0 } network ? "\n" + network : ""));
                 break;
-            case "ack" when handoff.Accept(message.SwitchId):
-                var ack = new byte[7]; ack[0] = message.SwitchId; ack[1] = message.Ok ? (byte)1 : (byte)0;
-                BinaryPrimitives.WriteInt16LittleEndian(ack.AsSpan(2), (short)RuntimeCompat.Clamp(message.X, short.MinValue, short.MaxValue));
-                BinaryPrimitives.WriteInt16LittleEndian(ack.AsSpan(4), (short)RuntimeCompat.Clamp(message.Y, short.MinValue, short.MaxValue));
-                ack[6] = message.Blind;
-                Send(Protocol.Message.EnterAck, ack);
+            case "ack" when handoff.Accept(message.SwitchId) && message.Capture == capture:
+                SendEntryAck(message.SwitchId, message.Ok, message.X, message.Y, message.Blind, capture);
                 break;
             case "report" when pendingReport?.Token == message.Epoch:
                 FinishReport(message.Epoch, message.Report);
                 break;
-            case "leave" when handoff.Accept(message.SwitchId) && message.Edge == config?.Edge && blind == 0:
-                Send(Protocol.Message.Leave, [message.SwitchId, message.Edge, (byte)message.Fraction, (byte)(message.Fraction >> 8)]);
+            case "leave" when controlling && message.Ownership == ownership && handoff.Accept(message.SwitchId) &&
+                message.Capture == capture && message.Edge == config?.Edge && blind == 0:
+                var leave = new byte[12];
+                leave[0] = message.SwitchId; leave[1] = message.Edge;
+                BinaryPrimitives.WriteUInt16LittleEndian(leave.AsSpan(2), message.Fraction);
+                BinaryPrimitives.WriteUInt64LittleEndian(leave.AsSpan(4), capture);
+                Send(Protocol.Message.Leave, leave);
                 break;
         }
     }
@@ -376,8 +363,11 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
 
     private void ResumeDesktop()
     {
-        if (handoff.Resume(desktop?.Connected == true) is { } resume) desktop?.Send(resume);
+        if (handoff.Resume(desktop?.Connected == true) is { } resume) desktop?.Send(resume with { Capture = capture });
     }
+
+    private void SendEntryAck(byte id, bool ok, int x, int y, byte unavailable, ulong token) =>
+        Send(Protocol.Message.EnterAck, CaptureProtocol.Acknowledge(id, ok, x, y, unavailable, token));
 
     private void SendScreens() => SendJson(Protocol.Message.Screens, new { monitors });
     private void SendJson(Protocol.Message type, object value) => Enqueue(type, 1, JsonSerializer.SerializeToUtf8Bytes(value, Json));
@@ -390,9 +380,8 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
     }
 
     private void SetDetail(string value) { if (Detail != value) { Detail = value; status(value); } }
-    // A link that fails or is torn down (reconnect, service stop or restart) deactivates silently:
-    // telling the Mac it is deselected would read as Windows choosing another Mac, and the Mac
-    // disables itself for that. It sees the link close instead and takes its input back.
+    // Transport failure revokes this source; the Mac sees the link close and restores local input.
+    // User enable/disable preferences are independent of the connection lifetime.
     private void Fail(string reason) { SetActive(false, notify: false); NeedsReconnect = true; ready = false; UpdateClipboardSession(true); SetDetail(reason); }
     public void ResetLink()
     {
@@ -402,13 +391,12 @@ internal sealed partial class ControlSession(Action<string> status, Action secur
         ready = NeedsReconnect = false;
         availability = new();
         stateReport.Reset();
-        SupportsTakeover = false; RequestSerial = 0; requestedEpoch = disabledEpoch = ReleaseAcknowledged = null;
         handoff.Reset(); UpdateClipboardSession(true); clipboardPeer = false; inputOffer = null; desktop?.Send(new DesktopMessage("reset"));
     }
     public void Dispose()
     {
         if (disposed) return;
         disposed = true; ResetLink();
-        desktop?.Dispose(); desktop = null; clipboardHost?.Dispose(); clipboardHost = null;
+        desktopPeer.Dispose();
     }
 }

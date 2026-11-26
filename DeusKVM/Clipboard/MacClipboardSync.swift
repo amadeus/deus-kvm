@@ -18,6 +18,8 @@ final class MacClipboardSync {
     private var remote = false
     private var revision = 0
     private var fileOffer: Data?
+    private var snapshotRequest: ClipboardSnapshotRequest?
+    private var snapshotRevision: Int?
     private var peerSequence: UInt32?
     private var peerRevision = 0
     private var deliveredFile: UInt32?
@@ -48,6 +50,9 @@ final class MacClipboardSync {
         if !primed {
             primed = true
             if let target { acknowledge(target, enabled: true) }
+        }
+        if let request = snapshotRequest, let target, remote, snapshotRevision != snapshot.revision {
+            sendSnapshot(target, request: request, snapshot: snapshot)
         }
     }
 
@@ -134,6 +139,7 @@ final class MacClipboardSync {
         }
         let entering = !self.remote && remote
         self.remote = remote; preference = enabled; self.available = available
+        if !remote { snapshotRequest = nil; snapshotRevision = nil; pasteboard.watchChanges(false) }
         reconcile()
         transfer.setActive(!remote, now: ProcessInfo.processInfo.systemUptime)
         if entering, self.enabled { pasteboard.yield() }
@@ -174,6 +180,7 @@ final class MacClipboardSync {
             epoch: epoch,
             enabled: wanted
         )
+        snapshotRequest = nil; snapshotRevision = nil
         if !wanted, let target { acknowledge(target, enabled: false) }
         if wanted, remote { pasteboard.yield() }
     }
@@ -184,7 +191,23 @@ final class MacClipboardSync {
 
     private func receive(_ id: UUID, type: CompanionProtocol.Message, data: Data) throws {
         guard target == id else { return }
-        if type == .clipState {
+        if type == .clipboardSnapshot {
+            let request = try ClipboardSnapshotRequest.decode(data)
+            snapshotRequest = request; snapshotRevision = nil
+            let expected = generation
+            guard enabled, preference, awake, available, request.epoch == epoch else {
+                sendSnapshot(id, request: request, snapshot: nil)
+                return
+            }
+            pasteboard.capture(epoch: request.epoch) { [weak self] snapshot in
+                Task { @MainActor in
+                    guard let self, self.target == id, self.epoch == request.epoch,
+                          self.generation == expected, self.snapshotRequest?.generation == request.generation else { return }
+                    self.sendSnapshot(id, request: request, snapshot: self.enabled ? snapshot : nil)
+                    self.pasteboard.watchChanges(self.enabled && self.remote)
+                }
+            }
+        } else if type == .clipState {
             guard data.count == 5, data[4] <= 1 else { throw CompanionProtocol.Failure.malformed }
             let next = CompanionProtocol.read32(data, 0)
             let ready = data[4] == 1
@@ -213,5 +236,12 @@ final class MacClipboardSync {
             }
             try transfer.receive(type, payload: data, now: ProcessInfo.processInfo.systemUptime)
         }
+    }
+
+    private func sendSnapshot(_ id: UUID, request: ClipboardSnapshotRequest, snapshot: ClipboardPasteboard.Snapshot?) {
+        snapshotRevision = snapshot?.revision
+        let reply = ClipboardSnapshot(epoch: request.epoch, generation: request.generation, snapshot: snapshot)
+        guard let data = try? reply.encoded() else { return }
+        service.sendClipboard(.clipboardSnapshot, payload: data, to: id)
     }
 }

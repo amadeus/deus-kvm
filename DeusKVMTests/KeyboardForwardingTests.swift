@@ -84,8 +84,7 @@ final class KeyboardForwardingTests: XCTestCase {
         try media(controller, code: 16, down: true)
         try send(controller, .keyDown, key: 0x75, flags: [.maskControl])
         controller.stop()
-        XCTAssertEqual(consumerReports.last, ConsumerKey.none)
-        XCTAssertEqual(reports.last, .zero)
+        XCTAssertEqual(recorder.events.last, .reset)
     }
 
     func testReleasingOneConsumerKeyDoesNotReleaseAnother() throws {
@@ -116,7 +115,7 @@ final class KeyboardForwardingTests: XCTestCase {
         try send(controller, .keyUp, key: 6)
         XCTAssertEqual(reports.last?.keys.count, 6)
         controller.stop()
-        XCTAssertEqual(reports.last, .zero)
+        XCTAssertEqual(recorder.events.last, .reset)
     }
 
     private func makeController() -> DirectInputController {

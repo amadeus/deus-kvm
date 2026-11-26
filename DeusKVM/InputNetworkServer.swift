@@ -94,6 +94,8 @@ final class InputNetworkServer: @unchecked Sendable {
     // MARK: Hot path
 
     /// Input queue: one captured event. Writes inline, no dispatch hop.
+    private var capture: UInt64 = 0
+
     func send(_ event: NetworkInputEvent) {
         lock.withLock {
             guard up else { return }
@@ -105,7 +107,7 @@ final class InputNetworkServer: @unchecked Sendable {
                 for record in state.button(button, down: down, now: now) {
                     writeLocked(record)
                 }
-            case .keyboard, .consumer, .scroll:
+            case .keyboard, .consumer, .scroll, .reset:
                 guard keysAccepted else { return }
                 for record in state.immediate(event, now: now) {
                     writeLocked(record)
@@ -115,8 +117,9 @@ final class InputNetworkServer: @unchecked Sendable {
     }
 
     /// A remote session begins: counters restart, the connection stays.
-    func resetSession() {
+    func resetSession(capture: UInt64) {
         lock.withLock {
+            self.capture = capture
             if up { state = InputStreamState() }
             sessionStalls = 0; sessionReconnects = 0
         }
@@ -231,7 +234,7 @@ final class InputNetworkServer: @unchecked Sendable {
                 ) {
                     writeLocked(record)
                 }
-                return (true, ack.leave)
+                return (true, ack.capture == capture ? ack.leave : nil)
             }
             if !outcome.ok { reason = "bad ack"; break acks }
             if let leave = outcome.leave { onLeave?(leave) }
@@ -300,7 +303,8 @@ final class InputNetworkServer: @unchecked Sendable {
 
     /// Lock held. Seals and writes one record without blocking; a step that will not fit is
     /// dropped (motion tolerates it), a hard error shuts the connection for the recv loop.
-    private func writeLocked(_ record: Data) {
+    private func writeLocked(_ unscoped: Data) {
+        let record = InputRecord.scoped(unscoped, capture: capture)
         guard connFD >= 0, up, let sealed = try? outgoing?.seal(record), sealed.count <= 255 else { return }
         var frame = Data([UInt8(sealed.count)])
         frame.append(sealed)

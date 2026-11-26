@@ -7,22 +7,39 @@ internal sealed partial class ControlSession
 {
     private ClipboardTransfer? clipboardTransfer;
     private bool filesPeer, fileReceivePeer, imagesPeer;
-    private uint? peerClipboardSequence, peerClipboardRevision, deliveredFileSequence;
-    private byte[]? pendingFileOffer;
     private ClipboardTransfer Clipboard => clipboardTransfer ??= new ClipboardTransfer(SendClipboard, ApplyClipboard);
     private bool clipboardDefaultDesktop, clipboardPeer, clipboardDesktopAvailable, clipboardOffered, clipboardEnabled, clipboardPrimed;
     private uint clipboardEpoch = (BitConverter.ToUInt32(RuntimeCompat.RandomBytes(4), 0) % (int.MaxValue - 1)) + 1, clipboardRevision;
-    private byte[]? pendingClipboardOffer;
     private static double ClipboardNow => RuntimeCompat.TickCount64 / 1000d;
 
     private void UpdateClipboardSession(bool reset = false)
     {
-        var wanted = active && ready && clipboardPeer && clipboardDefaultDesktop && clipboardDesktopAvailable && clipboardHost?.Connected == true;
+        var wanted = controlling && active && ready && clipboardPeer && clipboardDefaultDesktop && clipboardDesktopAvailable && clipboardHost.Connected == true;
         if (!reset && clipboardOffered == wanted) return;
         clipboardEpoch++; clipboardOffered = wanted; clipboardEnabled = clipboardPrimed = false;
-        pendingClipboardOffer = null; pendingFileOffer = null; peerClipboardSequence = peerClipboardRevision = deliveredFileSequence = null; Clipboard.Reset(clipboardEpoch);
-        clipboardHost?.Send(new DesktopMessage("clipboard-start", Epoch: clipboardEpoch, Ok: false));
+        Clipboard.Reset(clipboardEpoch);
+        clipboardHost.Send(new DesktopMessage("clipboard-start", Epoch: clipboardEpoch, Ok: false));
         AdvertiseClipboard();
+        if (controlling)
+        {
+            clipboardHost.Send(new DesktopMessage("clipboard-select", Epoch: clipboardEpoch));
+            RequestClipboardSnapshot();
+        }
+    }
+
+    private void RequestClipboardSnapshot()
+    {
+        if (!controlling || !ready || handoff.Active is null) return;
+        var request = new ClipboardSnapshotRequest(clipboardEpoch, checked((ulong)ownership));
+        Send(Protocol.Message.ClipboardSnapshot, request.Encode());
+    }
+
+    private void ReceiveClipboardSnapshot(byte[] payload)
+    {
+        if (!controlling || !ready || handoff.Active is null) return;
+        var snapshot = ClipboardSnapshot.Parse(payload);
+        if (snapshot.Epoch != clipboardEpoch || snapshot.Generation != (ulong)ownership) return;
+        clipboardHost.Send(new DesktopMessage("clipboard-snapshot", Epoch: clipboardEpoch, Clipboard: payload));
     }
     private void AdvertiseClipboard()
     {
@@ -45,23 +62,14 @@ internal sealed partial class ControlSession
             clipboardEnabled = true; clipboardPrimed = false;
             Clipboard.Reset(clipboardEpoch);
             Clipboard.SetActive(handoff.Active is not null, ClipboardNow);
-            clipboardHost?.Send(new DesktopMessage("clipboard-start", Epoch: clipboardEpoch, Ok: true));
+            clipboardHost.Send(new DesktopMessage("clipboard-start", Epoch: clipboardEpoch, Ok: true));
         }
         else if (clipboardEnabled)
         {
-            if (type == Protocol.Message.ClipGrab && payload.Length == 12 && ClipboardTransfer.Read(payload, 0) == clipboardEpoch &&
-                peerClipboardSequence != ClipboardTransfer.Read(payload, 4))
-            {
-                peerClipboardSequence = ClipboardTransfer.Read(payload, 4);
-                peerClipboardRevision = clipboardPrimed ? clipboardRevision : null;
-                deliveredFileSequence = null;
-                clipboardHost?.Send(new DesktopMessage("clipboard-file-clear", Epoch: clipboardEpoch));
-            }
-            if (!clipboardPrimed)
-            {
-                if (type == Protocol.Message.ClipGrab && payload.Length == 12) pendingClipboardOffer = payload;
-                return;
-            }
+            // Typed controller snapshots supply all Mac-to-Windows data. Legacy requests/data
+            // remain only for the opposite direction when this Mac returns locally.
+            if (type is Protocol.Message.ClipGrab or Protocol.Message.ClipData) return;
+            if (!clipboardPrimed) return;
             Clipboard.Receive(type, payload, ClipboardNow);
         }
     }
@@ -76,17 +84,10 @@ internal sealed partial class ControlSession
         if (!clipboardEnabled || message.Epoch != clipboardEpoch) return;
         if (message.Kind == "clipboard-copy")
         {
-            if (!clipboardPrimed && peerClipboardSequence is not null) peerClipboardRevision = message.Revision;
             clipboardRevision = message.Revision;
             Clipboard.Observe(message.Clipboard, message.Ok);
             clipboardPrimed = true;
-            if (pendingClipboardOffer is { } offer)
-            {
-                pendingClipboardOffer = null;
-                try { Clipboard.Receive(Protocol.Message.ClipGrab, offer, ClipboardNow); }
-                catch (InvalidDataException) { Fail("Invalid clipboard offer"); }
-            }
-            if (pendingFileOffer is { } file) { pendingFileOffer = null; ReceiveFile(Protocol.Message.FileOffer, file); }
+
         }
         else if (message.Kind == "clipboard-file-copy" && fileReceivePeer && message.Ok && message.Revision == clipboardRevision && message.Clipboard is { } fileBytes)
         {
@@ -104,30 +105,19 @@ internal sealed partial class ControlSession
             if (!fileReceivePeer) return;
             var request = FileClipboardOffer.Parse(payload);
             if (request.Epoch == clipboardEpoch && request.Sequence == clipboardRevision && request.Network?.Valid == true)
-                clipboardHost?.Send(new DesktopMessage("clipboard-file-send", Epoch: clipboardEpoch, Clipboard: payload));
+                clipboardHost.Send(new DesktopMessage("clipboard-file-send", Epoch: clipboardEpoch, Clipboard: payload));
             return;
         }
-        if (type == Protocol.Message.FileOffer)
-        {
-            FileClipboardOffer offer;
-            try { offer = FileClipboardOffer.Parse(payload); }
-            catch (InvalidDataException) { return; } // Unsupported names/sizes must not disconnect input.
-            if (offer.IsImage && !imagesPeer) return;
-            if (offer.Epoch != clipboardEpoch || offer.ClipboardSequence != peerClipboardSequence) return;
-            if (!clipboardPrimed) { pendingFileOffer = payload; return; }
-            if (deliveredFileSequence == offer.Sequence) return;
-            deliveredFileSequence = offer.Sequence;
-            clipboardHost?.Send(new DesktopMessage("clipboard-file-offer", Epoch: clipboardEpoch,
-                Revision: peerClipboardRevision ?? clipboardRevision, Clipboard: payload));
-        }
-
     }
 
     private void ClipboardSwitch(bool windowsActive)
     {
         Clipboard.SetActive(windowsActive, ClipboardNow);
-        if (!windowsActive && clipboardEnabled)
-            clipboardHost?.Send(new DesktopMessage("clipboard-yield", Epoch: clipboardEpoch));
+        if (!windowsActive && controlling)
+        {
+            clipboardHost.Send(new DesktopMessage("clipboard-local", Epoch: clipboardEpoch));
+            if (clipboardEnabled) clipboardHost.Send(new DesktopMessage("clipboard-yield", Epoch: clipboardEpoch));
+        }
     }
     private void SendClipboard(Protocol.Message type, byte[] data)
     {
@@ -137,7 +127,6 @@ internal sealed partial class ControlSession
     }
     private void ApplyClipboard(byte[] data)
     {
-        if (clipboardEnabled && clipboardPrimed)
-            clipboardHost?.Send(new DesktopMessage("clipboard-apply", Epoch: clipboardEpoch, Revision: clipboardRevision, Clipboard: data));
+        // Incoming text is installed only through the controller-bound snapshot path.
     }
 }

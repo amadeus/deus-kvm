@@ -51,6 +51,11 @@ struct ClipboardFile: Sendable {
 }
 
 struct ClipboardFileOffer: Codable, Sendable {
+    private static let reservedNames: Set<String> = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    ]
+
     let epoch: UInt32
     let clipboardSequence: UInt32
     let sequence: UInt32
@@ -67,6 +72,7 @@ struct ClipboardFileOffer: Codable, Sendable {
         (contentType == nil || isImage && size > 0 && size <= ClipboardFile.maximumImageBytes) &&
             size >= 0 && size <= ClipboardFile.maximumBytes && !name.isEmpty && name.utf16.count <= 240 &&
             name != "." && name != ".." && !name.hasSuffix(".") && !name.hasSuffix(" ") &&
+            !Self.reservedNames.contains(name.components(separatedBy: ".")[0].uppercased()) &&
             !name.unicodeScalars.contains { $0.value < 32 || "<>:\"/\\|?*".unicodeScalars.contains($0) }
     }
 }

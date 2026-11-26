@@ -35,11 +35,7 @@ final class DirectInputController {
     }
 
     func stop() {
-        for button: MouseButtons in [.left, .right, .middle] where sentButtons.contains(button) {
-            sink?.send(.button(button, false))
-        }
-        if keyboardSent { sink?.send(.keyboard(.zero)) }
-        if consumerSent { sink?.send(.consumer(.none)) }
+        if isCapturing { sink?.send(.reset) }
         pressedKeys.removeAll()
         pressedConsumerKeys.removeAll()
         modifiers = []

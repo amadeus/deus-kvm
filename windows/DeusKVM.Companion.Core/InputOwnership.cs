@@ -15,7 +15,7 @@ public readonly record struct InputAdmission(InputDisposition Disposition, Input
 /// control connections; stream ids fence callbacks from replaced input connections. Each source
 /// independently enters/exits PC mode. Only an entry or changed user input chooses the owner.
 /// </summary>
-public sealed class InputOwnership
+public sealed class InputOwnership(long initialGeneration = 0)
 {
     private sealed class Source(long stream)
     {
@@ -35,8 +35,10 @@ public sealed class InputOwnership
 
     private readonly Dictionary<long, Source> sources = [];
     public long? Owner { get; private set; }
-    public long Generation { get; private set; }
+    public long Generation { get; private set; } = initialGeneration;
     public byte? OwnerSwitch => Owner is { } owner && sources.TryGetValue(owner, out var source) ? source.Switch : null;
+
+    public void Renew() => Generation = checked(Generation + 1);
 
     public void Connect(long source, long stream)
     {
@@ -72,7 +74,7 @@ public sealed class InputOwnership
     {
         if (Current(source, stream) is not { } state || state.Switch != switchId || state.Capture != capture) return false;
         state.Switch = null; state.Capture = 0; state.Clear();
-        if (Owner == source) Select(null);
+        // Keep the last controller as clipboard partner after returning locally.
         return true;
     }
 

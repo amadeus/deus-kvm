@@ -28,6 +28,7 @@ internal sealed class ClipboardWorker : ApplicationContext
     private readonly RawWindow window;
     private SynchronizationContext? context;
     private DesktopClipboard? clipboard;
+    private DesktopMessage? cursorSelection;
     private bool started;
 
     public ClipboardWorker(string name, int parent)
@@ -60,9 +61,14 @@ internal sealed class ClipboardWorker : ApplicationContext
             // Pipe EOF ends this process independently of the message loop.
             await Task.Run(() => DesktopPipe.Pump(pipe, output.Reader, message =>
             {
+                if (message.Kind == "clipboard-select") Volatile.Write(ref cursorSelection, message);
                 if (message.Kind.StartsWith("clipboard-", StringComparison.Ordinal)) clipboard?.Post(message);
-                else if (message.Kind == "cursor-hide") context.Post(_ => cursor.Hide(), null);
-                else if (message.Kind == "cursor-reveal") context.Post(_ => cursor.Reveal(), null);
+                else if (message.Kind is "cursor-hide" or "cursor-reveal") context.Post(_ =>
+                {
+                    var selected = Volatile.Read(ref cursorSelection);
+                    if (selected?.Source != message.Source || selected.Ownership != message.Ownership) return;
+                    if (message.Kind == "cursor-hide") cursor.Hide(); else cursor.Reveal();
+                }, null);
             }, shutdown.Token)).ConfigureAwait(false);
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or TimeoutException or Win32Exception or System.Text.Json.JsonException) { }

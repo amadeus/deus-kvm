@@ -10,7 +10,9 @@ final class CompanionService: ObservableObject {
     @Published private(set) var monitors: [UUID: [PCMonitor]] = [:]
     @Published private(set) var blind: [UUID: UInt8] = [:]
     private(set) var lastSeen: [UUID: TimeInterval] = [:]
-    var onLeave: ((UUID, UInt8, UInt8, UInt16) -> Void)?
+    var onLeave: ((UUID, UInt8, UInt8, UInt16, UInt64) -> Void)?
+    var onEntryAck: ((UUID, UInt64, Bool) -> Void)?
+    var onIncompatible: ((String) -> Void)?
     var clipboardTarget: (() -> UUID?)?
     var onClipboard: ((UUID, CompanionProtocol.Message, Data) throws -> Void)?
     var onReady: ((UUID) -> Void)?
@@ -23,8 +25,6 @@ final class CompanionService: ObservableObject {
     private var clients: [UUID: Client] = [:]
     private var selection = CompanionSelection()
     var onSelection: (() -> Void)?
-    var onDisableRequested: ((Bool, @escaping () -> Void) -> Void)?
-    private var wantsControl = false
     /// Link round trips while controlling Windows; diagnostics only.
     private var pings = PingTracker()
     private let log = Logger(subsystem: "io.github.amadeus.deuskvm", category: "Companion")
@@ -38,13 +38,11 @@ final class CompanionService: ObservableObject {
         var supportsFileNetwork = false
         var supportsImages = false
         var supportsSelection = false
-        var supportsTakeover = false
         var supportsReport = false
         var inputNetwork = 0
     }
 
     func setAvailability(enabled: Bool, allowed: Set<UUID>) {
-        if !enabled { wantsControl = false }
         guard selection.update(enabled: enabled, allowed: allowed) else { return }
         for id in ready where clients[id]?.supportsSelection == true {
             send(.availability, payload: availabilityPacket(for: id), to: id)
@@ -52,21 +50,8 @@ final class CompanionService: ObservableObject {
         onSelection?()
     }
 
-    func requestControl() {
-        wantsControl = true
-        for id in ready where clients[id]?.supportsTakeover == true && selection.available(to: id) {
-            send(.requestControl, payload: CompanionProtocol.u32(selection.epoch), to: id)
-        }
-    }
-
-    func prepareControlRequest() {
-        wantsControl = true
-    }
-
     private func availabilityPacket(for id: UUID) -> Data {
-        var packet = selection.packet(for: id)
-        if wantsControl, selection.available(to: id), clients[id]?.supportsTakeover == true { packet[4] = 2 }
-        return packet
+        selection.packet(for: id)
     }
 
     func reset() {
@@ -84,7 +69,7 @@ final class CompanionService: ObservableObject {
             v: 1, role: "mac", name: Host.current().localizedName ?? "Mac",
             clipboard: 1, files: 1, fileReceive: 1, fileNetwork: 1, images: 1,
             selection: 1, available: selection.available(to: id), availabilityEpoch: selection.epoch,
-            takeover: true, requestControl: wantsControl
+            inputNetwork: 3, multiInput: 1, clipboardSnapshot: 1
         ), type: .hello, to: id)
     }
 
@@ -122,7 +107,7 @@ final class CompanionService: ObservableObject {
         guard ready.contains(id) else { throw CompanionProtocol.Failure.malformed }
         lastSeen[id] = ProcessInfo.processInfo.systemUptime
         defer { onActivity?(id) }
-        if [.clipGrab, .clipGet, .clipData, .clipState, .fileOffer, .fileGet, .fileData, .fileAccept].contains(type) {
+        if [.clipGrab, .clipGet, .clipData, .clipState, .fileOffer, .fileGet, .fileData, .fileAccept, .clipboardSnapshot].contains(type) {
             try receiveClipboard(packet, type: type, from: id)
             return
         }
@@ -142,12 +127,13 @@ final class CompanionService: ObservableObject {
             guard payload.count == 3 else { throw CompanionProtocol.Failure.malformed }
             if blind[id] != payload[0] { blind[id] = payload[0] }
         case .leave:
-            guard payload.count == 4, payload[1] < 4 else { throw CompanionProtocol.Failure.malformed }
+            guard payload.count == 12, payload[1] < 4 else { throw CompanionProtocol.Failure.malformed }
             let frac = UInt16(payload[2]) | UInt16(payload[3]) << 8
-            onLeave?(id, payload[0], payload[1], frac)
+            onLeave?(id, payload[0], payload[1], frac, CompanionProtocol.read64(payload, 4))
         case .enterAck:
-            guard payload.count == 7 else { throw CompanionProtocol.Failure.malformed }
+            guard payload.count == 15 else { throw CompanionProtocol.Failure.malformed }
             if blind[id] != payload[6] { blind[id] = payload[6] }
+            onEntryAck?(id, CompanionProtocol.read64(payload, 7), payload[1] == 1)
         case .report, .pong:
             try receiveDiagnostic(type, payload: payload, from: id)
         default: throw CompanionProtocol.Failure.malformed
@@ -167,17 +153,9 @@ final class CompanionService: ObservableObject {
 
     private func receiveSelection(_ payload: Data, from id: UUID) throws {
         guard clients[id]?.supportsSelection == true, payload.count == 5 else { throw CompanionProtocol.Failure.malformed }
-        let epoch = CompanionProtocol.read32(payload, 0)
-        let current = epoch == selection.epoch
         try selection.receive(payload, from: id)
         if !selection.granted(to: id) { monitors.removeValue(forKey: id); blind.removeValue(forKey: id) }
         onSelection?()
-        guard clients[id]?.supportsTakeover == true else { return }
-        if payload[4] == 1, current { wantsControl = false }
-        if payload[4] == 0, current || !selection.granted(to: id) {
-            let acknowledge = { [weak self] in self?.send(.releaseAck, payload: CompanionProtocol.u32(epoch), to: id) }
-            onDisableRequested?(current) { acknowledge() }
-        }
     }
 
     private func receiveClipboard(_ packet: CompanionProtocol.Packet, type: CompanionProtocol.Message, from id: UUID) throws {
@@ -191,6 +169,10 @@ final class CompanionService: ObservableObject {
     private func receiveHello(_ data: Data, from id: UUID) throws {
         let hello = try JSONDecoder().decode(CompanionHello.self, from: data)
         guard hello.v == 1, hello.role == "pc", clients[id] != nil else { throw CompanionProtocol.Failure.malformed }
+        guard hello.multiInput == 1, hello.inputNetwork == 3, hello.clipboardSnapshot == 1 else {
+            onIncompatible?("Update the Windows companion to use simultaneous Mac control.")
+            throw CompanionProtocol.Failure.malformed
+        }
         clients[id]?.supportsResume = hello.resume == true
         clients[id]?.supportsCenter = hello.center == true
         clients[id]?.supportsClipboard = hello.clipboard == 1
@@ -198,7 +180,6 @@ final class CompanionService: ObservableObject {
         clients[id]?.supportsFileNetwork = hello.fileNetwork == 1
         clients[id]?.supportsImages = hello.images == 1
         clients[id]?.supportsSelection = hello.selection == 1
-        clients[id]?.supportsTakeover = hello.takeover == true
         clients[id]?.supportsReport = hello.report == 1
         clients[id]?.inputNetwork = hello.inputNetwork ?? 0
         selection.disconnect(id)
@@ -206,9 +187,7 @@ final class CompanionService: ObservableObject {
         ready.insert(id)
         lastSeen[id] = ProcessInfo.processInfo.systemUptime
         if hello.selection == 1 { send(.availability, payload: availabilityPacket(for: id), to: id) }
-        if wantsControl, hello.takeover == true, selection.available(to: id) {
-            send(.requestControl, payload: CompanionProtocol.u32(selection.epoch), to: id)
-        }
+
         onReady?(id)
         log.info("Windows companion handshake complete")
     }
@@ -233,7 +212,7 @@ final class CompanionService: ObservableObject {
 
     /// The companion's desktop worker can connect to the Mac's pointer stream.
     func supportsInputNetwork(_ id: UUID) -> Bool {
-        inputNetworkLevel(id) >= 1
+        inputNetworkLevel(id) >= 3
     }
 
     /// 0 none, 1 pointer only, 2 also keys, media keys and scroll.
@@ -292,8 +271,11 @@ final class CompanionService: ObservableObject {
 
     func sendClipboard(_ type: CompanionProtocol.Message, payload: Data, to id: UUID) {
         guard clipboardTarget?() == id, allowsControl(id), supportsClipboard(id),
-              payload.count <= ([.fileOffer, .fileAccept].contains(type) ? 4096 : ClipboardTransfer.blockBytes + 12) else { return }
-        if [.clipData, .fileOffer, .fileData, .fileAccept].contains(type) {
+              payload
+                  .count <=
+                  (type == .clipboardSnapshot ? 98304 : [.fileOffer, .fileAccept].contains(type) ? 4096 : ClipboardTransfer.blockBytes + 12)
+        else { return }
+        if [.clipData, .fileOffer, .fileData, .fileAccept, .clipboardSnapshot].contains(type) {
             enqueue(type, stream: 1, payload: payload, to: id)
         } else {
             send(type, payload: payload, to: id)
