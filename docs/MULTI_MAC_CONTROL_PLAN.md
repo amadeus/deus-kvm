@@ -36,7 +36,7 @@ are not undone. Input ownership, remote-mode state, and connection readiness are
 
 ## Phases
 
-- [ ] 1. Agree on concrete ownership, protocol, shared desktop and clipboard architecture;
+- [x] 1. Agree on concrete ownership, protocol, shared desktop and clipboard architecture;
   implement tested state models and protocol contracts.
 - [ ] 2. Implement persistent multi-Mac readiness and centralized input takeover, including
   held-input cleanup, per-Mac layouts, edge return, explicit disable and reconnect.
@@ -82,3 +82,16 @@ not described as hardware-validated releases.
 
 - Plan created after the README attribution commit `e2a69e4`. Implementation agent is
   inspecting the current network architecture; no control code has changed yet.
+- Baseline portable Windows tests: 217 passed, two Windows-native crypto tests skipped
+  on macOS. Local .NET SDK is `~/.dotnet/dotnet`; tests require local socket access.
+- Architecture review selected a single shared desktop router/agent and clipboard helper.
+  Input protocol will distinguish capture identity and synthetic reset from physical input;
+  independent control/input sockets must not lose the first event or accept an old capture.
+  Clipboard design review is checking a typed snapshot plus delayed rendering so pointer
+  motion need not wait for image/file payloads.
+- Phase 1 reviewed: portable `InputOwnership` separates per-Mac remote state, capture and
+  stream identities from the current owner. Real changed input selects before forwarding;
+  resets/keepalives/background resume do not acquire. Held modifiers can be restored without
+  replaying ordinary keys, lock toggles or mouse downs. A new capture invalidates pending
+  work even for the same owner. Eleven focused scenarios pass; full portable suite passes
+  228 tests with two Windows-native skips. Integration is the next phase, not yet active.

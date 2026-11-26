@@ -8,7 +8,7 @@ namespace DeusKVM.Companion.Core;
 /// state (modifier bits and held usages), the held media key (a consumer usage), or a scroll step.
 /// </summary>
 public readonly record struct InputEvent(byte Type, uint Sequence, uint Captured, int Dx = 0, int Dy = 0, byte Button = 0, bool Down = false,
-    byte Modifiers = 0, byte[]? Keys = null, ushort Usage = 0, int Wheel = 0, int Pan = 0)
+    byte Modifiers = 0, byte[]? Keys = null, ushort Usage = 0, int Wheel = 0, int Pan = 0, ulong Capture = 0)
 {
     public bool IsMotion => Type == InputRecord.Motion;
     public bool IsButton => Type == InputRecord.Button;
@@ -29,7 +29,7 @@ public readonly record struct InputEvent(byte Type, uint Sequence, uint Captured
 /// </summary>
 public static class InputRecord
 {
-    public const byte Motion = 1, Button = 2, Ping = 3, Keyboard = 4, Consumer = 5, Scroll = 6;
+    public const byte Motion = 1, Button = 2, Ping = 3, Keyboard = 4, Consumer = 5, Scroll = 6, Reset = 7;
     /// <summary>Keys one keyboard record can carry (the Mac's limit; there is no 6-key rollover).</summary>
     public const int MaxKeys = 32;
     public const int AckLength = 12, SealedAckLength = AckLength + 16;
@@ -59,6 +59,7 @@ public static class InputRecord
                 record = new InputEvent(type, sequence, captured, Button: plain[9], Down: plain[10] == 1);
                 return true;
             case Ping when plain.Length == 9:
+            case Reset when plain.Length == 9:
                 record = new InputEvent(type, sequence, captured);
                 return true;
             case Keyboard when plain.Length >= 11 && plain[10] <= MaxKeys && plain.Length == 11 + plain[10]:
